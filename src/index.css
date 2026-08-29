@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  -webkit-font-smoothing: antialiased;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: #FAF9F6;
+  color: #1C1C1A;
+}
+
+/* Keep the proctor video wall readable: four feeds per desktop row. */
+@media (min-width: 1280px) {
+  .xl\:grid-cols-6 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Keep the question editor's preview and save panels from overlapping while scrolling. */
+.sticky.top-24 {
+  position: static;
+}
+
+/* Coding-question authoring needs room for readable input/output editors. */
+@media (min-width: 1280px) {
+  .xl\:grid-cols-\[1fr_330px\] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
