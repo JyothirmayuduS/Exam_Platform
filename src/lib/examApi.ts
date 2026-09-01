@@ -1,7 +1,3 @@
-// Exam data access — the bridge between the teacher's publish action and what
-// students see. Every function is a no-op-friendly wrapper: if Supabase is not
-// configured it resolves to a safe empty/echo value so the UI never crashes.
-
 import { getSupabase } from "./supabase";
 
 export type ExamStatus = "draft" | "published" | "scheduled";
@@ -20,8 +16,43 @@ export type ExamRecord = {
   scheduled_at: string | null;
   join_link: string;
   settings: Record<string, unknown>;
+  created_by?: string | null;
   created_at?: string;
 };
+
+export type StudentIdentity = {
+  id: string;
+  roll: string;
+  full_name: string;
+  batch: string;
+};
+
+async function getCurrentUserId(): Promise<string | null> {
+  const db = getSupabase();
+  if (!db) return null;
+  const { data } = await db.auth.getUser();
+  return data.user?.id ?? null;
+}
+
+export async function getCurrentStudentIdentity(): Promise<StudentIdentity | null> {
+  const db = getSupabase();
+  if (!db) return null;
+  const userId = await getCurrentUserId();
+  if (!userId) return null;
+  const { data } = await db
+    .from("students")
+    .select("id,roll,full_name,batch")
+    .eq("auth_id", userId)
+    .maybeSingle();
+
+  if (!data) return null;
+  return {
+    id: String(data.id),
+    roll: String(data.roll),
+    full_name: String(data.full_name),
+    batch: String(data.batch),
+  };
+}
 
 /** Teacher publishes/schedules an exam. Upserts the row so students see it. */
 export async function publishExam(
@@ -29,47 +60,51 @@ export async function publishExam(
 ): Promise<{ ok: boolean; error?: string }> {
   const db = getSupabase();
   if (!db) return { ok: false, error: "offline" };
-  const { error } = await db.from("exams").upsert(record, { onConflict: "id" });
+
+  const userId = await getCurrentUserId();
+  const payload: Omit<ExamRecord, "created_at"> = {
+    ...record,
+    created_by: record.created_by ?? userId,
+  };
+
+  const { error } = await db.from("exams").upsert(payload, { onConflict: "id" });
   return error ? { ok: false, error: String(error.message ?? error) } : { ok: true };
 }
 
 /**
- * Student-facing: fetch the exams a student is allowed to see right now.
- * Returns `null` when the query FAILS (network/RLS/offline) so callers can keep
- * the last-known-good list instead of blanking the screen. An empty array means
- * the query succeeded and there genuinely are no exams.
+ * Student-facing: fetch the exams currently visible to this authenticated student.
+ * Returns `null` when the query fails so callers can keep last-known data.
  */
-export async function listExamsForStudent(batch: string): Promise<ExamRecord[] | null> {
+export async function listExamsForStudent(): Promise<ExamRecord[] | null> {
   const db = getSupabase();
   if (!db) return null;
+
+  const student = await getCurrentStudentIdentity();
+  if (!student) return [];
+
   const { data, error } = await db
-    .from("exams")
-    .select("*")
-    .neq("status", "draft")
-    .eq("batch", batch)
-    .order("created_at", { ascending: false });
+    .from("exam_enrollments")
+    .select("exam:exams(*)")
+    .eq("student_id", student.id)
+    .order("enrolled_at", { ascending: false });
+
   if (error) return null;
-  return (data ?? []) as ExamRecord[];
+
+  return ((data ?? []) as Array<{ exam: ExamRecord | ExamRecord[] | null }>)
+    .map((row) => (Array.isArray(row.exam) ? row.exam[0] : row.exam))
+    .filter((exam): exam is ExamRecord => !!exam && exam.status !== "draft");
 }
 
-/**
- * Realtime: fire `onChange` whenever an exam for this batch is inserted or
- * updated (e.g. the moment the teacher clicks Publish). Returns an unsubscribe.
- */
-export function subscribeToStudentExams(
-  batch: string,
-  onChange: () => void,
-): () => void {
+/** Realtime: fire `onChange` whenever a student-visible exam changes. */
+export function subscribeToStudentExams(onChange: () => void): () => void {
   const db = getSupabase();
   if (!db) return () => undefined;
   const channel = db
-    .channel(`exams-${batch}`)
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "exams", filter: `batch=eq.${batch}` },
-      () => onChange(),
-    )
+    .channel("student-exams")
+    .on("postgres_changes", { event: "*", schema: "public", table: "exam_enrollments" }, () => onChange())
+    .on("postgres_changes", { event: "*", schema: "public", table: "exams" }, () => onChange())
     .subscribe();
+
   return () => {
     db.removeChannel(channel);
   };
@@ -94,22 +129,38 @@ export type DBQuestion = {
 export type ExamBundle = { exam: ExamRecord | null; questions: DBQuestion[] };
 
 /**
- * Load one exam and its question set for a student sitting it. Returns
- * `{ exam: null, questions: [] }` when Supabase isn't configured so callers can
- * fall back to their built-in demo questions.
+ * Load one exam and its question set for the signed-in student.
  */
 export async function loadExamBundle(examId: string): Promise<ExamBundle> {
   const db = getSupabase();
   if (!db) return { exam: null, questions: [] };
-  const [examRes, qRes] = await Promise.all([
-    db.from("exams").select("*").eq("id", examId).maybeSingle(),
-    db.from("questions").select("*").eq("exam_id", examId).order("id", { ascending: true }),
-  ]);
-  const exam = (examRes.data as ExamRecord | null) ?? null;
-  const questions = ((qRes.data as DBQuestion[] | null) ?? []).map((row) => ({
+
+  const student = await getCurrentStudentIdentity();
+  if (!student) return { exam: null, questions: [] };
+
+  const { data: enrollment, error: enrollmentError } = await db
+    .from("exam_enrollments")
+    .select("exam:exams(*)")
+    .eq("exam_id", examId)
+    .eq("student_id", student.id)
+    .maybeSingle();
+
+  if (enrollmentError || !enrollment) return { exam: null, questions: [] };
+
+  const exam = (Array.isArray(enrollment.exam) ? enrollment.exam[0] : enrollment.exam) as ExamRecord | null;
+  if (!exam) return { exam: null, questions: [] };
+
+  const { data: qData } = await db
+    .from("questions")
+    .select("*")
+    .eq("exam_id", examId)
+    .order("id", { ascending: true });
+
+  const questions = ((qData as DBQuestion[] | null) ?? []).map((row) => ({
     ...row,
     options: normalizeOptions(row.options),
   }));
+
   return { exam, questions };
 }
 
@@ -125,14 +176,6 @@ function normalizeOptions(raw: unknown): string[] | null {
     }
   }
   return null;
-}
-
-/** Resolve a student row id from their roll number (needed for attempt rows). */
-export async function getStudentIdByRoll(roll: string): Promise<string | null> {
-  const db = getSupabase();
-  if (!db) return null;
-  const { data } = await db.from("students").select("id").eq("roll", roll).maybeSingle();
-  return (data?.id as string) ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,7 +202,6 @@ export type AttemptRecord = {
 /**
  * Create (or resume) the student's attempt when they begin the exam. Upserts on
  * the (exam_id, student_id) unique key so a reload resumes the same row.
- * Returns the attempt id, or null when offline.
  */
 export async function startAttempt(opts: {
   examId: string;
@@ -182,6 +224,7 @@ export async function startAttempt(opts: {
     )
     .select("id")
     .maybeSingle();
+
   if (error) return null;
   return (data?.id as string) ?? null;
 }

@@ -1,5 +1,12 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { publishExam, type ExamRecord } from "../lib/examApi";
+import {
+  listExamEnrollments,
+  listStudents,
+  replaceExamEnrollments,
+  triggerExamEmails,
+  type StudentRecord,
+} from "../lib/enrollmentApi";
 
 type Exam = { id: string; name: string; batch: string; state: string; tone: string };
 type Question = { id: string; title: string; unit: string; type: string; difficulty: string; marks: number };
@@ -10,14 +17,6 @@ type Settings = {
   negative: boolean; calculator: boolean; instantFeedback: boolean;
 };
 type Publish = { status: "draft" | "published" | "scheduled"; link?: string; when?: string; notified?: number };
-
-const ENROLLED = 42;
-const RECIPIENTS = [
-  "21vgn0142@vignan.ac.in",
-  "21vgn0158@vignan.ac.in",
-  "21vgn0163@vignan.ac.in",
-  "21vgn0171@vignan.ac.in",
-];
 
 const QUESTIONS: Question[] = [
   { id: "Q-1042", title: "Which traversal visits the root between the left and right subtrees?", unit: "Trees & Graphs", type: "MCQ", difficulty: "Medium", marks: 1 },
@@ -47,6 +46,9 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   const [schedTime, setSchedTime] = useState("");
   const [copied, setCopied] = useState(false);
   const [notifyStudents, setNotifyStudents] = useState(true);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [availableStudents, setAvailableStudents] = useState<StudentRecord[]>([]);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [s, setS] = useState<Settings>({ perStudent: 5, randomSelect: true, shuffleOrder: true, shuffleOptions: true, autoSubmit: true, duration: 45, mode: "lockdown", attempts: 1, negative: false, calculator: false, instantFeedback: false });
   const set = <K extends keyof Settings,>(k: K, v: Settings[K]) => setS((cur) => ({ ...cur, [k]: v }));
 
@@ -54,6 +56,10 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   const visible = QUESTIONS.filter((q) => `${q.id} ${q.title} ${q.unit}`.toLowerCase().includes(search.toLowerCase()) && (filter === "All" || q.type === filter));
   const totalMarks = poolQuestions.reduce((sum, q) => sum + q.marks, 0);
   const perStudent = Math.min(s.perStudent, Math.max(1, pool.length));
+  const selectedRecipients = useMemo(
+    () => availableStudents.filter((student) => selectedStudentIds.includes(student.id)),
+    [availableStudents, selectedStudentIds],
+  );
 
   const chooseExam = (exam: Exam) => {
     setSelected(exam); setStep(0);
@@ -61,11 +67,49 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
     setSearch(""); setFilter("All"); setBulkOpen(false); setBulkFile(null);
     setPublish({ status: "draft" }); setDraftSaved(false);
   };
+
+  useEffect(() => {
+    if (!selected) {
+      setAvailableStudents([]);
+      setSelectedStudentIds([]);
+      return;
+    }
+
+    let active = true;
+    const loadStudents = async () => {
+      setStudentsLoading(true);
+      const [batchStudents, existingEnrollments] = await Promise.all([
+        listStudents(selected.batch),
+        listExamEnrollments(selected.id),
+      ]);
+      if (!active) return;
+      setAvailableStudents(batchStudents);
+      if (existingEnrollments.length > 0) {
+        setSelectedStudentIds(existingEnrollments.map((item) => item.student_id));
+      } else {
+        setSelectedStudentIds(batchStudents.map((student) => student.id));
+      }
+      setStudentsLoading(false);
+    };
+    void loadStudents();
+    return () => {
+      active = false;
+    };
+  }, [selected]);
   const toggle = (id: string) => {
     const inPool = pool.includes(id);
     setPool((cur) => inPool ? cur.filter((x) => x !== id) : [...cur, id]);
     if (selected) notify(`${id} ${inPool ? "removed from" : "added to"} ${selected.name}`);
   };
+  const toggleRecipient = (studentId: string) => {
+    setSelectedStudentIds((current) =>
+      current.includes(studentId)
+        ? current.filter((id) => id !== studentId)
+        : [...current, studentId],
+    );
+  };
+  const selectAllRecipients = () => setSelectedStudentIds(availableStudents.map((student) => student.id));
+  const clearRecipients = () => setSelectedStudentIds([]);
   const addAllShown = () => { setPool((cur) => Array.from(new Set([...cur, ...visible.map((q) => q.id)]))); notify("Visible questions added to the pool"); };
   const downloadTemplate = () => {
     if (!selected) return;
@@ -90,25 +134,54 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   // Persist to Supabase and report the real outcome. `offline` = no backend
   // configured (prototype demo data); a DB error usually means RLS is still
   // auth-scoped — run supabase/demo-policies.sql once to open the anon flow.
-  const persist = (rec: ExamRecord | null, okMsg: string) => {
-    if (!rec) return;
-    void publishExam(rec).then((res) => {
-      if (res.ok) notify(okMsg);
-      else if (res.error === "offline") notify("Published in demo mode — connect Supabase to reach students live.");
-      else notify(`Couldn't reach students: ${res.error}. Run supabase/demo-policies.sql, then republish.`);
-    });
+  const persist = async (rec: ExamRecord | null, okMsg: string): Promise<boolean> => {
+    if (!rec) return false;
+    const res = await publishExam(rec);
+    if (res.ok) {
+      notify(okMsg);
+      return true;
+    }
+    if (res.error === "offline") {
+      notify("Published in demo mode — connect Supabase to reach students live.");
+      return false;
+    }
+    notify(`Couldn't reach students: ${res.error}. Run supabase/demo-policies.sql, then republish.`);
+    return false;
   };
-  const publishNow = () => {
-    const n = notifyStudents ? ENROLLED : 0;
+  const publishNow = async () => {
+    const n = notifyStudents ? selectedStudentIds.length : 0;
     setPublish({ status: "published", link: studentLink(selected), notified: n });
-    persist(buildRecord("published", null), n ? `Exam published — join link emailed to ${n} students` : "Exam published — students can start now");
+    const ok = await persist(buildRecord("published", null), n ? `Exam published — join link emailed to ${n} students` : "Exam published — students can start now");
+    if (!selected) return;
+    await replaceExamEnrollments(selected.id, selectedStudentIds);
+    if (ok && notifyStudents && selectedStudentIds.length > 0) {
+      await triggerExamEmails({
+        examId: selected.id,
+        type: "exam_published",
+        examName: selected.name,
+        joinLink: `${window.location.origin}/student/exam/${selected.id}`,
+        studentIds: selectedStudentIds,
+      });
+    }
   };
-  const schedule = () => {
+  const schedule = async () => {
     if (!schedDate || !schedTime) return;
-    const n = notifyStudents ? ENROLLED : 0;
+    const n = notifyStudents ? selectedStudentIds.length : 0;
     const whenIso = new Date(`${schedDate}T${schedTime}`).toISOString();
     setPublish({ status: "scheduled", link: studentLink(selected), when: `${schedDate} · ${schedTime}`, notified: n });
-    persist(buildRecord("scheduled", whenIso), n ? `Scheduled for ${schedDate} ${schedTime} — students will be emailed` : `Scheduled for ${schedDate} ${schedTime}`);
+    const ok = await persist(buildRecord("scheduled", whenIso), n ? `Scheduled for ${schedDate} ${schedTime} — students will be emailed` : `Scheduled for ${schedDate} ${schedTime}`);
+    if (!selected) return;
+    await replaceExamEnrollments(selected.id, selectedStudentIds);
+    if (ok && notifyStudents && selectedStudentIds.length > 0) {
+      await triggerExamEmails({
+        examId: selected.id,
+        type: "exam_published",
+        examName: selected.name,
+        joinLink: `${window.location.origin}/student/exam/${selected.id}`,
+        studentIds: selectedStudentIds,
+        scheduledAt: whenIso,
+      });
+    }
   };
   const copyLink = () => { navigator.clipboard?.writeText(publish.link ?? "").catch(() => undefined); setCopied(true); notify("Student link copied"); window.setTimeout(() => setCopied(false), 2000); };
   const canContinue = step === 0 ? pool.length > 0 : true;

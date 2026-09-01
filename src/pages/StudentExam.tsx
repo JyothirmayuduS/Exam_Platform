@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import Seal from "../components/Seal";
 import ProctorCamera from "../components/ProctorCamera";
@@ -7,7 +8,7 @@ import ProctorAI, { type AIStatus, type AIViolation } from "../components/Procto
 import { supabaseConfigured } from "../lib/env";
 import {
   loadExamBundle,
-  getStudentIdByRoll,
+  getCurrentStudentIdentity,
   startAttempt,
   saveAnswers,
   submitAttempt,
@@ -18,15 +19,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { jsPDF } from "jspdf";
 import { uploadExamRecords } from "../lib/examStorage";
 
-// ── Exam identity ────────────────────────────────────────────────────────────
-// A production build resolves these from the join link / signed-in student.
-// For the prototype they name the seeded demo exam + student so the DB flow and
-// the LiveKit proctor room line up end-to-end.
-const EXAM_ID = "EXAM-2026-014";
-const STUDENT_ROLL = "21VGN0142";
-const STUDENT_NAME = "B. Priya Nikitha";
-const ROOM = EXAM_ID; // LiveKit room == exam id so proctors join the same room
-const DURATION_MIN = 45;
+const FALLBACK_EXAM_ID = "EXAM-2026-014";
+const DEFAULT_DURATION_MIN = 45;
 
 type Violation = { id: number; kind: string; at: string };
 type QStatus = "unvisited" | "visited" | "answered" | "marked";
@@ -78,6 +72,10 @@ function runCompatChecks(): CheckResult[] {
 type Step = "gate" | "installed" | "check" | "access" | "rules" | "exam" | "submitted";
 
 export default function StudentExam() {
+  const { examId: examIdParam } = useParams();
+  const [searchParams] = useSearchParams();
+  const examId = examIdParam ?? searchParams.get("exam") ?? FALLBACK_EXAM_ID;
+
   // Real flow: if the student is not inside the installed Vignan Lockdown Browser,
   // they must install the desktop package first. Only the packaged Tauri app can
   // continue into the pre-exam checks and the actual exam flow.
@@ -86,6 +84,11 @@ export default function StudentExam() {
   // Questions: DB-backed when configured, else built-in demo set.
   const [questions, setQuestions] = useState<Question[]>(DEMO_QUESTIONS);
   const [examName, setExamName] = useState("Data Structures & Algorithms — Sem III");
+  const [examStartAt, setExamStartAt] = useState<string | null>(null);
+  const [durationMin, setDurationMin] = useState(DEFAULT_DURATION_MIN);
+  const [studentRoll, setStudentRoll] = useState("UNKNOWN");
+  const [studentName, setStudentName] = useState("Student");
+  const [accessDenied, setAccessDenied] = useState(false);
 
   // Attempt / DB
   const studentIdRef = useRef<string | null>(null);
@@ -104,10 +107,11 @@ export default function StudentExam() {
   const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [status, setStatus] = useState<Record<number, QStatus>>({});
-  const [secondsLeft, setSecondsLeft] = useState(DURATION_MIN * 60);
+  const [secondsLeft, setSecondsLeft] = useState(DEFAULT_DURATION_MIN * 60);
   const [violations, setViolations] = useState<Violation[]>([]);
   const [activeViolation, setActiveViolation] = useState<Violation | null>(null);
   const violationId = useRef(0);
+  const [now, setNow] = useState(() => Date.now());
 
   // AI proctoring state
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
@@ -199,14 +203,30 @@ export default function StudentExam() {
     if (!supabaseConfigured) return;
     let active = true;
     (async () => {
-      const { exam, questions: rows } = await loadExamBundle(EXAM_ID);
+      const { exam, questions: rows } = await loadExamBundle(examId);
       if (!active) return;
-      if (exam?.name) setExamName(`${exam.name} — Sem III`);
+      if (!exam) {
+        setAccessDenied(true);
+        return;
+      }
+      if (exam.name) setExamName(exam.name);
+      if (exam.scheduled_at) setExamStartAt(exam.scheduled_at);
+      if (exam.duration_minutes > 0) {
+        setDurationMin(exam.duration_minutes);
+        setSecondsLeft(exam.duration_minutes * 60);
+      }
       if (rows.length) setQuestions(rows.map(toUIQuestion));
-      studentIdRef.current = await getStudentIdByRoll(STUDENT_ROLL);
+      const identity = await getCurrentStudentIdentity();
+      if (!identity) {
+        setAccessDenied(true);
+        return;
+      }
+      studentIdRef.current = identity.id;
+      setStudentRoll(identity.roll);
+      setStudentName(identity.full_name);
     })();
     return () => { active = false; };
-  }, []);
+  }, [examId]);
 
   // Keep the status map in sync with the (possibly DB-loaded) question set.
   useEffect(() => {
@@ -254,6 +274,11 @@ export default function StudentExam() {
     return () => clearTimeout(t);
   }, [activeViolation]);
 
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+
   // Release any held media on unmount.
   useEffect(() => () => {
     accessStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -269,6 +294,18 @@ export default function StudentExam() {
     const s = (secondsLeft % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
   }, [secondsLeft]);
+
+  const secondsUntilStart = useMemo(() => {
+    if (!examStartAt) return 0;
+    const delta = Math.floor((new Date(examStartAt).getTime() - now) / 1000);
+    return Math.max(0, delta);
+  }, [examStartAt, now]);
+
+  const startCountdown = useMemo(() => {
+    const mm = Math.floor(secondsUntilStart / 60).toString().padStart(2, "0");
+    const ss = (secondsUntilStart % 60).toString().padStart(2, "0");
+    return `${mm}:${ss}`;
+  }, [secondsUntilStart]);
 
   const q = questions[current] ?? questions[0];
   const answeredCount = Object.values(status).filter((s) => s === "answered").length;
@@ -298,11 +335,11 @@ export default function StudentExam() {
     if (step !== "exam" || !supabaseConfigured || !studentIdRef.current) return;
     const t = setTimeout(() => {
       void saveAnswers({
-        examId: EXAM_ID,
+        examId,
         studentId: studentIdRef.current!,
         answers,
         answered: answeredCount,
-        minutesUsed: Math.round((DURATION_MIN * 60 - secondsLeft) / 60),
+        minutesUsed: Math.round((durationMin * 60 - secondsLeft) / 60),
       });
     }, 1500);
     return () => clearTimeout(t);
@@ -400,7 +437,7 @@ export default function StudentExam() {
     // Start / resume the DB attempt.
     if (supabaseConfigured && studentIdRef.current && !attemptStartedRef.current) {
       attemptStartedRef.current = true;
-      void startAttempt({ examId: EXAM_ID, studentId: studentIdRef.current, total: questions.length });
+      void startAttempt({ examId, studentId: studentIdRef.current, total: questions.length });
     }
     
     // Start Recording and Screenshots
@@ -447,11 +484,11 @@ export default function StudentExam() {
 
     if (supabaseConfigured && studentIdRef.current) {
       await submitAttempt({
-        examId: EXAM_ID,
+        examId,
         studentId: studentIdRef.current,
         answers,
         answered: answeredCount,
-        minutesUsed: Math.round((DURATION_MIN * 60 - secondsLeft) / 60),
+        minutesUsed: Math.round((durationMin * 60 - secondsLeft) / 60),
       });
     }
     
@@ -468,8 +505,8 @@ export default function StudentExam() {
         const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
         
         await uploadExamRecords({
-          examId: EXAM_ID,
-          studentIdentifier: STUDENT_ROLL,
+          examId,
+          studentIdentifier: studentRoll,
           pdfBlob,
           videoBlob,
         });
@@ -494,6 +531,20 @@ export default function StudentExam() {
   }
   function goNext() { if (current < questions.length - 1) setCurrent((c) => c + 1); }
   function goTo(i: number) { setCurrent(i); }
+
+  if (accessDenied) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper px-6">
+        <div className="w-full max-w-lg border border-alert/40 bg-paper p-6">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-alert">Access denied</p>
+          <h1 className="mt-2 font-serif text-2xl font-semibold">Exam not available</h1>
+          <p className="mt-2 text-[13px] text-ink-soft">
+            You are not enrolled for this exam, or the exam id is invalid.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ---------- Step: download gate (opened in a normal browser) ----------
   // Hard requirement: exams run ONLY inside the Vignan Exam Browser (Tauri app).
@@ -648,7 +699,7 @@ export default function StudentExam() {
                   // Fire the registered URL scheme. The installed Tauri app intercepts
                   // this and navigates to the exam. The examId is passed as a query param
                   // so the app can route directly to the right paper.
-                  window.location.href = `vignan-exam://open?exam=${EXAM_ID}&roll=${STUDENT_ROLL}`;
+                  window.location.href = `vignan-exam://open?exam=${encodeURIComponent(examId)}`;
                   // If nothing happened after 3 s the scheme isn't registered → show fallback.
                   setTimeout(() => setDeepLinkFailed(true), 3000);
                 }}
@@ -674,7 +725,7 @@ export default function StudentExam() {
                 <div className="mt-4 space-y-3">
                   <button
                     onClick={() => {
-                      window.location.href = `vignan-exam://open?exam=${EXAM_ID}&roll=${STUDENT_ROLL}`;
+                      window.location.href = `vignan-exam://open?exam=${encodeURIComponent(examId)}`;
                     }}
                     className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper transition-colors hover:bg-maroon/90"
                   >
@@ -819,7 +870,7 @@ export default function StudentExam() {
           <h1 className="mb-4 font-serif text-2xl font-semibold">{examName}</h1>
           <div className="mb-5 grid grid-cols-3 gap-3">
             <div className="border border-line bg-paper-raised p-3 text-center">
-              <p className="font-serif text-2xl">{DURATION_MIN}</p>
+              <p className="font-serif text-2xl">{durationMin}</p>
               <p className="mt-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft">Minutes</p>
             </div>
             <div className="border border-line bg-paper-raised p-3 text-center">
@@ -838,16 +889,21 @@ export default function StudentExam() {
             <p>4. Answers save automatically as you attempt them.</p>
             <p>5. The exam auto-submits when the timer reaches zero.</p>
           </div>
+          {secondsUntilStart > 0 && (
+            <div className="mt-4 border border-amber/40 bg-amber/10 px-4 py-3 text-[12px] text-ink-soft">
+              Exam starts in <span className="font-mono text-[12px] text-ink">{startCountdown}</span>.
+            </div>
+          )}
           <label className="mt-5 flex items-start gap-3 text-[13px]">
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-0.5 h-4 w-4 accent-maroon" />
             <span>I have read the rules and consent to audio, video and screen monitoring for this exam.</span>
           </label>
           <button
-            disabled={!agreed}
+            disabled={!agreed || secondsUntilStart > 0}
             onClick={beginExam}
             className="mt-6 w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper transition-colors hover:bg-ink/90 disabled:cursor-not-allowed disabled:border-line disabled:bg-line disabled:text-ink-soft"
           >
-            Start exam
+            {secondsUntilStart > 0 ? `Starts in ${startCountdown}` : "Start exam"}
           </button>
         </div>
       </div>
@@ -873,8 +929,8 @@ export default function StudentExam() {
           <p className="mt-2 font-serif text-xl">Your exam has been submitted successfully</p>
           <p className="mt-2 text-[13.5px] text-ink-soft">{answeredCount} of {questions.length} questions answered.</p>
           <div className="mt-6 border border-line bg-paper-raised p-4 text-left font-mono text-[11px] text-ink-soft">
-            <div className="flex justify-between"><span>Candidate</span><span className="text-ink">{STUDENT_NAME}</span></div>
-            <div className="mt-1 flex justify-between"><span>Roll No.</span><span className="text-ink">{STUDENT_ROLL}</span></div>
+            <div className="flex justify-between"><span>Candidate</span><span className="text-ink">{studentName}</span></div>
+            <div className="mt-1 flex justify-between"><span>Roll No.</span><span className="text-ink">{studentRoll}</span></div>
             <div className="mt-1 flex justify-between"><span>Violations logged</span><span className="text-ink">{violations.length}</span></div>
             <div className="mt-1 flex justify-between"><span>Submitted at</span><span className="text-ink">{new Date().toLocaleTimeString()}</span></div>
           </div>
@@ -1014,7 +1070,7 @@ export default function StudentExam() {
                   <p className="mb-6 text-center text-[13px] text-ink-soft">Scan this QR code with your mobile phone to take a photo of your handwritten answer sheet.</p>
                   <div className="bg-white p-2">
                     <QRCodeSVG 
-                      value={`${window.location.origin}/mobile-upload?examId=${EXAM_ID}&qId=${q.id}&student=${studentIdRef.current}`} 
+                      value={`${window.location.origin}/mobile-upload?examId=${examId}&qId=${q.id}&student=${studentIdRef.current}`} 
                       size={180} 
                     />
                   </div>
@@ -1038,7 +1094,7 @@ export default function StudentExam() {
         <aside className="space-y-4 lg:sticky lg:top-[84px] lg:self-start">
           <div>
             <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Proctoring</p>
-            <ProctorCamera room={ROOM} identity={STUDENT_ROLL} examId={EXAM_ID} studentId={STUDENT_ROLL} screenStream={screenStreamRef.current} />
+            <ProctorCamera room={examId} identity={studentRoll} examId={examId} studentId={studentRoll} screenStream={screenStreamRef.current} />
           </div>
 
           {/* AI Proctor status panel */}

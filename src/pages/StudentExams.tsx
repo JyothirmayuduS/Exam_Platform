@@ -4,6 +4,7 @@ import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
 import { listExamsForStudent, subscribeToStudentExams, type ExamRecord } from "../lib/examApi";
 import { isTauri } from "../lib/platform";
+import { useAuthProfile } from "../lib/auth";
 
 export const STUDENT_NAV = [
   { label: "Overview", to: "/student", end: true },
@@ -11,8 +12,6 @@ export const STUDENT_NAV = [
   { label: "Results", to: "/student/results" },
   { label: "Help & support", to: "/student/help" },
 ];
-
-export const STUDENT_BATCH = "CSE — Sem III · Sec A/B";
 
 type Row = { id: string; name: string; meta: string; when: string; status: "published" | "scheduled" | "completed" };
 
@@ -35,10 +34,9 @@ function toRow(e: ExamRecord): Row {
 
 export default function StudentExams() {
   const navigate = useNavigate();
+  const { profile } = useAuthProfile();
   const [enterModal, setEnterModal] = useState<string | null>(null);
 
-  // Demo mode shows FALLBACK; configured mode starts empty + loading so a
-  // failed/empty query never flashes demo rows then blanks them.
   const [rows, setRows] = useState<Row[]>(supabaseConfigured ? [] : FALLBACK);
   const [live, setLive] = useState(false);
   const [loading, setLoading] = useState(supabaseConfigured);
@@ -47,16 +45,18 @@ export default function StudentExams() {
     if (!supabaseConfigured) return;
     let active = true;
     const load = async () => {
-      const data = await listExamsForStudent(STUDENT_BATCH);
+      const data = await listExamsForStudent();
       if (!active) return;
       setLive(true);
       setLoading(false);
-      // null = query failed → keep last-known rows; only a real result replaces.
       if (data) setRows(data.map(toRow));
     };
     void load();
-    const unsub = subscribeToStudentExams(STUDENT_BATCH, () => void load());
-    return () => { active = false; unsub(); };
+    const unsub = subscribeToStudentExams(() => void load());
+    return () => {
+      active = false;
+      unsub();
+    };
   }, []);
 
   const badge: Record<Row["status"], string> = {
@@ -66,7 +66,7 @@ export default function StudentExams() {
   };
 
   return (
-    <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={STUDENT_NAV} status={live ? "● Live · synced" : "Profile verified"}>
+    <RoleLayout role="Student" name={profile?.fullName ?? "Student"} subtitle={profile?.batch ?? "Batch unassigned"} tone="#7A1F2B" items={STUDENT_NAV} status={live ? "● Live · synced" : "Profile verified"}>
       <div className="flex items-end justify-between">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Assessments</p>
@@ -91,12 +91,9 @@ export default function StudentExams() {
                 onClick={(e) => {
                   e.preventDefault();
                   if (isTauri()) {
-                    // Already inside the lockdown browser — go straight into the exam.
-                    void navigate("/student/exam");
+                    void navigate(`/student/exam/${r.id}`);
                   } else {
-                    // Normal browser: instantly trigger the deep link to open the app
-                    window.location.href = `vignan-exam://open?exam=${r.id}&roll=21VGN0142`;
-                    // If it doesn't open (not installed), show the gate/modal fallback after a delay
+                    window.location.href = `vignan-exam://open?exam=${encodeURIComponent(r.id)}`;
                     setTimeout(() => {
                       setEnterModal(r.name);
                     }, 2500);
@@ -121,7 +118,6 @@ export default function StudentExams() {
         )}
       </div>
 
-      {/* Modal: shown when student clicks Enter exam in a normal browser */}
       {enterModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md border border-line bg-paper p-6 shadow-2xl">
@@ -140,7 +136,7 @@ export default function StudentExams() {
             </div>
             <div className="mt-5 flex gap-3">
               <a
-                href="/student/exam"
+                href="/student/exams"
                 className="flex-1 border border-maroon bg-maroon py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon/90"
               >
                 Install Lockdown Browser →
