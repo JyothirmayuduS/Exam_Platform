@@ -30,7 +30,7 @@ export default function App() {
       <Route path="/student/results" element={<ProtectedRoute allowedRole="student"><StudentResults /></ProtectedRoute>} />
       <Route path="/student/help" element={<ProtectedRoute allowedRole="student"><StudentHelp /></ProtectedRoute>} />
       <Route path="/student/exam" element={<ProtectedRoute allowedRole="student"><StudentExam /></ProtectedRoute>} />
-      <Route path="/mobile-upload" element={<ProtectedRoute allowedRole="student"><MobileUpload /></ProtectedRoute>} />
+      <Route path="/mobile-upload" element={<MobileUpload />} />
       
       {/* Teacher Routes */}
       <Route path="/teacher/proctoring" element={<ProtectedRoute allowedRole="teacher"><TeacherProctoring /></ProtectedRoute>} />
