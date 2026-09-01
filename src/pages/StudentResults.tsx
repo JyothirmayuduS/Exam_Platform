@@ -68,9 +68,15 @@ export default function StudentResults() {
             {RESULTS.map((r) => {
               const pct = Math.round((r.score / r.outOf) * 100);
               return (
-                <tr key={r.code} className="border-b border-line last:border-0">
+                <tr key={r.code} className="border-b border-line last:border-0 hover:bg-paper">
                   <td className="px-5 py-4">
-                    <p className="font-serif text-[15px] font-medium">{r.name}</p>
+                    <p className="font-serif text-[15px] font-medium text-ink hover:underline">
+                      {r.status === "published" ? (
+                        <a href={`/student/results/${r.code}`}>{r.name}</a>
+                      ) : (
+                        r.name
+                      )}
+                    </p>
                     <p className="mt-1 font-mono text-[10px] text-ink-soft">{r.code}</p>
                   </td>
                   <td className="px-5 py-4 text-ink-soft">{r.date}</td>
@@ -83,7 +89,10 @@ export default function StudentResults() {
                   </td>
                   <td className="px-5 py-4">
                     {r.status === "published" ? (
-                      <span className="border border-success/50 bg-success/10 px-2 py-1 font-mono text-[11px] text-success">{grade(pct)}</span>
+                      <div className="flex items-center justify-between">
+                        <span className="border border-success/50 bg-success/10 px-2 py-1 font-mono text-[11px] text-success">{grade(pct)}</span>
+                        <a href={`/student/results/${r.code}`} className="font-mono text-[9px] uppercase tracking-wider text-ink hover:underline">View Details →</a>
+                      </div>
                     ) : (
                       <span className="text-ink-soft">—</span>
                     )}

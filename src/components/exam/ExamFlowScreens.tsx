@@ -161,23 +161,73 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
   );
 }
 
-export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount }: {
+export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId }: {
   answeredCount: number;
   totalQuestions: number;
   studentName: string;
   studentRoll: string;
   violationsCount: number;
+  examId: string;
 }) {
+  const attemptId = `ATT-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const date = new Date().toLocaleDateString();
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-paper px-6">
+    <div className="flex min-h-screen items-center justify-center bg-paper px-6 text-ink pb-20 pt-12 overflow-y-auto">
       <div className="w-full max-w-md text-center">
         <Seal label="Submitted" sublabel="Receipt recorded" tone="forest" size={100} />
-        <h1 className="mt-6 font-serif text-2xl font-semibold text-success">Student Completed</h1>
-        <p className="mt-2 text-[13.5px] text-ink-soft">{answeredCount} of {totalQuestions} questions answered.</p>
-        <div className="mt-6 border border-line bg-paper-raised p-4 text-left font-mono text-[11px] text-ink-soft">
-          <div className="flex justify-between"><span>Candidate</span><span className="text-ink">{studentName}</span></div>
-          <div className="mt-1 flex justify-between"><span>Roll No.</span><span className="text-ink">{studentRoll}</span></div>
-          <div className="mt-1 flex justify-between"><span>Violations logged</span><span className="text-ink">{violationsCount}</span></div>
+        
+        <h1 className="mt-6 font-serif text-3xl font-semibold text-success">Exam Complete</h1>
+        <p className="mt-2 text-[13.5px] text-ink-soft">Your answers have been securely submitted.</p>
+        
+        <div className="mt-8 border border-line bg-paper-raised text-left font-mono text-[11px] text-ink-soft">
+          <div className="border-b border-line px-5 py-3">
+            <span className="block uppercase tracking-widest text-[9px] mb-1">Candidate</span>
+            <span className="text-ink text-[13px]">{studentName} ({studentRoll})</span>
+          </div>
+          
+          <div className="flex border-b border-line">
+            <div className="flex-1 border-r border-line px-5 py-3">
+              <span className="block uppercase tracking-widest text-[9px] mb-1">Attempt ID</span>
+              <span className="text-ink text-[12px]">{attemptId}</span>
+            </div>
+            <div className="flex-1 px-5 py-3">
+              <span className="block uppercase tracking-widest text-[9px] mb-1">Submitted at</span>
+              <span className="text-ink text-[12px]">{time}, {date}</span>
+            </div>
+          </div>
+
+          <div className="flex border-b border-line">
+            <div className="flex-1 border-r border-line px-5 py-3">
+              <span className="block uppercase tracking-widest text-[9px] mb-1">Answered</span>
+              <span className="text-ink text-[12px]">{answeredCount} / {totalQuestions}</span>
+            </div>
+            <div className="flex-1 px-5 py-3">
+              <span className="block uppercase tracking-widest text-[9px] mb-1">Violations</span>
+              <span className={`text-[12px] ${violationsCount > 0 ? 'text-amber' : 'text-ink'}`}>{violationsCount}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-8 space-y-4">
+          <p className="text-[13px] text-ink-soft leading-relaxed px-4">
+            You may now close this secure browser window. Detailed results and Analytics will be available on your dashboard once grading is complete.
+          </p>
+
+          <a 
+            href="/student/results" 
+            className="block w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper transition-colors hover:bg-ink/90"
+          >
+            Go to Results Hub →
+          </a>
+          
+          <button 
+            onClick={() => window.close()} 
+            className="block w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink transition-colors hover:bg-paper-raised"
+          >
+            Close Exam Window
+          </button>
         </div>
       </div>
     </div>

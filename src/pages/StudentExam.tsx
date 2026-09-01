@@ -640,6 +640,7 @@ export default function StudentExam() {
         studentName={STUDENT_NAME}
         studentRoll={STUDENT_ROLL}
         violationsCount={violations.length}
+        examId={EXAM_ID}
       />
     );
   }

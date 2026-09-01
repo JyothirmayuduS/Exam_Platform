@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node tunnel.mjs & vite",
+    "tunnel": "node tunnel.mjs",
     "dev:lite": "node preview-server.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
@@ -21,7 +22,8 @@
     "livekit-client": "^2.7.2",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -31,6 +33,8 @@
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.1.0",
     "autoprefixer": "^10.5.4",
+    "concurrently": "^10.0.5",
+    "localtunnel": "^2.0.2",
     "oxlint": "^1.79.0",
     "postcss": "^8.5.26",
     "react-router-dom": "^7.18.3",

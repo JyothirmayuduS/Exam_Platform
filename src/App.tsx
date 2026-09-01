@@ -6,6 +6,7 @@ import ProctorGrid from "./pages/ProctorGrid";
 import StudentHome from "./pages/StudentHome";
 import StudentExams from "./pages/StudentExams";
 import StudentResults from "./pages/StudentResults";
+import StudentResultDetail from "./pages/StudentResultDetail";
 import StudentHelp from "./pages/StudentHelp";
 import StudentExamDetail from "./pages/StudentExamDetail";
 import PracticeModeExam from "./pages/PracticeModeExam";
@@ -28,6 +29,7 @@ export default function App() {
       <Route path="/student/exams/:examId/practice" element={<ProtectedRoute allowedRole="student"><PracticeModeExam /></ProtectedRoute>} />
       <Route path="/student/exams/:examId/system-check" element={<ProtectedRoute allowedRole="student"><SystemCheckPage /></ProtectedRoute>} />
       <Route path="/student/results" element={<ProtectedRoute allowedRole="student"><StudentResults /></ProtectedRoute>} />
+      <Route path="/student/results/:resultId" element={<ProtectedRoute allowedRole="student"><StudentResultDetail /></ProtectedRoute>} />
       <Route path="/student/help" element={<ProtectedRoute allowedRole="student"><StudentHelp /></ProtectedRoute>} />
       <Route path="/student/exam" element={<ProtectedRoute allowedRole="student"><StudentExam /></ProtectedRoute>} />
       <Route path="/mobile-upload" element={<MobileUpload />} />
