@@ -29,6 +29,20 @@ body {
   position: static;
 }
 
+/* The question preview is a student-session surface, not a dialog card. */
+.fixed.inset-0.z-50.overflow-y-auto.bg-ink\/40 {
+  background-color: #f8f7f3;
+  padding: 0;
+}
+.fixed.inset-0.z-50.overflow-y-auto.bg-ink\/40 > section {
+  min-height: 100vh;
+  max-width: none;
+  box-shadow: none;
+}
+.fixed.inset-0.z-50.overflow-y-auto.bg-ink\/40 > section > div:last-child {
+  max-width: 980px;
+}
+
 /* Coding-question authoring needs room for readable input/output editors. */
 @media (min-width: 1280px) {
   .xl\:grid-cols-\[1fr_330px\] {
@@ -38,6 +52,19 @@ body {
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 768px) {
+  /* The final action should use the same natural height as the other buttons. */
+  section.mb-6 > .mt-5.grid.gap-3 > button {
+    align-self: end;
+  }
+}
+
+@media (min-width: 1024px) {
+  section.mb-6 > .mt-5.grid.gap-3 {
+    column-gap: 8px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

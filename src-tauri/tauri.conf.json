@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Vignan Exam Browser",
+  "version": "0.1.0",
+  "identifier": "ac.in.vignan.exam",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Vignan Exam Browser",
+        "label": "exam",
+        "fullscreen": true,
+        "alwaysOnTop": true,
+        "decorations": false,
+        "resizable": false,
+        "maximized": true,
+        "skipTaskbar": false,
+        "focus": true,
+        "visible": true,
+        "closable": false,
+        "minimizable": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi", "dmg", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["vignan-exam"]
+      }
+    }
+  }
+}

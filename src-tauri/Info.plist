@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSCameraUsageDescription</key>
+    <string>Vignan Exam Browser requires camera access for AI proctoring and identity verification during the exam.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Vignan Exam Browser requires microphone access for audio proctoring and background noise monitoring during the exam.</string>
+</dict>
+</plist>
