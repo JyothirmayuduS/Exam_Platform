@@ -1,9 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Seal from "../components/Seal";
 import ProctorCamera from "../components/ProctorCamera";
 import ExamTools from "../components/ExamTools";
-import ProctorAI, { type AIStatus, type AIViolation } from "../components/ProctorAI";
+import ProctorAI, { type AIStatus } from "../components/ProctorAI";
+import ExamHeader from "../components/exam/ExamHeader";
+import QuestionPanel from "../components/exam/QuestionPanel";
+import QuestionDisplay from "../components/exam/QuestionDisplay";
+import QuestionNavigationButtons from "../components/exam/QuestionNavigationButtons";
+import AnswerPanel from "../components/exam/AnswerPanel";
+import ExamSidebar from "../components/exam/ExamSidebar";
+import SubmitDialog from "../components/exam/SubmitDialog";
 import { supabaseConfigured } from "../lib/env";
 import {
   loadExamBundle,
@@ -14,6 +20,11 @@ import {
   type DBQuestion,
 } from "../lib/examApi";
 import { lockdownReady, isTauri, downloadUrl, osLabel, detectOS, probeInstaller } from "../lib/platform";
+import useExamState from "../hooks/useExamState";
+import useExamTimer from "../hooks/useExamTimer";
+import useAutosave from "../hooks/useAutosave";
+import useProctoring from "../hooks/useProctoring";
+import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import { invoke } from "@tauri-apps/api/core";
 import { jsPDF } from "jspdf";
 import { uploadExamRecords } from "../lib/examStorage";
@@ -30,9 +41,6 @@ const STUDENT_ROLL = "21VGN0142";
 const STUDENT_NAME = "B. Priya Nikitha";
 const ROOM = EXAM_ID; // LiveKit room == exam id so proctors join the same room
 const DURATION_MIN = 45;
-
-type Violation = { id: number; kind: string; at: string };
-type QStatus = "unvisited" | "visited" | "answered" | "marked";
 
 type Question = { id: number; text: string; options: string[]; category: string; type?: "mcq" | "subjective" };
 
@@ -104,13 +112,9 @@ export default function StudentExam() {
   const screenStreamRef = useRef<MediaStream | null>(null);
 
   const [agreed, setAgreed] = useState(false);
-  const [current, setCurrent] = useState(0);
-  const [answers, setAnswers] = useState<Record<number, number>>({});
-  const [status, setStatus] = useState<Record<number, QStatus>>({});
-  const [secondsLeft, setSecondsLeft] = useState(DURATION_MIN * 60);
-  const [violations, setViolations] = useState<Violation[]>([]);
-  const [activeViolation, setActiveViolation] = useState<Violation | null>(null);
-  const violationId = useRef(0);
+  const [showSubmitDialog, setShowSubmitDialog] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(!!document.fullscreenElement);
 
   // AI proctoring state
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
@@ -127,6 +131,26 @@ export default function StudentExam() {
   const screenshotsRef = useRef<string[]>([]);
   const screenshotIntervalRef = useRef<number | undefined>(undefined);
   const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  const {
+    currentIndex: current,
+    answers,
+    lastVisited,
+    goTo,
+    goNext,
+    goPrev,
+    goFirst,
+    goLast,
+    goLastVisited,
+    setAnswer,
+    toggleReview,
+    isReviewed,
+    getQuestionStatus,
+    counts,
+    markVisited,
+  } = useExamState(questions);
+
+  const { violations, activeViolation, setActiveViolation, flag, handleAIViolation } = useProctoring(step === "exam");
 
   // Download gate: only offer the installer after confirming the link resolves
   // to real installer bytes. Without the probe, an unhosted path returns a 404
@@ -186,17 +210,6 @@ export default function StudentExam() {
   const checksDone = checks.length > 0 && checkIndex >= checks.length;
   const checksPassed = checksDone && checks.every((c) => c.ok);
 
-  const flag = useCallback((kind: string) => {
-    const v: Violation = { id: (violationId.current += 1), kind, at: new Date().toLocaleTimeString() };
-    setViolations((list) => [...list, v]);
-    setActiveViolation(v);
-  }, []);
-
-  // Handle AI violation events from ProctorAI — feed into same violations system
-  const handleAIViolation = useCallback((v: AIViolation) => {
-    flag(`[AI] ${v.label}`);
-  }, [flag]);
-
   // Load exam + questions from the DB (falls back to demo set silently).
   useEffect(() => {
     if (!supabaseConfigured) return;
@@ -211,52 +224,6 @@ export default function StudentExam() {
     return () => { active = false; };
   }, []);
 
-  // Keep the status map in sync with the (possibly DB-loaded) question set.
-  useEffect(() => {
-    setStatus((prev) => {
-      const next: Record<number, QStatus> = {};
-      for (const q of questions) next[q.id] = prev[q.id] ?? "unvisited";
-      return next;
-    });
-  }, [questions]);
-
-  // Live proctoring flags: tab switch, focus loss, full-screen exit, network disconnect.
-  useEffect(() => {
-    if (step !== "exam") return;
-    const onVisibility = () => { if (document.hidden) flag("Tab / window switched away"); };
-    const onBlur = () => flag("Exam window lost focus");
-    const onFullscreen = () => { if (!document.fullscreenElement) flag("Exited full-screen mode"); };
-    const onOffline = () => flag("Network Disconnected / Offline");
-    
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("blur", onBlur);
-    document.addEventListener("fullscreenchange", onFullscreen);
-    window.addEventListener("offline", onOffline);
-    
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("blur", onBlur);
-      document.removeEventListener("fullscreenchange", onFullscreen);
-      window.removeEventListener("offline", onOffline);
-    };
-  }, [step, flag]);
-
-  // Exam timer.
-  useEffect(() => {
-    if (step !== "exam") return;
-    if (secondsLeft <= 0) { void doSubmit(); return; }
-    const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, secondsLeft]);
-
-  // Auto-dismiss the violation popup.
-  useEffect(() => {
-    if (!activeViolation) return;
-    const t = setTimeout(() => setActiveViolation(null), 5000);
-    return () => clearTimeout(t);
-  }, [activeViolation]);
-
   // Release any held media on unmount.
   useEffect(() => () => {
     accessStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -267,50 +234,73 @@ export default function StudentExam() {
     }
   }, []);
 
-  const timeString = useMemo(() => {
-    const m = Math.floor(secondsLeft / 60).toString().padStart(2, "0");
-    const s = (secondsLeft % 60).toString().padStart(2, "0");
-    return `${m}:${s}`;
-  }, [secondsLeft]);
+  const { secondsLeft, timeString, tone: timerTone } = useExamTimer({
+    durationMinutes: DURATION_MIN,
+    active: step === "exam",
+    onTimeUp: () => void doSubmit(),
+  });
 
   const q = questions[current] ?? questions[0];
-  const answeredCount = Object.values(status).filter((s) => s === "answered").length;
-  const markedCount = Object.values(status).filter((s) => s === "marked").length;
-  const visitedCount = Object.values(status).filter((s) => s === "visited").length;
-  const remainingCount = questions.length - answeredCount;
-
-  const categories = useMemo(() => {
-    const map = new Map<string, { total: number; answered: number }>();
-    for (const qq of questions) {
-      const entry = map.get(qq.category) ?? { total: 0, answered: 0 };
-      entry.total += 1;
-      if (status[qq.id] === "answered") entry.answered += 1;
-      map.set(qq.category, entry);
-    }
-    return [...map.entries()].map(([name, v]) => ({ name, ...v }));
-  }, [questions, status]);
+  const studentId = studentIdRef.current;
+  const screenStream = screenStreamRef.current;
+  const cameraStream = cameraStreamRef.current;
+  const answeredCount = counts.answered;
+  const markedCount = counts.marked;
+  const visitedCount = counts.visited;
+  const remainingCount = counts.remaining;
 
   useEffect(() => {
-    if (step === "exam" && q) {
-      setStatus((s) => (s[q.id] === "unvisited" ? { ...s, [q.id]: "visited" } : s));
-    }
-  }, [current, step, q]);
+    if (step === "exam" && q) markVisited(q.id);
+  }, [markVisited, q, step]);
 
-  // Autosave answers to the DB (debounced) whenever they change during the exam.
+  const persistAnswers = useCallback(async () => {
+    if (!supabaseConfigured || !studentIdRef.current) return false;
+    return saveAnswers({
+      examId: EXAM_ID,
+      studentId: studentIdRef.current,
+      answers: answers as Record<string, unknown>,
+      answered: answeredCount,
+      minutesUsed: Math.round((DURATION_MIN * 60 - secondsLeft) / 60),
+    });
+  }, [answeredCount, answers, secondsLeft]);
+
+  const { status: autosaveStatus, lastSavedAt, saveNow } = useAutosave({
+    enabled: step === "exam",
+    payload: answers,
+    onSave: persistAnswers,
+    intervalMs: 10000,
+  });
+
   useEffect(() => {
-    if (step !== "exam" || !supabaseConfigured || !studentIdRef.current) return;
+    const onFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  useKeyboardShortcuts({
+    enabled: step === "exam",
+    onPrev: goPrev,
+    onNext: goNext,
+    onFirst: goFirst,
+    onLast: goLast,
+    onToggleReview: () => {
+      if (!q) return;
+      toggleReview(q.id);
+    },
+    onSave: () => {
+      void saveNow();
+    },
+    onSubmit: () => setShowSubmitDialog(true),
+    onShowHelp: () => setShowShortcuts((prev) => !prev),
+  });
+
+  useEffect(() => {
+    if (step !== "submitted" || !isTauri()) return;
     const t = setTimeout(() => {
-      void saveAnswers({
-        examId: EXAM_ID,
-        studentId: studentIdRef.current!,
-        answers,
-        answered: answeredCount,
-        minutesUsed: Math.round((DURATION_MIN * 60 - secondsLeft) / 60),
-      });
-    }, 1500);
+      void invoke("exit_app");
+    }, 5000);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers, step]);
+  }, [step]);
 
   // ── Device access ───────────────────────────────────────────────────────────
   async function requestDevices() {
@@ -452,7 +442,7 @@ export default function StudentExam() {
       await submitAttempt({
         examId: EXAM_ID,
         studentId: studentIdRef.current,
-        answers,
+        answers: answers as Record<string, unknown>,
         answered: answeredCount,
         minutesUsed: Math.round((DURATION_MIN * 60 - secondsLeft) / 60),
       });
@@ -487,16 +477,12 @@ export default function StudentExam() {
 
   function selectOption(optIndex: number) {
     if (!q) return;
-    setAnswers((a) => ({ ...a, [q.id]: optIndex }));
-    setStatus((s) => ({ ...s, [q.id]: "answered" }));
+    setAnswer(q.id, optIndex);
   }
-  function markForReview() {
+  function toggleCurrentReview() {
     if (!q) return;
-    setStatus((s) => ({ ...s, [q.id]: s[q.id] === "answered" ? "answered" : "marked" }));
-    goNext();
+    toggleReview(q.id);
   }
-  function goNext() { if (current < questions.length - 1) setCurrent((c) => c + 1); }
-  function goTo(i: number) { setCurrent(i); }
 
   // ---------- Step: download gate (opened in a normal browser) ----------
   // Hard requirement: exams run ONLY inside the Vignan Exam Browser (Tauri app).
@@ -857,16 +843,6 @@ export default function StudentExam() {
     );
   }
 
-  // ---------- Step: submitted ----------
-  useEffect(() => {
-    if (step === "submitted" && isTauri()) {
-      const t = setTimeout(() => {
-        void invoke("exit_app");
-      }, 5000);
-      return () => clearTimeout(t);
-    }
-  }, [step]);
-
   if (step === "submitted") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-paper px-6">
@@ -887,12 +863,6 @@ export default function StudentExam() {
   }
 
   // ---------- Step: exam (kiosk mode) ----------
-  const statusStyle: Record<QStatus, string> = {
-    unvisited: "border-line text-ink-soft",
-    visited: "border-line-strong text-ink",
-    answered: "border-success bg-success text-paper",
-    marked: "border-amber bg-amber text-paper",
-  };
   return (
     <div className="min-h-screen bg-paper text-ink">
       <video ref={hiddenVideoRef} style={{ display: "none" }} muted playsInline />
@@ -910,25 +880,25 @@ export default function StudentExam() {
         </div>
       )}
 
-      <header className="sticky top-0 z-40 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur sm:px-6">
-        <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4">
-          <div>
-            <p className="font-serif text-[15px] font-semibold">{examName}</p>
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Locked session · No exit</p>
-          </div>
-          <div className="flex items-center gap-4 sm:gap-6">
-            <div className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 animate-pulse bg-alert" />
-              <span className="font-mono text-[11px] uppercase tracking-wider text-ink-soft">Recording</span>
-            </div>
-            <div className={`tabular border px-3 py-1.5 font-mono text-[15px] font-medium ${secondsLeft < 300 ? "border-alert text-alert" : "border-ink text-ink"}`}>
-              {timeString}
-            </div>
-          </div>
-        </div>
-      </header>
+      <ExamHeader
+        examName={examName}
+        studentName={STUDENT_NAME}
+        currentQuestion={current + 1}
+        totalQuestions={questions.length}
+        timeString={timeString}
+        timerToneClass={timerTone}
+        isFullscreen={isFullscreen}
+        onExit={() => setShowSubmitDialog(true)}
+        onToggleFullscreen={() => {
+          if (document.fullscreenElement) {
+            void document.exitFullscreen();
+          } else {
+            void document.documentElement.requestFullscreen?.();
+          }
+        }}
+      />
 
-      <div className="mx-auto grid max-w-[1400px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[264px_minmax(0,1fr)_224px] lg:px-8">
+      <div className="mx-auto grid max-w-[1400px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[264px_minmax(0,1fr)_264px] lg:px-8">
         {/* LEFT */}
         <aside className="space-y-4 lg:sticky lg:top-[84px] lg:self-start">
           <div className="border border-line bg-paper-raised p-4">
@@ -944,44 +914,12 @@ export default function StudentExam() {
             </div>
             <p className="mt-2 text-center font-mono text-[10px] text-ink-soft">{answeredCount}/{questions.length} complete</p>
           </div>
-
-          <div className="border border-line bg-paper-raised p-4">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Categories</p>
-            <div className="mt-3 space-y-2.5">
-              {categories.map((c) => (
-                <div key={c.name}>
-                  <div className="flex items-center justify-between text-[12px]">
-                    <span className="text-ink">{c.name}</span>
-                    <span className="font-mono text-[10px] text-ink-soft">{c.answered}/{c.total}</span>
-                  </div>
-                  <div className="mt-1 h-1 w-full bg-line">
-                    <div className="h-full bg-maroon" style={{ width: `${(c.answered / c.total) * 100}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="border border-line bg-paper-raised p-4">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question navigator</p>
-            <div className="mt-3 grid grid-cols-5 gap-1.5">
-              {questions.map((qq, i) => (
-                <button
-                  key={qq.id}
-                  onClick={() => goTo(i)}
-                  className={`flex h-9 items-center justify-center border font-mono text-[12px] transition-colors ${statusStyle[status[qq.id] ?? "unvisited"]} ${current === i ? "ring-2 ring-maroon ring-offset-1" : ""}`}
-                >
-                  {qq.id}
-                </button>
-              ))}
-            </div>
-            <div className="mt-3 space-y-1.5 font-mono text-[9px] uppercase tracking-wider text-ink-soft">
-              <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 border border-success bg-success" />Answered</span>
-              <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 border border-amber bg-amber" />Marked</span>
-              <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 border border-line-strong" />Visited</span>
-              <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 border border-line" />Not visited</span>
-            </div>
-          </div>
+          <QuestionPanel
+            questions={questions}
+            currentIndex={current}
+            getStatus={getQuestionStatus}
+            onJump={goTo}
+          />
         </aside>
 
         {/* CENTER */}
@@ -993,55 +931,49 @@ export default function StudentExam() {
             </div>
           </div>
 
-          <section className="border border-line bg-paper-raised p-5 sm:p-7">
-            <h2 className="font-serif text-[22px] leading-snug text-ink sm:text-[26px]">{q?.text}</h2>
-            <div className="mt-7 space-y-3">
-              {(q?.options ?? []).map((opt, i) => {
-                const selected = q ? answers[q.id] === i : false;
-                return (
-                  <button
-                    key={i}
-                    onClick={() => selectOption(i)}
-                    className={`flex w-full items-center gap-3 border px-4 py-3 text-left text-[13.5px] transition-colors ${selected ? "border-maroon bg-maroon/[0.06] text-ink" : "border-line text-ink hover:border-line-strong"}`}
-                  >
-                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center border font-mono text-[10px] ${selected ? "border-maroon bg-maroon text-paper" : "border-line-strong text-ink-soft"}`}>
-                      {String.fromCharCode(65 + i)}
-                    </span>
-                    {opt}
-                  </button>
-                );
-              })}
-              {q?.type === "subjective" && (
-                <div className="flex flex-col items-center justify-center border border-dashed border-line-strong bg-paper p-8">
-                  <p className="mb-4 font-mono text-[12px] uppercase tracking-wider text-ink">Subjective Upload Required</p>
-                  <p className="mb-6 text-center text-[13px] text-ink-soft">Scan this QR code with your mobile phone to take a photo of your handwritten answer sheet.</p>
-                  <div className="bg-white p-2">
-                    <QRCodeSVG 
-                      value={`${window.location.origin}/mobile-upload?examId=${EXAM_ID}&qId=${q.id}&student=${studentIdRef.current}`} 
-                      size={180} 
-                    />
-                  </div>
-                </div>
-              )}
-              {(!q?.options || q.options.length === 0) && q?.type !== "subjective" && (
-                <p className="border border-dashed border-line-strong p-4 font-mono text-[11px] text-ink-soft">
-                  Subjective question — answer captured by the proctor recording.
-                </p>
-              )}
-            </div>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <button onClick={markForReview} className="border border-line-strong px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink-soft hover:text-ink">Mark for review &amp; next</button>
-              <button onClick={goNext} disabled={current === questions.length - 1} className="border border-ink bg-ink px-5 py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-ink/90 disabled:cursor-not-allowed disabled:border-line disabled:bg-line disabled:text-ink-soft">Save &amp; next</button>
-              <button onClick={() => void doSubmit()} className="ml-auto border border-maroon bg-maroon px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon-dark">Submit exam</button>
-            </div>
-          </section>
+          <QuestionDisplay
+            question={q}
+            examId={EXAM_ID}
+            studentId={studentId}
+            answer={q ? answers[q.id] : undefined}
+            isReviewed={!!(q && isReviewed(q.id))}
+            onSelectOption={selectOption}
+            onToggleReview={() => {
+              if (!q) return;
+              toggleReview(q.id);
+            }}
+          />
+          <QuestionNavigationButtons
+            currentIndex={current}
+            total={questions.length}
+            lastVisited={lastVisited}
+            isReviewed={!!(q && isReviewed(q.id))}
+            onPrev={goPrev}
+            onNext={goNext}
+            onJump={goTo}
+            onGoLastVisited={goLastVisited}
+            onToggleReview={toggleCurrentReview}
+            onSaveNow={() => {
+              void saveNow();
+            }}
+          />
         </main>
 
         {/* RIGHT */}
         <aside className="space-y-4 lg:sticky lg:top-[84px] lg:self-start">
+          <AnswerPanel
+            answerStatus={!q ? "Not Answered" : isReviewed(q.id) ? "Review" : (answers[q.id] !== undefined ? "Answered" : "Not Answered")}
+            saveStatus={autosaveStatus}
+            lastSavedAt={lastSavedAt}
+            draftedCount={counts.drafted}
+            timeString={timeString}
+            onSubmit={() => setShowSubmitDialog(true)}
+          />
+          <ExamSidebar answered={answeredCount} total={questions.length} marked={markedCount} timeString={timeString} />
+
           <div>
             <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Proctoring</p>
-            <ProctorCamera room={ROOM} identity={STUDENT_ROLL} examId={EXAM_ID} studentId={STUDENT_ROLL} screenStream={screenStreamRef.current} />
+            <ProctorCamera room={ROOM} identity={STUDENT_ROLL} examId={EXAM_ID} studentId={STUDENT_ROLL} screenStream={screenStream} />
           </div>
 
           {/* AI Proctor status panel */}
@@ -1114,7 +1046,7 @@ export default function StudentExam() {
 
           {/* Hidden ProctorAI engine */}
           <ProctorAI
-            cameraStream={cameraStreamRef.current}
+            cameraStream={cameraStream}
             active={step === "exam"}
             onViolation={handleAIViolation}
             onStatus={setAiStatus}
@@ -1126,6 +1058,27 @@ export default function StudentExam() {
           </div>
         </aside>
       </div>
+
+      {showShortcuts && (
+        <div className="fixed bottom-4 right-4 z-[65] w-full max-w-sm border border-line bg-paper p-4 text-[12px] shadow-xl">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Keyboard shortcuts</p>
+          <p className="mt-2">↑/↓ Prev/Next · ← First · → Last</p>
+          <p>R or Ctrl+B Toggle review</p>
+          <p>Ctrl+S Save · Alt+S Submit · ? hide</p>
+        </div>
+      )}
+
+      <SubmitDialog
+        open={showSubmitDialog}
+        answered={answeredCount}
+        total={questions.length}
+        marked={markedCount}
+        onCancel={() => setShowSubmitDialog(false)}
+        onConfirm={() => {
+          setShowSubmitDialog(false);
+          void doSubmit();
+        }}
+      />
     </div>
   );
 }
