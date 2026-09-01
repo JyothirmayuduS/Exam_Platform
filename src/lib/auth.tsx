@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { User, Session } from "@supabase/supabase-js";
+import type { Session, User } from "@supabase/supabase-js";
 import { getSupabase } from "./supabase";
 
 export type AuthRole = "student" | "teacher" | null;
@@ -53,7 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     // Initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session } }: { data: { session: Session | null } }) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -64,7 +64,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event: string, session: Session | null) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -74,7 +75,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setRole(null);
         setLoading(false);
       }
-    });
+      },
+    );
 
     return () => subscription.unsubscribe();
   }, []);

@@ -22,7 +22,10 @@ import { uploadExamRecords } from "../lib/examStorage";
 // A production build resolves these from the join link / signed-in student.
 // For the prototype they name the seeded demo exam + student so the DB flow and
 // the LiveKit proctor room line up end-to-end.
-const EXAM_ID = "EXAM-2026-014";
+const EXAM_ID =
+  typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("examId") ?? "EXAM-2026-014"
+    : "EXAM-2026-014";
 const STUDENT_ROLL = "21VGN0142";
 const STUDENT_NAME = "B. Priya Nikitha";
 const ROOM = EXAM_ID; // LiveKit room == exam id so proctors join the same room
@@ -868,7 +871,7 @@ export default function StudentExam() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-paper px-6">
         <div className="w-full max-w-md text-center">
-          <Seal label="Submitted" sublabel="Receipt recorded" tone="success" size={100} />
+          <Seal label="Submitted" sublabel="Receipt recorded" tone="forest" size={100} />
           <h1 className="mt-6 font-serif text-2xl font-semibold text-success">Student Completed</h1>
           <p className="mt-2 font-serif text-xl">Your exam has been submitted successfully</p>
           <p className="mt-2 text-[13.5px] text-ink-soft">{answeredCount} of {questions.length} questions answered.</p>

@@ -7,10 +7,13 @@ import StudentHome from "./pages/StudentHome";
 import StudentExams from "./pages/StudentExams";
 import StudentResults from "./pages/StudentResults";
 import StudentHelp from "./pages/StudentHelp";
+import StudentExamDetail from "./pages/StudentExamDetail";
+import PracticeModeExam from "./pages/PracticeModeExam";
 import TeacherProctoring from "./pages/TeacherProctoring";
 import MobileUpload from "./pages/MobileUpload";
 import AuthLogin from "./pages/AuthLogin";
 import ProtectedRoute from "./components/ProtectedRoute";
+import SystemCheckPage from "./components/SystemCheckPage";
 
 export default function App() {
   return (
@@ -21,6 +24,9 @@ export default function App() {
       {/* Student Routes */}
       <Route path="/student" element={<ProtectedRoute allowedRole="student"><StudentHome /></ProtectedRoute>} />
       <Route path="/student/exams" element={<ProtectedRoute allowedRole="student"><StudentExams /></ProtectedRoute>} />
+      <Route path="/student/exams/:examId" element={<ProtectedRoute allowedRole="student"><StudentExamDetail /></ProtectedRoute>} />
+      <Route path="/student/exams/:examId/practice" element={<ProtectedRoute allowedRole="student"><PracticeModeExam /></ProtectedRoute>} />
+      <Route path="/student/exams/:examId/system-check" element={<ProtectedRoute allowedRole="student"><SystemCheckPage /></ProtectedRoute>} />
       <Route path="/student/results" element={<ProtectedRoute allowedRole="student"><StudentResults /></ProtectedRoute>} />
       <Route path="/student/help" element={<ProtectedRoute allowedRole="student"><StudentHelp /></ProtectedRoute>} />
       <Route path="/student/exam" element={<ProtectedRoute allowedRole="student"><StudentExam /></ProtectedRoute>} />
