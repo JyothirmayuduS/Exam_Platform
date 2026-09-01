@@ -1,57 +1,187 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
-import { supabaseConfigured } from "../lib/env";
-import { listExamsForStudent, subscribeToStudentExams, type ExamRecord } from "../lib/examApi";
+import ExamCountdown from "../components/ExamCountdown";
+import ExamCountdownBanner from "../components/ExamCountdownBanner";
+import { listEnrolledExamsForAuthUser, type ExamRecord } from "../lib/examApi";
+import { useAuth } from "../lib/auth";
 
-const nav = [{ label: "Overview", to: "/student", end: true }, { label: "My exams", to: "/student/exams" }, { label: "Results", to: "/student/results" }, { label: "Help & support", to: "/student/help" }];
+type ViewStatus = "upcoming" | "live" | "completed";
 
-// This student's batch — must match the batch string teachers publish with
-// (see TeacherDashboard exam records / TeacherQuestionSetup buildRecord), or
-// listExamsForStudent's exact-match query will never return the exam.
-const STUDENT_BATCH = "CSE — Sem III · Sec A/B";
+type Row = {
+  id: string;
+  name: string;
+  batch: string;
+  duration: number;
+  totalMarks: number;
+  scheduledAt: string | null;
+  status: ViewStatus;
+};
 
-type Card = { name: string; meta: string; date: string; ready: boolean };
-
-const FALLBACK: Card[] = [
-  { name: "Data Structures & Algorithms", meta: "CSE · Semester III · 45 minutes", date: "Today · 10:00 AM", ready: true },
-  { name: "Digital Electronics", meta: "ECE · Semester III · 60 minutes", date: "18 Mar 2026 · 2:00 PM", ready: false },
+const nav = [
+  { label: "Overview", to: "/student", end: true },
+  { label: "My exams", to: "/student/exams" },
+  { label: "Results", to: "/student/results" },
+  { label: "Help & support", to: "/student/help" },
 ];
 
-function toCard(e: ExamRecord): Card {
-  const when = e.scheduled_at ? new Date(e.scheduled_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Available now";
-  return { name: e.name, meta: `${e.batch} · ${e.duration_minutes} minutes`, date: e.status === "scheduled" ? when : "Available now", ready: e.status === "published" };
+function getStatus(exam: ExamRecord): ViewStatus {
+  if (!exam.scheduled_at) return exam.status === "published" ? "live" : "upcoming";
+  const start = new Date(exam.scheduled_at).getTime();
+  const end = start + exam.duration_minutes * 60 * 1000;
+  const now = Date.now();
+  if (now < start) return "upcoming";
+  if (now > end) return "completed";
+  return "live";
+}
+
+function toRow(exam: ExamRecord): Row {
+  return {
+    id: exam.id,
+    name: exam.name,
+    batch: exam.batch,
+    duration: exam.duration_minutes,
+    totalMarks: exam.total_marks,
+    scheduledAt: exam.scheduled_at,
+    status: getStatus(exam),
+  };
 }
 
 export default function StudentHome() {
-  // In demo mode (no backend) we show FALLBACK immediately. When a backend is
-  // configured we start empty + loading so a failed/empty query never flashes
-  // the demo exams and then blanks them (the "exams disappear" glitch).
-  const [cards, setCards] = useState<Card[]>(supabaseConfigured ? [] : FALLBACK);
-  const [live, setLive] = useState(false);
-  const [loading, setLoading] = useState(supabaseConfigured);
+  const { user } = useAuth();
+  const [rows, setRows] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | ViewStatus>("all");
 
   useEffect(() => {
-    if (!supabaseConfigured) return;
+    if (!user?.id) {
+      setLoading(false);
+      return;
+    }
+
     let active = true;
     const load = async () => {
-      const rows = await listExamsForStudent(STUDENT_BATCH);
+      const exams = await listEnrolledExamsForAuthUser(user.id);
       if (!active) return;
-      setLive(true);
+      setRows((exams ?? []).map(toRow));
       setLoading(false);
-      // rows === null means the query failed — keep the last-known list instead
-      // of wiping it. Only a successful (possibly empty) result replaces cards.
-      if (rows) setCards(rows.map(toCard));
     };
-    void load();
-    const unsub = subscribeToStudentExams(STUDENT_BATCH, () => void load());
-    return () => { active = false; unsub(); };
-  }, []);
 
-  return <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={nav}>
-    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Student dashboard</p><h1 className="mt-2 font-serif text-3xl font-semibold">Good morning, Priya.</h1><p className="mt-2 text-[13px] text-ink-soft">Your next assessment is ready when you are.</p></div><span className={`border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${live ? "border-success/40 bg-success/5 text-success" : "border-line text-ink-soft"}`}>{live ? "● Live · synced" : "Profile verified"}</span></div>
-    <div className="mt-8 grid gap-4 sm:grid-cols-3"><div className="border border-line bg-paper-raised p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Upcoming</p><p className="mt-2 font-serif text-3xl">{cards.length}</p><p className="mt-1 text-[12px] text-ink-soft">scheduled exams</p></div><div className="border border-line bg-paper-raised p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Completed</p><p className="mt-2 font-serif text-3xl">8</p><p className="mt-1 text-[12px] text-ink-soft">assessments this term</p></div><div className="border border-line bg-paper-raised p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Average score</p><p className="mt-2 font-serif text-3xl">78%</p><p className="mt-1 text-[12px] text-ink-soft">across published results</p></div></div>
-    <section className="mt-9"><div className="flex items-center justify-between"><h2 className="font-serif text-xl font-semibold">Your exam schedule</h2><Link to="/student/exams" className="font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">View all →</Link></div><div className="mt-3 space-y-2">{cards.map((exam) => <div key={exam.name} className="flex flex-col gap-4 border border-line bg-paper p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-serif text-[16px] font-medium">{exam.name}</p><p className="mt-1 text-[12px] text-ink-soft">{exam.meta}</p><p className="mt-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft">{exam.date}</p></div>{exam.ready ? <Link to="/student/exam" className="border border-maroon bg-maroon px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-maroon/90">Enter exam →</Link> : <span className="border border-line px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-ink-soft">Scheduled</span>}</div>)}{loading && cards.length === 0 && <div className="animate-pulse space-y-2">{[0, 1].map((i) => <div key={i} className="h-[92px] border border-line bg-paper-raised" />)}</div>}{!loading && cards.length === 0 && <div className="border border-dashed border-line-strong p-8 text-center text-[13px] text-ink-soft">No exams assigned yet. Published exams appear here the moment your teacher releases them.</div>}</div></section>
-    <section className="mt-9 grid gap-4 md:grid-cols-2"><div className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Before you begin</p><ul className="mt-4 space-y-3 text-[13px] text-ink-soft"><li>✓ Keep your ID card nearby</li><li>✓ Use a stable internet connection</li><li>✓ Allow camera and microphone access</li></ul></div><div className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Latest result</p><p className="mt-3 font-serif text-[16px]">Operating Systems</p><div className="mt-3 flex items-end justify-between"><span className="font-mono text-[11px] text-ink-soft">Published 12 Mar 2026</span><span className="font-serif text-2xl text-success">84%</span></div></div></section>
-  </RoleLayout>;
+    void load();
+    const id = window.setInterval(() => void load(), 60000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [user?.id]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      const matchesStatus = filter === "all" || row.status === filter;
+      const matchesSearch =
+        !q ||
+        row.name.toLowerCase().includes(q) ||
+        row.batch.toLowerCase().includes(q) ||
+        row.id.toLowerCase().includes(q);
+      return matchesStatus && matchesSearch;
+    });
+  }, [filter, query, rows]);
+
+  return (
+    <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={nav}>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Student dashboard</p>
+          <h1 className="mt-2 font-serif text-3xl font-semibold">My enrolled exams</h1>
+        </div>
+        <Link to="/student/exams" className="font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">
+          View full exams page →
+        </Link>
+      </div>
+
+      <ExamCountdownBanner
+        exams={rows
+          .filter((row) => row.status === "upcoming")
+          .map((row) => ({ id: row.id, name: row.name, startAt: row.scheduledAt }))}
+      />
+
+      <section className="mt-6 flex flex-wrap gap-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search exams"
+          className="min-w-[220px] border border-line bg-paper p-2 text-[13px]"
+        />
+        {(["all", "upcoming", "live", "completed"] as const).map((value) => (
+          <button
+            key={value}
+            onClick={() => setFilter(value)}
+            className={`border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${
+              filter === value ? "border-maroon bg-maroon text-paper" : "border-line text-ink-soft"
+            }`}
+          >
+            {value}
+          </button>
+        ))}
+      </section>
+
+      <section className="mt-5 space-y-3">
+        {filtered.map((row) => (
+          <div key={row.id} className="flex flex-col gap-4 border border-line bg-paper p-5 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="font-serif text-[17px] font-medium">{row.name}</p>
+              <p className="mt-1 text-[12px] text-ink-soft">
+                {row.batch} · {row.duration} minutes · {row.totalMarks} marks
+              </p>
+              <p className="mt-2 text-[12px] text-ink-soft">Exam ID: {row.id}</p>
+              <ExamCountdown startAt={row.scheduledAt} durationMinutes={row.duration} className="mt-2 block" />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Link
+                to={`/student/exams/${row.id}`}
+                className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink"
+              >
+                Details
+              </Link>
+              <Link
+                to={`/student/exams/${row.id}/practice`}
+                className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink"
+              >
+                Practice mode
+              </Link>
+              {row.status === "live" ? (
+                <Link
+                  to={`/student/exam?examId=${encodeURIComponent(row.id)}`}
+                  className="border border-maroon bg-maroon px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-paper"
+                >
+                  Join exam
+                </Link>
+              ) : (
+                <span className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                  {row.status}
+                </span>
+              )}
+            </div>
+          </div>
+        ))}
+
+        {!loading && filtered.length === 0 && (
+          <div className="border border-dashed border-line-strong p-8 text-center text-[13px] text-ink-soft">
+            No matching exams found.
+          </div>
+        )}
+
+        {loading && (
+          <div className="animate-pulse space-y-2">
+            {[0, 1].map((i) => (
+              <div key={i} className="h-24 border border-line bg-paper-raised" />
+            ))}
+          </div>
+        )}
+      </section>
+    </RoleLayout>
+  );
 }

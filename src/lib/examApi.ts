@@ -4,7 +4,7 @@
 
 import { getSupabase } from "./supabase";
 
-export type ExamStatus = "draft" | "published" | "scheduled";
+export type ExamStatus = "draft" | "published" | "scheduled" | "completed";
 export type ExamMode = "practice" | "lockdown";
 
 export type ExamRecord = {
@@ -20,6 +20,10 @@ export type ExamRecord = {
   scheduled_at: string | null;
   join_link: string;
   settings: Record<string, unknown>;
+  description?: string | null;
+  instructions?: string | null;
+  resources_url?: string | null;
+  faq?: { question: string; answer: string }[] | null;
   created_at?: string;
 };
 
@@ -49,7 +53,42 @@ export async function listExamsForStudent(batch: string): Promise<ExamRecord[] |
     .eq("batch", batch)
     .order("created_at", { ascending: false });
   if (error) return null;
-  return (data ?? []) as ExamRecord[];
+  return (data ?? []).map(normalizeExamRecord);
+}
+
+export async function listEnrolledExamsForAuthUser(
+  authUserId: string,
+): Promise<ExamRecord[] | null> {
+  const db = getSupabase();
+  if (!db) return null;
+
+  const { data: student } = await db
+    .from("students")
+    .select("id,batch")
+    .eq("auth_id", authUserId)
+    .maybeSingle();
+
+  if (!student?.id) return null;
+
+  const { data, error } = await db
+    .from("enrollments")
+    .select("exam:exams(*)")
+    .eq("student_id", student.id);
+
+  if (!error && data) {
+    const exams = (data as { exam: ExamRecord | null }[])
+      .map((row) => row.exam)
+      .filter((exam): exam is ExamRecord => !!exam && exam.status !== "draft")
+      .map(normalizeExamRecord)
+      .sort((a, b) => {
+        const left = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+        const right = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+        return left - right;
+      });
+    return exams;
+  }
+
+  return listExamsForStudent(String(student.batch));
 }
 
 /**
@@ -105,12 +144,28 @@ export async function loadExamBundle(examId: string): Promise<ExamBundle> {
     db.from("exams").select("*").eq("id", examId).maybeSingle(),
     db.from("questions").select("*").eq("exam_id", examId).order("id", { ascending: true }),
   ]);
-  const exam = (examRes.data as ExamRecord | null) ?? null;
+  const exam = examRes.data ? normalizeExamRecord(examRes.data as ExamRecord) : null;
   const questions = ((qRes.data as DBQuestion[] | null) ?? []).map((row) => ({
     ...row,
     options: normalizeOptions(row.options),
   }));
   return { exam, questions };
+}
+
+export async function loadExamForStudent(examId: string): Promise<{
+  exam: ExamRecord | null;
+  questionCount: number;
+}> {
+  const db = getSupabase();
+  if (!db) return { exam: null, questionCount: 0 };
+  const [{ data: exam }, { count }] = await Promise.all([
+    db.from("exams").select("*").eq("id", examId).maybeSingle(),
+    db.from("questions").select("id", { count: "exact", head: true }).eq("exam_id", examId),
+  ]);
+  return {
+    exam: exam ? normalizeExamRecord(exam as ExamRecord) : null,
+    questionCount: count ?? 0,
+  };
 }
 
 /** Options come back as jsonb (array) — guard against string/null shapes. */
@@ -248,6 +303,28 @@ export async function upsertProctorSession(opts: {
     livekit_room: opts.room,
     livekit_identity: opts.identity,
   });
+}
+
+function normalizeExamRecord(record: ExamRecord): ExamRecord {
+  return {
+    ...record,
+    faq: normalizeFaq(record.faq),
+  };
+}
+
+function normalizeFaq(
+  raw: unknown,
+): { question: string; answer: string }[] | null {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((item) => {
+        const q = String((item as { question?: unknown }).question ?? "").trim();
+        const a = String((item as { answer?: unknown }).answer ?? "").trim();
+        return q && a ? { question: q, answer: a } : null;
+      })
+      .filter((item): item is { question: string; answer: string } => !!item);
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
