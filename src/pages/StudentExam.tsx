@@ -32,10 +32,10 @@ import {
   DownloadGateScreen,
   InstalledScreen,
   SystemCheckScreen,
-  DeviceAccessScreen,
   RulesScreen,
   SubmittedScreen
 } from "../components/exam/ExamFlowScreens";
+import DeviceAccessFull from "../components/exam/DeviceAccessFull";
 
 // ── Exam identity ────────────────────────────────────────────────────────────
 // A production build resolves these from the join link / signed-in student.
@@ -606,14 +606,14 @@ export default function StudentExam() {
     if (step === "access") {
     const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
     return (
-      <DeviceAccessScreen
+      <DeviceAccessFull
         cam={cam}
         mic={mic}
         screen={screen}
         requesting={requesting}
         devicesReady={devicesReady}
         previewRef={previewRef}
-        onRequest={requestAccess}
+        onRequest={requestDevices}
         onContinue={() => setStep("rules")}
       />
     );
@@ -767,7 +767,15 @@ export default function StudentExam() {
 
           <div>
             <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Proctoring</p>
-            <ProctorCamera room={ROOM} identity={STUDENT_ROLL} examId={EXAM_ID} studentId={STUDENT_ROLL} screenStream={screenStream} />
+            <ProctorCamera
+              room={ROOM}
+              identity={STUDENT_ROLL}
+              examId={EXAM_ID}
+              studentId={STUDENT_ROLL}
+              screenStream={screenStream}
+              violationActive={!!activeViolation}
+              proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
+            />
           </div>
 
           {/* AI Proctor status panel */}
