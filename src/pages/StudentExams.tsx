@@ -49,10 +49,34 @@ export default function StudentExams() {
     const load = async () => {
       const data = await listExamsForStudent(STUDENT_BATCH);
       if (!active) return;
+      
+      const { getSupabase } = await import("../lib/supabase");
+      const db = getSupabase();
+      let attemptsMap: Record<string, string> = {};
+      
+      if (db && data) {
+         const { data: st } = await db.from("students").select("id").eq("roll", "21VGN0142").maybeSingle();
+         if (st?.id) {
+           const { data: att } = await db.from("attempts").select("exam_id, state").eq("student_id", st.id);
+           if (att) {
+             att.forEach(a => { attemptsMap[a.exam_id] = a.state; });
+           }
+         }
+      }
+
+      if (!active) return;
       setLive(true);
       setLoading(false);
       // null = query failed → keep last-known rows; only a real result replaces.
-      if (data) setRows(data.map(toRow));
+      if (data) {
+        setRows(data.map(e => {
+          const row = toRow(e);
+          if (attemptsMap[e.id] === "submitted") {
+            row.status = "completed";
+          }
+          return row;
+        }));
+      }
     };
     void load();
     const unsub = subscribeToStudentExams(STUDENT_BATCH, () => void load());

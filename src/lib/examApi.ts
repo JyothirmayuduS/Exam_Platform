@@ -223,11 +223,6 @@ export type AttemptRecord = {
   answers: Record<string, unknown>;
 };
 
-/**
- * Create (or resume) the student's attempt when they begin the exam. Upserts on
- * the (exam_id, student_id) unique key so a reload resumes the same row.
- * Returns the attempt id, or null when offline.
- */
 export async function startAttempt(opts: {
   examId: string;
   studentId: string;
@@ -235,18 +230,35 @@ export async function startAttempt(opts: {
 }): Promise<string | null> {
   const db = getSupabase();
   if (!db) return null;
+
+  const { data: existing } = await db
+    .from("attempts")
+    .select("id, state")
+    .eq("exam_id", opts.examId)
+    .eq("student_id", opts.studentId)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.state === "submitted") {
+      return existing.id;
+    }
+    const { error } = await db
+      .from("attempts")
+      .update({ state: "in_progress", started_at: new Date().toISOString(), total: opts.total })
+      .eq("id", existing.id);
+    if (error) return null;
+    return existing.id;
+  }
+
   const { data, error } = await db
     .from("attempts")
-    .upsert(
-      {
-        exam_id: opts.examId,
-        student_id: opts.studentId,
-        state: "in_progress",
-        total: opts.total,
-        started_at: new Date().toISOString(),
-      },
-      { onConflict: "exam_id,student_id" },
-    )
+    .insert({
+      exam_id: opts.examId,
+      student_id: opts.studentId,
+      state: "in_progress",
+      total: opts.total,
+      started_at: new Date().toISOString(),
+    })
     .select("id")
     .maybeSingle();
   if (error) return null;

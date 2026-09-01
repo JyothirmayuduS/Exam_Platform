@@ -37,16 +37,10 @@ import {
 } from "../components/exam/ExamFlowScreens";
 import DeviceAccessFull from "../components/exam/DeviceAccessFull";
 
-// ── Exam identity ────────────────────────────────────────────────────────────
-// A production build resolves these from the join link / signed-in student.
-// For the prototype they name the seeded demo exam + student so the DB flow and
-// the LiveKit proctor room line up end-to-end.
-const EXAM_ID =
-  typeof window !== "undefined"
-    ? new URLSearchParams(window.location.search).get("examId") ?? "EXAM-2026-014"
-    : "EXAM-2026-014";
-const STUDENT_ROLL = "21VGN0142";
-const STUDENT_NAME = "B. Priya Nikitha";
+const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+const EXAM_ID = params.get("examId") ?? params.get("exam") ?? "EXAM-2026-014";
+const STUDENT_ROLL = params.get("roll") ?? "TEST-001";
+const STUDENT_NAME = "Prototype Student";
 const ROOM = EXAM_ID; // LiveKit room == exam id so proctors join the same room
 const DURATION_MIN = 45;
 
@@ -227,7 +221,28 @@ export default function StudentExam() {
       if (!active) return;
       if (exam?.name) setExamName(`${exam.name} — Sem III`);
       if (rows.length) setQuestions(rows.map(toUIQuestion));
-      studentIdRef.current = await getStudentIdByRoll(STUDENT_ROLL);
+      
+      const db = await import("../lib/supabase").then(m => m.getSupabase());
+      if (db) {
+        // Find the student based on the auth_id in the mock session (or real session)
+        // If a real "roll" was passed in deep link, use that, else fallback to session
+        if (STUDENT_ROLL !== "TEST-001") {
+           studentIdRef.current = await getStudentIdByRoll(STUDENT_ROLL);
+        } else {
+           const { data: { session } } = await db.auth.getSession();
+           if (session?.user?.id) {
+             const { data: st } = await db.from("students").select("id").eq("auth_id", session.user.id).maybeSingle();
+             if (st) studentIdRef.current = st.id;
+           }
+        }
+        
+        if (studentIdRef.current && active) {
+          const { data: att } = await db.from("attempts").select("state").eq("exam_id", EXAM_ID).eq("student_id", studentIdRef.current).maybeSingle();
+          if (att?.state === "submitted") {
+            setStep("submitted");
+          }
+        }
+      }
     })();
     return () => { active = false; };
   }, []);
