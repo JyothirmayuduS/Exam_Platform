@@ -44,7 +44,17 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
         </nav>
         <div className="border-t border-line px-5 py-4">
           <div className="flex items-center gap-2 font-mono text-[10px] text-ink-soft"><span className="h-1.5 w-1.5 bg-success" />{status}</div>
-          <Link to="/" className="mt-3 block text-[12px] text-ink-soft hover:text-ink">Switch role →</Link>
+          <button 
+            onClick={async () => {
+              const { getSupabase } = await import("../lib/supabase");
+              const supabase = getSupabase();
+              if (supabase) await supabase.auth.signOut();
+              window.location.href = "/";
+            }}
+            className="mt-3 block text-[12px] text-ink-soft hover:text-ink text-left"
+          >
+            Switch role / Sign out →
+          </button>
         </div>
       </aside>
       <div className="lg:pl-64">

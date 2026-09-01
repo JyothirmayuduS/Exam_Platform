@@ -365,6 +365,7 @@ export type LiveAttempt = {
   submitted_at: string | null;
   auto_saved_at: string | null;
   student: { id: string; roll: string; full_name: string } | null;
+  violations?: { id: string; severity: string; description: string; created_at: string }[];
 };
 
 /** All attempts for an exam, joined with the student, newest activity first. */
@@ -373,7 +374,7 @@ export async function listLiveAttempts(examId: string): Promise<LiveAttempt[]> {
   if (!db) return [];
   const { data, error } = await db
     .from("attempts")
-    .select("id,exam_id,state,answered,total,minutes_used,submitted_at,auto_saved_at,student:students(id,roll,full_name)")
+    .select("id,exam_id,state,answered,total,minutes_used,submitted_at,auto_saved_at,student:students(id,roll,full_name),violations:violation_events(id,severity,description,created_at)")
     .eq("exam_id", examId)
     .order("auto_saved_at", { ascending: false });
   if (error) return [];
@@ -397,6 +398,12 @@ export async function listLiveAttempts(examId: string): Promise<LiveAttempt[]> {
             full_name: String((student as Record<string, unknown>).full_name),
           }
         : null,
+      violations: Array.isArray(r.violations) ? r.violations.map(v => ({
+        id: String(v.id),
+        severity: String(v.severity),
+        description: String(v.description),
+        created_at: String(v.created_at)
+      })) : [],
     } as LiveAttempt;
   });
 }
@@ -416,4 +423,125 @@ export function subscribeToAttempts(examId: string, onChange: () => void): () =>
   return () => {
     db.removeChannel(channel);
   };
+}
+
+
+// --- Student Enrollment Management ---
+
+export type StudentRosterRecord = {
+  id: string;
+  roll: string;
+  full_name: string;
+  email: string;
+  batch: string;
+};
+
+export async function getExamRoster(examId: string): Promise<StudentRosterRecord[]> {
+  const db = getSupabase();
+  if (!db) return [];
+  
+  const { data, error } = await db
+    .from("enrollments")
+    .select("student:students(id, roll, full_name, email, batch)")
+    .eq("exam_id", examId);
+    
+  if (error || !data) return [];
+  
+  return data
+    .map((row: any) => row.student)
+    .filter(Boolean) as StudentRosterRecord[];
+}
+
+export async function enrollStudent(examId: string, student: { roll: string; name: string; email: string; batch: string }): Promise<{ error?: string }> {
+  const db = getSupabase();
+  if (!db) return { error: "No DB connection" };
+
+  // 1. Upsert student
+  const { data: sData, error: sErr } = await db
+    .from("students")
+    .upsert(
+      { roll: student.roll, full_name: student.name, email: student.email, batch: student.batch },
+      { onConflict: "roll" }
+    )
+    .select("id")
+    .single();
+
+  if (sErr || !sData) return { error: sErr?.message || "Failed to upsert student" };
+
+  // 2. Insert enrollment
+  const { error: eErr } = await db
+    .from("enrollments")
+    .upsert({ exam_id: examId, student_id: sData.id }, { onConflict: "exam_id, student_id" });
+
+  if (eErr) return { error: eErr.message };
+  return {};
+}
+
+export async function bulkEnrollStudents(examId: string, batch: string, students: { roll: string; name: string; email: string }[]): Promise<{ error?: string; count: number }> {
+  const db = getSupabase();
+  if (!db) return { error: "No DB connection", count: 0 };
+  if (students.length === 0) return { count: 0 };
+
+  // 1. Upsert all students
+  const { data: sData, error: sErr } = await db
+    .from("students")
+    .upsert(
+      students.map(s => ({ roll: s.roll, full_name: s.name, email: s.email, batch })),
+      { onConflict: "roll" }
+    )
+    .select("id");
+
+  if (sErr || !sData) return { error: sErr?.message || "Failed to bulk upsert students", count: 0 };
+
+  // 2. Insert enrollments
+  const { error: eErr } = await db
+    .from("enrollments")
+    .upsert(
+      sData.map((s: any) => ({ exam_id: examId, student_id: s.id })),
+      { onConflict: "exam_id, student_id" }
+    );
+
+  if (eErr) return { error: eErr.message, count: 0 };
+  return { count: sData.length };
+}
+
+export async function removeStudentFromExam(examId: string, roll: string): Promise<{ error?: string }> {
+  const db = getSupabase();
+  if (!db) return { error: "No DB connection" };
+
+  const { data: student } = await db.from("students").select("id").eq("roll", roll).maybeSingle();
+  if (!student) return { error: "Student not found" };
+
+  const { error } = await db
+    .from("enrollments")
+    .delete()
+    .eq("exam_id", examId)
+    .eq("student_id", student.id);
+
+  if (error) return { error: error.message };
+  return {};
+}
+
+
+export async function enrollEntireBatch(examId: string, batch: string): Promise<{ error?: string, count: number }> {
+  const db = getSupabase();
+  if (!db) return { error: "No DB connection", count: 0 };
+
+  const { data: students, error: sErr } = await db
+    .from("students")
+    .select("id")
+    .eq("batch", batch);
+    
+  if (sErr) return { error: sErr.message, count: 0 };
+  if (!students || students.length === 0) return { count: 0 };
+
+  const { error: eErr } = await db
+    .from("enrollments")
+    .upsert(
+      students.map((s: any) => ({ exam_id: examId, student_id: s.id })),
+      { onConflict: "exam_id, student_id" }
+    );
+
+  if (eErr) return { error: eErr.message, count: 0 };
+  return { count: students.length };
 }

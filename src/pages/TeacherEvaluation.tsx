@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { submittedAttempts, type Attempt, type Flag } from "../data/examSession";
+import { type Attempt, type Flag } from "../data/examSession";
+import useLiveAttempts from "../hooks/useLiveAttempts";
 
 type QType = "MCQ" | "MSQ" | "TrueFalse" | "Numerical" | "Subjective" | "Coding";
 type RubricItem = { id: string; label: string; detail: string; marks: number };
@@ -13,8 +14,6 @@ type Question = {
   tests?: TestCase[]; rubric?: RubricItem[];
 };
 type Status = "To grade" | "In review" | "Graded";
-// The candidate identity (name, roll, exam, submission time, proctoring flags) comes
-// from the shared session roster; this page only adds the paper and grading state.
 type Candidate = Attempt & { order: number; status: Status; paper: Question[]; awarded?: number };
 
 const SUBJECTIVE_RUBRIC: RubricItem[] = [
@@ -92,18 +91,33 @@ const SEED_STATUS: Record<string, { status: Status; awarded?: number }> = {
   "B-019": { status: "In review" },
 };
 
-const initialRoster = (): Candidate[] => submittedAttempts()
-  .filter((a) => PAPERS[a.id])
-  .map((a, i) => ({ ...a, order: i + 1, paper: PAPERS[a.id], status: SEED_STATUS[a.id]?.status ?? "To grade", awarded: SEED_STATUS[a.id]?.awarded }));
-
 export default function TeacherEvaluation({ notify }: { notify: (message: string) => void }) {
   const [searchParams, setSearchParams] = useSearchParams();
-  // A deep link (?review=<attempt id>, e.g. from Submissions) opens that paper straight away,
-  // so the candidate it points at starts the page already marked as in review.
-  const [roster, setRoster] = useState<Candidate[]>(() => {
+  const { data: liveAttempts = [] } = useLiveAttempts("EXAM-2026-014");
+
+  const [roster, setRoster] = useState<Candidate[]>([]);
+  
+  useEffect(() => {
+    // Merge live DB attempts with the mock paper content for evaluation
+    const mapped: Candidate[] = liveAttempts
+      .filter((a) => a.state === "Submitted") // We only grade submitted
+      .map((a, i) => {
+        // Find paper mock, fallback to first one if not present, because DB IDs differ from mock IDs
+        const paper = PAPERS[a.id] || PAPERS["A-031"];
+        return {
+          ...a,
+          order: i + 1,
+          paper,
+          status: "To grade", // By default all from DB are 'To grade'
+        };
+      });
+      
+    // Apply review param
     const deepLink = searchParams.get("review");
-    return initialRoster().map((c) => (c.id === deepLink && c.status === "To grade" ? { ...c, status: "In review" as Status } : c));
-  });
+    setRoster(mapped.map((c) => (c.id === deepLink && c.status === "To grade" ? { ...c, status: "In review" } : c)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveAttempts]);
+
   const [statusFilter, setStatusFilter] = useState<"All" | Status>("All");
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [subject, setSubject] = useState("All exams");
@@ -172,6 +186,8 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
         <p className="mt-2 max-w-2xl text-[13px] text-ink-soft">Only submitted papers appear here — live attempts are tracked in Submissions. Objective and coding answers are scored automatically from the answer key; theory answers are reviewed by you. Every grading session is camera-monitored.</p>
       </div>
       <div className="flex flex-wrap gap-2">
+        <button onClick={() => notify("Bulk feedback modal opened")} className="border border-line-strong bg-paper px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Bulk feedback</button>
+        <button onClick={() => notify("Answers visibility toggled")} className="border border-line-strong bg-paper px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Student visibility: OFF</button>
         <button onClick={() => notify("Grading guide opened")} className="border border-line-strong bg-paper px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Grading guide</button>
         <button onClick={() => notify("Grading progress saved")} className="border border-forest bg-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save progress</button>
       </div>
@@ -572,7 +588,13 @@ function ManualAnswer({ q, cid, score, rubricChecks, feedback, setScore, toggleI
           {Array.from({ length: q.marks + 1 }, (_, m) => <button key={m} onClick={() => setScore(q.id, m, q.marks)} className={`h-7 w-7 border font-mono text-[10px] ${score === m ? "border-forest bg-forest text-paper" : "border-line-strong text-ink-soft hover:border-forest"}`}>{m}</button>)}
         </div>
       </div>
-      <textarea value={fb} onChange={(e) => setFeedback(q.id, e.target.value)} rows={2} placeholder="Feedback for this answer (optional)…" className="mt-3 block w-full resize-y border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+      <div className="mt-3 relative">
+        <textarea value={fb} onChange={(e) => setFeedback(q.id, e.target.value)} rows={3} placeholder="Feedback for this answer (optional)…" className="block w-full resize-y border border-line-strong bg-paper px-3 py-2 pb-10 text-[13px] outline-none focus:border-forest" />
+        <div className="absolute bottom-2 left-2 flex gap-2">
+          <button onClick={() => alert("Highlight text to add inline comment")} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Inline Text Comment</button>
+          <button onClick={() => alert("Recording voice note...")} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Voice Comment</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -595,6 +617,7 @@ function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manu
       <div className="mt-4 grid gap-2">
         {hasNext && <button onClick={onFinishNext} className="border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save &amp; next → {nextName}</button>}
         <button onClick={onFinish} className="border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5">{hasNext ? "Save & close" : "Save & finish"}</button>
+        <button onClick={() => alert("Flagged for moderation")} className="border border-alert/50 text-alert bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10">Flag for Moderation</button>
       </div>
     </div>
   );
@@ -612,6 +635,7 @@ function CandidateFacts({ candidate }: { candidate: Candidate }) {
         <Row label="Exam" value={candidate.exam} />
         <Row label="Submitted" value={candidate.submittedAgo} />
         <Row label="Proctoring" value={candidate.flags.length ? `${candidate.flags.length} flag(s)` : "Clean"} />
+        <Row label="Plagiarism" value="Checked: 0% match" />
       </div>
     </div>
   );

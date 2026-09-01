@@ -1,4 +1,8 @@
-import { useMemo, useState, useEffect, type FormEvent } from "react";
+import * as fs from 'fs';
+
+const filePath = 'src/pages/TeacherStudents.tsx';
+
+const newCode = `import { useMemo, useState, useEffect, type FormEvent } from "react";
 import { getExamRoster, enrollStudent, bulkEnrollStudents, removeStudentFromExam, type StudentRosterRecord } from "../lib/examApi";
 
 type Exam = { id: string; name: string; batch: string; state: string; tone: string };
@@ -31,7 +35,7 @@ export default function TeacherStudents({ exams, navigate, notify }: { exams: Ex
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return q ? roster.filter((r) => `${r.roll} ${r.name} ${r.email}`.toLowerCase().includes(q)) : roster;
+    return q ? roster.filter((r) => \`\${r.roll} \${r.name} \${r.email}\`.toLowerCase().includes(q)) : roster;
   }, [roster, search]);
 
   const addManual = async () => {
@@ -44,7 +48,7 @@ export default function TeacherStudents({ exams, navigate, notify }: { exams: Ex
       setError("Roll number, name and email are all required.");
       return;
     }
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(email)) {
       setError("Enter a valid email address.");
       return;
     }
@@ -61,7 +65,7 @@ export default function TeacherStudents({ exams, navigate, notify }: { exams: Ex
     
     setForm({ roll: "", name: "", email: "" });
     setError("");
-    notify(`${name} added to the roster`);
+    notify(\`\${name} added to the roster\`);
   };
 
   const remove = async (roll: string) => {
@@ -72,36 +76,36 @@ export default function TeacherStudents({ exams, navigate, notify }: { exams: Ex
       return;
     }
     setRoster((cur) => cur.filter((r) => r.roll !== roll));
-    notify(`${roll} removed`);
+    notify(\`\${roll} removed\`);
   };
 
   const downloadTemplate = () => {
     const tag = batch?.id ?? "batch";
-    const header = "roll_no,full_name,email\n";
-    const sample = `21VGN0999,Sample Student,21vgn0999@vignan.ac.in\n`;
-    const blanks = ",,\n".repeat(8);
+    const header = "roll_no,full_name,email\\n";
+    const sample = \`21VGN0999,Sample Student,21vgn0999@vignan.ac.in\\n\`;
+    const blanks = ",,\\n".repeat(8);
     const blob = new Blob([header + sample + blanks], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${tag}-students-template.csv`;
+    a.download = \`\${tag}-students-template.csv\`;
     a.click();
     URL.revokeObjectURL(url);
-    notify(`Student template for ${tag} downloaded`);
+    notify(\`Student template for \${tag} downloaded\`);
   };
 
   const downloadRoster = () => {
     const tag = batch?.id ?? "batch";
-    const header = "roll_no,full_name,email\n";
-    const rows = roster.map(r => `${r.roll},${r.name},${r.email}\n`).join("");
+    const header = "roll_no,full_name,email\\n";
+    const rows = roster.map(r => \`\${r.roll},\${r.name},\${r.email}\\n\`).join("");
     const blob = new Blob([header + rows], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${tag}-students-roster.csv`;
+    a.download = \`\${tag}-students-roster.csv\`;
     a.click();
     URL.revokeObjectURL(url);
-    notify(`Roster for ${tag} downloaded`);
+    notify(\`Roster for \${tag} downloaded\`);
   };
 
   const onBulkStage = (file: File | undefined) => {
@@ -111,7 +115,7 @@ export default function TeacherStudents({ exams, navigate, notify }: { exams: Ex
     const reader = new FileReader();
     reader.onload = async (e) => {
       const text = e.target?.result as string;
-      const lines = text.split('\n').filter(l => l.trim().length > 0);
+      const lines = text.split('\\n').filter(l => l.trim().length > 0);
       
       const parsed: {roll: string, name: string, email: string}[] = [];
       for (let i = 1; i < lines.length; i++) {
@@ -132,7 +136,7 @@ export default function TeacherStudents({ exams, navigate, notify }: { exams: Ex
         const records = await getExamRoster(batch.id);
         setRoster(records.map(r => ({ roll: r.roll, name: r.full_name, email: r.email, source: "existing" })));
         
-        notify(`${count} students imported from ${file.name}`);
+        notify(\`\${count} students imported from \${file.name}\`);
       } else {
         notify("No valid student rows found in CSV");
       }
@@ -245,8 +249,8 @@ function AddStudents(props: { method: "manual" | "bulk"; setMethod: (m: "manual"
 }
 function Tab({ active, onClick, label, hint }: { active: boolean; onClick: () => void; label: string; hint: string }) {
   return (
-    <button onClick={onClick} className={`-mb-px border-b-2 px-5 py-3 text-left transition ${active ? "border-forest" : "border-transparent hover:border-line-strong"}`}>
-      <span className={`block font-serif text-[17px] font-semibold ${active ? "text-ink" : "text-ink-soft"}`}>{label}</span>
+    <button onClick={onClick} className={\`-mb-px border-b-2 px-5 py-3 text-left transition \${active ? "border-forest" : "border-transparent hover:border-line-strong"}\`}>
+      <span className={\`block font-serif text-[17px] font-semibold \${active ? "text-ink" : "text-ink-soft"}\`}>{label}</span>
       <span className="mt-0.5 block font-mono text-[9px] uppercase tracking-widest text-ink-soft">{hint}</span>
     </button>
   );
@@ -289,7 +293,7 @@ function BulkPanel({ batch, bulkFile, onTemplate, onStage }: { batch: Exam | nul
         </div>
         <label className="flex cursor-pointer flex-col items-center justify-center gap-2 border-2 border-dashed border-line-strong bg-paper-raised px-6 py-10 text-center hover:border-forest">
           <span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Step 2 — Upload</span>
-          <span className="font-serif text-[16px] text-ink">{bulkFile ? `✓ ${bulkFile}` : "Drop or choose your CSV"}</span>
+          <span className="font-serif text-[16px] text-ink">{bulkFile ? \`✓ \${bulkFile}\` : "Drop or choose your CSV"}</span>
           <span className="text-[12px] text-ink-soft">{bulkFile ? "Imported. Choose another file to replace." : "Click to browse for the filled-in template"}</span>
           <input type="file" accept=".csv" className="hidden" onChange={(e) => onStage(e.target.files?.[0])} />
         </label>
@@ -365,3 +369,7 @@ function RosterRow({ student, onRemove }: { student: Student; onRemove: (roll: s
     </div>
   );
 }
+`;
+
+fs.writeFileSync(filePath, newCode);
+console.log('TeacherStudents rewritten successfully.');

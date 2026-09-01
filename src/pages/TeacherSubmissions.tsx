@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ATTEMPTS, LIVE_EXAM, SESSION_MINUTES, evaluationPath, needsAttention, type Attempt, type AttemptState, type Network } from "../data/examSession";
+import { LIVE_EXAM, SESSION_MINUTES, evaluationPath, needsAttention, type Attempt, type AttemptState, type Network } from "../data/examSession";
+import useLiveAttempts from "../hooks/useLiveAttempts";
 
 type StatusTab = "All" | AttemptState | "Needs attention";
 const TABS: StatusTab[] = ["All", "Submitted", "In progress", "Not started", "Needs attention"];
@@ -22,17 +23,19 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
   const [exam, setExam] = useState<string>(LIVE_EXAM);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<(typeof SORTS)[number]>("Progress");
-  const [selectedId, setSelectedId] = useState<string | null>("A-031");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [remaining, setRemaining] = useState(18 * 60 + 24);
   const [extended, setExtended] = useState(0);
+
+  const { data: attempts = [], isLoading } = useLiveAttempts("EXAM-2026-014", LIVE_EXAM);
 
   useEffect(() => {
     const id = window.setInterval(() => setRemaining((s) => (s > 0 ? s - 1 : 0)), 1000);
     return () => window.clearInterval(id);
   }, []);
 
-  const exams = useMemo(() => ["All exams", ...Array.from(new Set(ATTEMPTS.map((a) => a.exam)))], []);
-  const scoped = useMemo(() => ATTEMPTS.filter((a) => exam === "All exams" || a.exam === exam), [exam]);
+  const exams = useMemo(() => ["All exams", ...Array.from(new Set(attempts.map((a) => a.exam)))], [attempts]);
+  const scoped = useMemo(() => attempts.filter((a) => exam === "All exams" || a.exam === exam), [exam, attempts]);
 
   const counts = useMemo(() => ({
     All: scoped.length,

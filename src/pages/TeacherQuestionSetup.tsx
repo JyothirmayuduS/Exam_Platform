@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { publishExam, triggerExamEmail, type ExamRecord } from "../lib/examApi";
+import { publishExam, triggerExamEmail, enrollEntireBatch, type ExamRecord } from "../lib/examApi";
 
 type Exam = { id: string; name: string; batch: string; state: string; tone: string };
 type Question = { id: string; title: string; unit: string; type: string; difficulty: string; marks: number };
@@ -8,10 +8,19 @@ type Settings = {
   perStudent: number; randomSelect: boolean; shuffleOrder: boolean; shuffleOptions: boolean;
   autoSubmit: boolean; duration: number; mode: ExamMode; attempts: number;
   negative: boolean; calculator: boolean; instantFeedback: boolean;
+  photoId: boolean; violationLimit: number; violationAction: "warn" | "submit"; releaseDate: string; ipWhitelist: string; sections: boolean; sectionTiming: boolean; autoClose: boolean; durationLock: boolean;
 };
 type Publish = { status: "draft" | "published" | "scheduled"; link?: string; when?: string; notified?: number };
 
 const ENROLLED = 42;
+
+const MOCK_STUDENTS = [
+  { id: "21vgn0142", name: "K. Rohan Teja", email: "21vgn0142@vignan.ac.in" },
+  { id: "21vgn0158", name: "P. Meghana", email: "21vgn0158@vignan.ac.in" },
+  { id: "21vgn0163", name: "A. Deepika Reddy", email: "21vgn0163@vignan.ac.in" },
+  { id: "21vgn0171", name: "S. Vamsi Krishna", email: "21vgn0171@vignan.ac.in" },
+  { id: "21vgn0180", name: "M. Sai Charan", email: "21vgn0180@vignan.ac.in" },
+];
 const RECIPIENTS = [
   "21vgn0142@vignan.ac.in",
   "21vgn0158@vignan.ac.in",
@@ -47,7 +56,8 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   const [schedTime, setSchedTime] = useState("");
   const [copied, setCopied] = useState(false);
   const [notifyStudents, setNotifyStudents] = useState(true);
-  const [s, setS] = useState<Settings>({ perStudent: 5, randomSelect: true, shuffleOrder: true, shuffleOptions: true, autoSubmit: true, duration: 45, mode: "lockdown", attempts: 1, negative: false, calculator: false, instantFeedback: false });
+  const [enrollmentMode, setEnrollmentMode] = useState<"all" | "manual">("all");
+  const [s, setS] = useState<Settings>({ perStudent: 5, randomSelect: true, shuffleOrder: true, shuffleOptions: true, autoSubmit: true, duration: 45, mode: "lockdown", attempts: 1, negative: false, calculator: false, instantFeedback: false, photoId: false, violationLimit: 3, violationAction: "submit", releaseDate: "", ipWhitelist: "", sections: false, sectionTiming: false, autoClose: false, durationLock: true });
   const set = <K extends keyof Settings,>(k: K, v: Settings[K]) => setS((cur) => ({ ...cur, [k]: v }));
 
   const poolQuestions = QUESTIONS.filter((q) => pool.includes(q.id));
@@ -90,10 +100,11 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   // Persist to Supabase and report the real outcome. `offline` = no backend
   // configured (prototype demo data); a DB error usually means RLS is still
   // auth-scoped — run supabase/demo-policies.sql once to open the anon flow.
-  const persist = (rec: ExamRecord | null, okMsg: string, sendEmail = false) => {
+  const persist = (rec: ExamRecord | null, okMsg: string, sendEmail = false, enrollBatch = false) => {
     if (!rec) return;
-    void publishExam(rec).then((res) => {
+    void publishExam(rec).then(async (res) => {
       if (res.ok) {
+        if (enrollBatch) await enrollEntireBatch(rec.id, rec.batch);
         if (sendEmail) void triggerExamEmail(rec.id);
         notify(okMsg);
       }
@@ -104,14 +115,14 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   const publishNow = () => {
     const n = notifyStudents ? ENROLLED : 0;
     setPublish({ status: "published", link: studentLink(selected), notified: n });
-    persist(buildRecord("published", null), n ? `Exam published — join link emailed to ${n} students` : "Exam published — students can start now", notifyStudents);
+    persist(buildRecord("published", null), n ? `Exam published — join link emailed to ${n} students` : "Exam published — students can start now", notifyStudents, enrollmentMode === "all");
   };
   const schedule = () => {
     if (!schedDate || !schedTime) return;
     const n = notifyStudents ? ENROLLED : 0;
     const whenIso = new Date(`${schedDate}T${schedTime}`).toISOString();
     setPublish({ status: "scheduled", link: studentLink(selected), when: `${schedDate} · ${schedTime}`, notified: n });
-    persist(buildRecord("scheduled", whenIso), n ? `Scheduled for ${schedDate} ${schedTime} — students will be emailed` : `Scheduled for ${schedDate} ${schedTime}`, notifyStudents);
+    persist(buildRecord("scheduled", whenIso), n ? `Scheduled for ${schedDate} ${schedTime} — students will be emailed` : `Scheduled for ${schedDate} ${schedTime}`, notifyStudents, enrollmentMode === "all");
   };
   const copyLink = () => { navigator.clipboard?.writeText(publish.link ?? "").catch(() => undefined); setCopied(true); notify("Student link copied"); window.setTimeout(() => setCopied(false), 2000); };
   const canContinue = step === 0 ? pool.length > 0 : true;
@@ -126,7 +137,7 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
       <div className="mt-8">
         {step === 0 && <StepAdd examId={selected.id} visible={visible} poolQuestions={poolQuestions} pool={pool} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} toggle={toggle} addAllShown={addAllShown} navigate={navigate} bulkOpen={bulkOpen} setBulkOpen={setBulkOpen} bulkFile={bulkFile} onBulkStage={onBulkStage} downloadTemplate={downloadTemplate} />}
         {step === 1 && <StepRules s={s} set={set} poolCount={pool.length} />}
-        {step === 2 && <StepPublish selected={selected} settings={s} pool={pool.length} totalMarks={totalMarks} perStudent={perStudent} schedDate={schedDate} setSchedDate={setSchedDate} schedTime={schedTime} setSchedTime={setSchedTime} onPublishNow={publishNow} onSchedule={schedule} notifyStudents={notifyStudents} setNotifyStudents={setNotifyStudents} />}
+        {step === 2 && <StepPublish selected={selected} settings={s} pool={pool.length} totalMarks={totalMarks} perStudent={perStudent} schedDate={schedDate} setSchedDate={setSchedDate} schedTime={schedTime} setSchedTime={setSchedTime} onPublishNow={publishNow} onSchedule={schedule} notifyStudents={notifyStudents} setNotifyStudents={setNotifyStudents} enrollmentMode={enrollmentMode} setEnrollmentMode={setEnrollmentMode} />}
       </div>
       <StepNav step={step} canContinue={canContinue} onBack={() => setStep((x) => Math.max(0, x - 1))} onNext={() => setStep((x) => Math.min(2, x + 1))} />
     </div>
@@ -353,6 +364,33 @@ function StepRules({ s, set, poolCount }: { s: Settings; set: SetFn; poolCount: 
             <ModeCard active={s.mode === "lockdown"} onClick={() => set("mode", "lockdown")} title="Lockdown" tone="maroon" points={["Full-screen, tab-switch blocked", "Camera + mic proctoring on", "Single timed attempt", "For graded, high-stakes exams"]} />
           </div>
         </section>
+
+        <section className="border border-line bg-paper p-6">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Security & Access</p>
+          <h2 className="mt-1 font-serif text-xl font-semibold">Proctoring and restrictions</h2>
+          <ToggleRow label="Require Photo ID verification" detail="Students must capture their face and ID card before starting." checked={s.photoId} onChange={(v) => set("photoId", v)} />
+          <div className="mt-5 border-t border-line pt-4">
+            <p className="text-[12px] font-medium">Violation thresholds</p>
+            <p className="mt-1 text-[11px] text-ink-soft">What happens when a candidate triggers multiple proctoring flags?</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <NumField label="Maximum flags allowed" hint="Before action is taken" value={s.violationLimit} min={1} max={20} onChange={(v) => set("violationLimit", v)} />
+              <label className="block text-[12px] text-ink-soft">
+                <span className="font-medium text-ink">Action to take</span><span className="mt-0.5 block text-[11px]">When threshold is met</span>
+                <select value={s.violationAction} onChange={(e) => set("violationAction", e.target.value as any)} className="mt-2 block w-full border border-line-strong bg-paper px-3 py-3 text-[13px] outline-none focus:border-forest">
+                  <option value="warn">Warn student only</option>
+                  <option value="submit">Auto-submit exam</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div className="mt-5 border-t border-line pt-4">
+             <label className="block text-[12px] text-ink-soft">
+                <span className="font-medium text-ink">IP Whitelist (Optional)</span><span className="mt-0.5 block text-[11px]">Restrict access to campus network. Comma-separated IPs.</span>
+                <input value={s.ipWhitelist} onChange={(e) => set("ipWhitelist", e.target.value)} placeholder="e.g. 192.168.1.1, 10.0.0.0/8" className="mt-2 block w-full border border-line-strong bg-paper px-3 py-3 text-[13px] outline-none focus:border-forest" />
+              </label>
+          </div>
+        </section>
+
         <section className="border border-line bg-paper p-6">
           <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Question delivery</p>
           <h2 className="mt-1 font-serif text-xl font-semibold">What each student sees</h2>
@@ -360,14 +398,28 @@ function StepRules({ s, set, poolCount }: { s: Settings; set: SetFn; poolCount: 
             <NumField label="Questions per student" hint={`Up to ${maxPer} in the pool`} value={Math.min(s.perStudent, maxPer)} min={1} max={maxPer} onChange={(v) => set("perStudent", v)} />
             <NumField label="Duration (minutes)" hint="Total time allowed" value={s.duration} min={1} max={300} onChange={(v) => set("duration", v)} />
           </div>
+          <ToggleRow label="Duration lock (strict)" detail="Prevent time extension requests during the exam." checked={s.durationLock} onChange={(v) => set("durationLock", v)} />
           <ToggleRow label="Randomly select questions" detail="Each student gets a different set drawn from the pool." checked={s.randomSelect} onChange={(v) => set("randomSelect", v)} />
           <ToggleRow label="Shuffle question order" detail="Questions appear in a different order per student." checked={s.shuffleOrder} onChange={(v) => set("shuffleOrder", v)} />
+          <ToggleRow label="Enable sections/groups" detail="Group questions by unit or topic instead of a single list." checked={s.sections} onChange={(v) => { set("sections", v); if (!v) set("sectionTiming", false); }} />
+          {s.sections && (
+            <div className="ml-8 border-l-2 border-line pl-4">
+              <ToggleRow label="Enforce section time limits" detail="Set individual countdown timers for each section." checked={s.sectionTiming} onChange={(v) => set("sectionTiming", v)} />
+            </div>
+          )}
           <ToggleRow label="Shuffle answer options" detail="Options within MCQ / MSQ are randomized." checked={s.shuffleOptions} onChange={(v) => set("shuffleOptions", v)} />
         </section>
         <section className="border border-line bg-paper p-6">
           <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Rules & scoring</p>
           <h2 className="mt-1 font-serif text-xl font-semibold">Submission and marking</h2>
+          <ToggleRow label="Auto-close at deadline" detail="Force submit if the scheduled exam window ends, regardless of remaining time." checked={s.autoClose} onChange={(v) => set("autoClose", v)} />
           <ToggleRow label="Auto-submit when time runs out" detail="The paper submits automatically at 00:00 so no one runs over." checked={s.autoSubmit} onChange={(v) => set("autoSubmit", v)} />
+          <div className="mt-5 border-t border-line pt-4 pb-4">
+            <label className="block text-[12px] text-ink-soft">
+                <span className="font-medium text-ink">Result auto-release date</span><span className="mt-0.5 block text-[11px]">When students can view their final score (leave blank for manual).</span>
+                <input type="datetime-local" value={s.releaseDate} onChange={(e) => set("releaseDate", e.target.value)} className="mt-2 block w-full border border-line-strong bg-paper px-3 py-3 text-[13px] outline-none focus:border-forest" />
+            </label>
+          </div>
           <ToggleRow label="Negative marking" detail="Deduct marks for wrong answers on auto-graded questions." checked={s.negative} onChange={(v) => set("negative", v)} />
           <ToggleRow label="Allow calculator & rough sheet" detail="Show an on-screen calculator and scratch pad." checked={s.calculator} onChange={(v) => set("calculator", v)} />
           {s.mode === "practice" ? (
@@ -400,6 +452,10 @@ function RulesPreview({ s, poolCount, maxPer }: { s: Settings; poolCount: number
           <PreviewRow label="Negative marking" value={s.negative ? "Yes" : "No"} />
           <PreviewRow label="Calculator" value={s.calculator ? "Allowed" : "Off"} />
           <PreviewRow label="Attempts" value={s.mode === "practice" ? String(s.attempts) : "1"} />
+          <PreviewRow label="Security" value={s.photoId ? "ID req." : "Standard"} />
+          <PreviewRow label="Violations" value={`Max ${s.violationLimit} → ${s.violationAction}`} />
+          <PreviewRow label="Sections" value={s.sections ? (s.sectionTiming ? "Timed sections" : "Enabled") : "Off"} />
+          {s.releaseDate && <PreviewRow label="Release" value={new Date(s.releaseDate).toLocaleDateString()} />}
         </dl>
       </section>
     </aside>
@@ -435,8 +491,18 @@ function ToggleRow({ label, detail, checked, onChange }: { label: string; detail
 }
 function PreviewRow({ label, value }: { label: string; value: string }) { return <div className="flex items-center justify-between gap-3 border-b border-line/60 pb-2 last:border-0"><dt className="text-ink-soft">{label}</dt><dd className="font-medium">{value}</dd></div>; }
 
-function StepPublish({ selected, settings, pool, totalMarks, perStudent, schedDate, setSchedDate, schedTime, setSchedTime, onPublishNow, onSchedule, notifyStudents, setNotifyStudents }: { selected: Exam; settings: Settings; pool: number; totalMarks: number; perStudent: number; schedDate: string; setSchedDate: (v: string) => void; schedTime: string; setSchedTime: (v: string) => void; onPublishNow: () => void; onSchedule: () => void; notifyStudents: boolean; setNotifyStudents: (v: boolean) => void }) {
+function StepPublish({ selected, settings, pool, totalMarks, perStudent, schedDate, setSchedDate, schedTime, setSchedTime, onPublishNow, onSchedule, notifyStudents, setNotifyStudents, enrollmentMode, setEnrollmentMode }: { selected: Exam; settings: Settings; pool: number; totalMarks: number; perStudent: number; schedDate: string; setSchedDate: (v: string) => void; schedTime: string; setSchedTime: (v: string) => void; onPublishNow: () => void; onSchedule: () => void; notifyStudents: boolean; setNotifyStudents: (v: boolean) => void; enrollmentMode: "all" | "manual"; setEnrollmentMode: (v: "all" | "manual") => void }) {
   const ready = pool > 0;
+  const [selectedMockStudents, setSelectedMockStudents] = useState<string[]>([]);
+  const [expandedRecipients, setExpandedRecipients] = useState(false);
+  const mockRecipients = enrollmentMode === "all" 
+    ? Array.from({ length: ENROLLED }).map((_, i) => `21vgn${String(142 + i).padStart(4, '0')}@vignan.ac.in`) 
+    : selectedMockStudents.map(id => MOCK_STUDENTS.find(s => s.id === id)?.email).filter(Boolean) as string[];
+  const visibleRecipients = expandedRecipients ? mockRecipients : mockRecipients.slice(0, 4);
+  const allSelected = selectedMockStudents.length === MOCK_STUDENTS.length;
+  const toggleAll = () => setSelectedMockStudents(allSelected ? [] : MOCK_STUDENTS.map(s => s.id));
+  const toggleStudent = (id: string) => setSelectedMockStudents(curr => curr.includes(id) ? curr.filter(x => x !== id) : [...curr, id]);
+  const recipientCount = enrollmentMode === "all" ? ENROLLED : selectedMockStudents.length;
   const checklist: [string, boolean][] = [
     [`${pool} question${pool === 1 ? "" : "s"} in the pool`, pool > 0],
     [`${perStudent} delivered per student`, perStudent > 0],
@@ -458,6 +524,44 @@ function StepPublish({ selected, settings, pool, totalMarks, perStudent, schedDa
       </section>
       <aside className="space-y-4">
         <section className="border border-line bg-paper p-5">
+          <div className="mb-6 border-b border-line pb-6">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Student Enrollment</p>
+            <h3 className="mt-1 font-serif text-lg font-semibold">Who will take this exam?</h3>
+            <div className="mt-4 flex flex-col gap-3 text-[13px]">
+              <label className="flex items-start gap-3 cursor-pointer hover:bg-paper-raised p-2 -mx-2 rounded transition">
+                <input type="radio" name="enroll" checked={enrollmentMode === "all"} onChange={() => setEnrollmentMode("all")} className="mt-0.5 accent-forest" />
+                <div>
+                  <span className="block font-medium">Enroll entire batch</span>
+                  <span className="mt-0.5 block text-[11px] text-ink-soft">Automatically enrolls all {ENROLLED} students in {selected.batch}.</span>
+                </div>
+              </label>
+              <label className="flex items-start gap-3 cursor-pointer hover:bg-paper-raised p-2 -mx-2 rounded transition">
+                <input type="radio" name="enroll" checked={enrollmentMode === "manual"} onChange={() => setEnrollmentMode("manual")} className="mt-0.5 accent-forest" />
+                <div>
+                  <span className="block font-medium">I will enroll manually</span>
+                  <span className="mt-0.5 block text-[11px] text-ink-soft">Hand-pick candidates from the batch below.</span>
+                </div>
+              </label>
+              {enrollmentMode === "manual" && (
+                <div className="mt-2 border border-line p-3 max-h-48 overflow-y-auto bg-paper-raised">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Select Students</p>
+                    <button type="button" onClick={toggleAll} className="font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">
+                      {allSelected ? "Deselect All" : "Select All"}
+                    </button>
+                  </div>
+                  {MOCK_STUDENTS.map(student => (
+                    <label key={student.id} className="flex items-center gap-3 py-1.5 cursor-pointer">
+                       <input type="checkbox" checked={selectedMockStudents.includes(student.id)} onChange={() => toggleStudent(student.id)} className="accent-forest" />
+                       <div>
+                         <p className="text-[12px]">{student.name} <span className="text-ink-soft">({student.id})</span></p>
+                       </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Notify students</p>
@@ -465,14 +569,20 @@ function StepPublish({ selected, settings, pool, totalMarks, perStudent, schedDa
             </div>
             <button role="switch" aria-checked={notifyStudents} onClick={() => setNotifyStudents(!notifyStudents)} className={`mt-1 flex h-6 w-11 shrink-0 items-center rounded-full border transition ${notifyStudents ? "justify-end border-forest bg-forest" : "justify-start border-line-strong bg-paper-raised"}`}><span className="mx-0.5 h-4 w-4 rounded-full bg-paper" /></button>
           </div>
-          <p className="mt-2 text-[12px] text-ink-soft">{notifyStudents ? <>An email with the join link and start time goes to all <span className="text-ink">{ENROLLED} students</span> in {selected.batch}.</> : "Publishing silently — no email is sent. You can share the link yourself."}</p>
-          {notifyStudents && <div className="mt-3 border border-line bg-paper-raised p-3"><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Recipients preview</p><div className="mt-1.5 space-y-0.5">{RECIPIENTS.map((e) => <p key={e} className="truncate font-mono text-[11px] text-ink-soft">{e}</p>)}<p className="font-mono text-[11px] text-ink-soft">+ {ENROLLED - RECIPIENTS.length} more…</p></div></div>}
+          <p className="mt-2 text-[12px] text-ink-soft">{notifyStudents ? <>An email with the join link and start time goes to all <span className="text-ink">{recipientCount} students</span> in {selected.batch}.</> : "Publishing silently — no email is sent. You can share the link yourself."}</p>
+          {notifyStudents && <div className="mt-3 border border-line bg-paper-raised p-3"><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Recipients preview</p><div className="mt-1.5 space-y-0.5">{visibleRecipients.map((e) => <p key={e} className="truncate font-mono text-[11px] text-ink-soft">{e}</p>)}
+          {!expandedRecipients && mockRecipients.length > 4 && (
+            <button type="button" onClick={() => setExpandedRecipients(true)} className="font-mono text-[11px] text-ink-soft hover:text-ink hover:underline">+ {mockRecipients.length - 4} more…</button>
+          )}
+          {expandedRecipients && mockRecipients.length > 4 && (
+             <button type="button" onClick={() => setExpandedRecipients(false)} className="mt-2 font-mono text-[11px] text-ink-soft hover:text-ink hover:underline">Show less</button>
+          )}</div></div>}
         </section>
         <section className="border border-forest bg-success/5 p-5">
           <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Publish now</p>
           <h3 className="mt-1 font-serif text-lg font-semibold">Go live instantly</h3>
           <p className="mt-2 text-[12px] text-ink-soft">Students in {selected.batch} can start the moment you click. The join link is generated right away{notifyStudents ? " and emailed automatically" : ""}.</p>
-          <button onClick={onPublishNow} disabled={!ready} className={`mt-4 w-full py-3 font-mono text-[10px] uppercase tracking-wider ${ready ? "border border-forest bg-forest text-paper hover:bg-forest-light" : "cursor-not-allowed border border-line bg-paper-raised text-ink-soft"}`}>{notifyStudents ? `● Publish & email ${ENROLLED} students` : "● Publish now"}</button>
+          <button onClick={onPublishNow} disabled={!ready} className={`mt-4 w-full py-3 font-mono text-[10px] uppercase tracking-wider ${ready ? "border border-forest bg-forest text-paper hover:bg-forest-light" : "cursor-not-allowed border border-line bg-paper-raised text-ink-soft"}`}>{notifyStudents ? `● Publish & email ${recipientCount} students` : "● Publish now"}</button>
         </section>
         <section className="border border-line bg-paper p-5">
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Or schedule</p>

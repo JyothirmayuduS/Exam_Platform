@@ -25,6 +25,7 @@ import useExamTimer from "../hooks/useExamTimer";
 import useAutosave from "../hooks/useAutosave";
 import useProctoring from "../hooks/useProctoring";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
+import useOfflineSync from "../hooks/useOfflineSync";
 import { invoke } from "@tauri-apps/api/core";
 import { jsPDF } from "jspdf";
 import { uploadExamRecords } from "../lib/examStorage";
@@ -151,6 +152,8 @@ export default function StudentExam() {
     counts,
     markVisited,
   } = useExamState(questions);
+
+  useOfflineSync(studentIdRef.current);
 
   const { violations, activeViolation, setActiveViolation, flag, handleAIViolation } = useProctoring(step === "exam");
 
@@ -292,13 +295,29 @@ export default function StudentExam() {
     if (!supabaseConfigured || !studentIdRef.current) return false;
     // Cache in localStorage as offline backup
     try { localStorage.setItem(`answers_${EXAM_ID}`, JSON.stringify(answers)); } catch { /* quota */ }
-    return saveAnswers({
+    
+    const minutesUsed = Math.round((DURATION_MIN * 60 - secondsLeft) / 60);
+    const success = await saveAnswers({
       examId: EXAM_ID,
       studentId: studentIdRef.current,
       answers: answers as Record<string, unknown>,
       answered: answeredCount,
-      minutesUsed: Math.round((DURATION_MIN * 60 - secondsLeft) / 60),
+      minutesUsed,
     });
+
+    if (!success) {
+      try {
+        localStorage.setItem(`pending_sync_${EXAM_ID}`, JSON.stringify({
+          answers,
+          answered: answeredCount,
+          minutesUsed,
+          isSubmit: false
+        }));
+      } catch {}
+      return false; // Tells autosave it failed so it shows "Offline - Saved locally" or similar if we modify it
+    }
+    
+    return true;
   }, [answeredCount, answers, secondsLeft]);
 
   // Restore answers from localStorage on mount (in case of reconnect)
@@ -499,13 +518,25 @@ export default function StudentExam() {
     }
 
     if (supabaseConfigured && studentIdRef.current) {
-      await submitAttempt({
+      const minutesUsed = Math.round((DURATION_MIN * 60 - secondsLeft) / 60);
+      const success = await submitAttempt({
         examId: EXAM_ID,
         studentId: studentIdRef.current,
         answers: answers as Record<string, unknown>,
         answered: answeredCount,
-        minutesUsed: Math.round((DURATION_MIN * 60 - secondsLeft) / 60),
+        minutesUsed,
       });
+
+      if (!success) {
+        try {
+          localStorage.setItem(`pending_sync_${EXAM_ID}`, JSON.stringify({
+            answers,
+            answered: answeredCount,
+            minutesUsed,
+            isSubmit: true
+          }));
+        } catch {}
+      }
     }
     
     // Generate PDF and upload

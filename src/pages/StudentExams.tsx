@@ -58,9 +58,9 @@ export default function StudentExams() {
          const { data: st } = await db.from("students").select("id").eq("roll", "21VGN0142").maybeSingle();
          if (st?.id) {
            const { data: att } = await db.from("attempts").select("exam_id, state").eq("student_id", st.id);
-           if (att) {
-             att.forEach(a => { attemptsMap[a.exam_id] = a.state; });
-           }
+            if (att) {
+              att.forEach((a: any) => { attemptsMap[a.exam_id] = a.state; });
+            }
          }
       }
 

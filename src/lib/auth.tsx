@@ -19,70 +19,25 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [role, setRole] = useState<AuthRole>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const supabase = getSupabase();
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
-
-    const checkUserRole = async (currentUser: User | null) => {
-      if (!currentUser) {
-        setRole(null);
-        return;
-      }
-      
-      // Check if user is in students table
-      const { data, error } = await supabase
-        .from("students")
-        .select("id")
-        .eq("auth_id", currentUser.id)
-        .single();
-        
-      if (!error && data) {
-        setRole("student");
-      } else {
-        // If they are not a student, assume teacher for this prototype
-        setRole("teacher");
-      }
-    };
-
-    // Initial session
-    supabase.auth.getSession().then(({ data: { session } }: { data: { session: Session | null } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        checkUserRole(session.user).then(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event: string, session: Session | null) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        setLoading(true);
-        checkUserRole(session.user).then(() => setLoading(false));
-      } else {
-        setRole(null);
-        setLoading(false);
-      }
-      },
-    );
-
-    return () => subscription.unsubscribe();
-  }, []);
+  // Since authentication is disabled, we mock the session with the first student
+  // from seed.sql ("Priya Nikitha") so that all Phase 3 database queries still work
+  // seamlessly without requiring a login.
+  const mockUser = {
+    id: "11111111-1111-1111-1111-111111111111",
+    email: "priya.nikitha@vignan.edu",
+    app_metadata: {},
+    user_metadata: {},
+    aud: "authenticated",
+    created_at: new Date().toISOString(),
+  } as User;
 
   return (
-    <AuthContext.Provider value={{ user, session, role, loading }}>
+    <AuthContext.Provider value={{ 
+      user: mockUser, 
+      session: { access_token: "mock", refresh_token: "mock", expires_in: 3600, token_type: "bearer", user: mockUser }, 
+      role: "student", // Default to student for queries, RoleLayout overrides UI 
+      loading: false 
+    }}>
       {children}
     </AuthContext.Provider>
   );

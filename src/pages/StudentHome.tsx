@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import ExamCountdown from "../components/ExamCountdown";
@@ -49,32 +50,19 @@ function toRow(exam: ExamRecord): Row {
 
 export default function StudentHome() {
   const { user } = useAuth();
-  const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | ViewStatus>("all");
 
-  useEffect(() => {
-    if (!user?.id) {
-      setLoading(false);
-      return;
-    }
-
-    let active = true;
-    const load = async () => {
+  const { data: rows = [], isLoading: loading } = useQuery({
+    queryKey: ['enrolledExams', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return [];
       const exams = await listEnrolledExamsForAuthUser(user.id);
-      if (!active) return;
-      setRows((exams ?? []).map(toRow));
-      setLoading(false);
-    };
-
-    void load();
-    const id = window.setInterval(() => void load(), 60000);
-    return () => {
-      active = false;
-      window.clearInterval(id);
-    };
-  }, [user?.id]);
+      return (exams ?? []).map(toRow);
+    },
+    enabled: !!user?.id,
+    refetchInterval: 60000,
+  });
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -9,15 +9,15 @@ const ROOM = EXAM_ID; // must match the student's ProctorCamera room
 
 const nav = [{ label: "Overview", to: "/teacher", end: true }, { label: "Exams", to: "/teacher/exams", badge: "6" }, { label: "Question bank", to: "/teacher/questions" }, { label: "Submissions", to: "/teacher/submissions", badge: "12" }, { label: "Evaluate", to: "/teacher/evaluate", badge: "4" }, { label: "Proctoring", to: "/teacher/proctoring", badge: "4" }, { label: "Reports", to: "/teacher/reports" }, { label: "Settings", to: "/teacher/settings" }];
 
-type Student = { name: string; roll: string; status: string; progress: number; violation: string; studentId?: string };
+type Student = { name: string; roll: string; status: string; progress: number; violation: string; studentId?: string; timeLeft?: string };
 
 const DEMO_STUDENTS: Student[] = [
-  { name: "B. Priya Nikitha", roll: "21VGN0142", status: "Writing", progress: 68, violation: "" },
-  { name: "K. Rohan Teja", roll: "21VGN0158", status: "Writing", progress: 92, violation: "Second face detected" },
-  { name: "M. Sai Charan", roll: "21VGN0163", status: "Submitted", progress: 100, violation: "" },
-  { name: "A. Deepika Reddy", roll: "21VGN0171", status: "Writing", progress: 35, violation: "Gaze away from screen" },
-  { name: "P. Meghana", roll: "21VGN0217", status: "Paused", progress: 54, violation: "Restricted software" },
-  { name: "N. Harika Sree", roll: "21VGN0191", status: "Writing", progress: 47, violation: "" },
+  { name: "B. Priya Nikitha", roll: "21VGN0142", status: "Writing", progress: 68, violation: "", timeLeft: "12m" },
+  { name: "K. Rohan Teja", roll: "21VGN0158", status: "Writing", progress: 92, violation: "Second face detected", timeLeft: "5m" },
+  { name: "M. Sai Charan", roll: "21VGN0163", status: "Submitted", progress: 100, violation: "", timeLeft: "0m" },
+  { name: "A. Deepika Reddy", roll: "21VGN0171", status: "Writing", progress: 35, violation: "Gaze away from screen", timeLeft: "24m" },
+  { name: "P. Meghana", roll: "21VGN0217", status: "Paused", progress: 54, violation: "Restricted software", timeLeft: "18m" },
+  { name: "N. Harika Sree", roll: "21VGN0191", status: "Writing", progress: 47, violation: "", timeLeft: "20m" },
 ];
 
 function attemptToStudent(a: LiveAttempt): Student {
@@ -33,7 +33,7 @@ export default function TeacherProctoring() {
   const [live, setLive] = useState(false);
   const [feeds, setFeeds] = useState<RemoteFeed[]>([]);
   const [selected, setSelected] = useState<Student>(DEMO_STUDENTS[1]);
-  const [view, setView] = useState<"wall" | "activity">("wall");
+  const [view, setView] = useState<"wall" | "activity" | "chat">("wall");
   const [filter, setFilter] = useState("All candidates");
   const [screenMode, setScreenMode] = useState(false);
 
@@ -78,10 +78,10 @@ export default function TeacherProctoring() {
   const selectCandidate = (candidate: Student) => { setSelected(candidate); setView("wall"); setScreenMode(true); };
   const feedCount = feeds.filter((f) => f.camera).length;
   return <RoleLayout role="Teacher" name="Dr. K. Venkatesh" subtitle="Computer Science · Faculty" tone="#284B34" items={nav} status="Live monitoring active">
-    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Faculty console / Proctoring</p><h1 className="mt-2 font-serif text-3xl font-semibold">Live proctoring</h1><p className="mt-2 text-[13px] text-ink-soft">Data Structures &amp; Algorithms · Hall B · Slot 2</p></div><span className="border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert">● Session live · 00:27:14</span></div>
+    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Faculty console / Proctoring</p><h1 className="mt-2 font-serif text-3xl font-semibold">Live proctoring</h1><p className="mt-2 text-[13px] text-ink-soft">Data Structures &amp; Algorithms · Hall B · Slot 2</p></div><div className="flex items-center gap-3"><button className="border border-line-strong px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Assign Proctors</button><button className="border border-line-strong px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Export Report</button><span className="border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert">● Session live · 00:27:14</span></div></div>
     <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Active candidates" value="118" sub="of 142 enrolled"/><Stat label="Clear" value="114" sub="No active flags"/><Stat label="Needs attention" value="4" sub="2 critical · 2 notices" alert/><Stat label="Recordings" value="142" sub="Camera + screen saved"/></div>
-    <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button></div><div className="flex items-center gap-3"><span className={`font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}>● {live ? `${feedCount} feed(s) · DB live` : "Demo mode"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
-    {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor}/> : <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/>}
+    <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat (2)</button></div><div className="flex items-center gap-3"><span className={`font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}>● {live ? `${feedCount} feed(s) · DB live` : "Demo mode"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
+    {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChat />}
     <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]"><section className="border border-line bg-paper p-5 sm:p-6"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Selected candidate</p><div className="mt-4 flex items-center justify-between gap-4"><div><h2 className="font-serif text-xl font-semibold">{selected.name}</h2><p className="mt-1 font-mono text-[10px] text-ink-soft">{selected.roll} · {selected.status} · {selected.progress}% complete</p></div><span className={`font-mono text-[10px] uppercase ${selected.violation ? "text-alert" : "text-success"}`}>{selected.violation ? "Violation detected" : "Clear"}</span></div><div className="mt-5 flex border-b border-line font-mono text-[10px] uppercase tracking-wider"><button onClick={() => setScreenMode(false)} className={`border-b-2 px-3 py-2 ${!screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Camera view</button><button onClick={() => setScreenMode(true)} className={`border-b-2 px-3 py-2 ${screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Screen recording</button></div>{screenMode ? <ScreenRecording selected={selected} feed={feedFor(selected)}/> : <div className="relative mt-4 flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#D9D5CB]"><FeedView feed={feedFor(selected)} initials={selected.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}/><span className="absolute bottom-2 left-2 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">● LIVE CAMERA</span></div>}<div className="mt-5 border-l-2 border-alert px-3 py-2 text-[12px] text-ink-soft">{selected.violation || "No active proctoring flags. All checks are passing."}</div></section><aside className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Candidate activity</p><div className="mt-4 space-y-4">{[["10:17 AM", "Answered question 04"], ["10:16 AM", selected.violation || "Camera check passed"], ["10:12 AM", "Session connection stable"], ["10:00 AM", "Exam started"]].map(([time, event]) => <div key={time} className="flex gap-3"><span className="font-mono text-[10px] text-ink-soft">{time}</span><p className="text-[12px]">{event}</p></div>)}</div><div className="mt-6 grid gap-2"><button onClick={() => setSelected({ ...selected, violation: "Warning sent" })} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">Send warning</button><button onClick={() => setSelected({ ...selected, status: "Paused" })} className="border border-amber py-2 font-mono text-[10px] uppercase tracking-wider text-amber">Pause candidate</button><button onClick={() => setSelected({ ...selected, violation: "Escalated" })} className="border border-alert py-2 font-mono text-[10px] uppercase tracking-wider text-alert">Escalate incident</button></div></aside></div>
   </RoleLayout>;
 }
@@ -98,7 +98,38 @@ function FeedView({ feed, initials }: { feed: RemoteFeed | null; initials: strin
     if (feed?.camera) { feed.camera.className = "h-full w-full object-cover"; holder.appendChild(feed.camera); }
     return () => { if (holder) holder.innerHTML = ""; };
   }, [feed]);
-  return <><div ref={holderRef} className="absolute inset-0" />{!feed?.camera && <span className="font-serif text-4xl text-ink-soft/50">{initials}</span>}</>;
+  return <div ref={holderRef} className="absolute inset-0 z-0 flex items-center justify-center">{!feed?.camera && <span className="font-serif text-3xl text-ink/20">{initials}</span>}</div>;
+}
+
+function ProctorChat() {
+  return (
+    <section className="mt-6 border border-line bg-paper p-5 sm:p-6 h-[400px] flex flex-col">
+      <div className="border-b border-line pb-4">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Team communication</p>
+        <h2 className="mt-1 font-serif text-xl font-semibold">Proctor Chat</h2>
+      </div>
+      <div className="flex-1 overflow-y-auto py-4 space-y-4">
+        <div className="flex gap-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-forest text-paper text-[12px]">KV</span>
+          <div>
+            <p className="text-[12px] font-medium">Dr. K. Venkatesh <span className="ml-2 font-mono text-[9px] text-ink-soft">10:15 AM</span></p>
+            <p className="mt-1 text-[13px]">Can someone keep an eye on Hall B? Seeing a lot of gaze warnings.</p>
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-line-strong text-ink text-[12px]">TA</span>
+          <div>
+            <p className="text-[12px] font-medium">T. Arvind (TA) <span className="ml-2 font-mono text-[9px] text-ink-soft">10:17 AM</span></p>
+            <p className="mt-1 text-[13px]">On it. I'll focus on the flagged feeds.</p>
+          </div>
+        </div>
+      </div>
+      <div className="border-t border-line pt-4 flex gap-3">
+        <input placeholder="Message proctors..." className="flex-1 border border-line-strong bg-paper-raised px-3 py-2 text-[13px] outline-none focus:border-forest" />
+        <button className="border border-forest bg-forest px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Send</button>
+      </div>
+    </section>
+  );
 }
 // Screen tab: shows the candidate's real shared screen when the LiveKit feed
 // carries one, otherwise a representative placeholder so the panel isn't empty.

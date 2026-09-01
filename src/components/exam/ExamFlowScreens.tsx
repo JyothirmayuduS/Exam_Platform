@@ -161,7 +161,7 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
   );
 }
 
-export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId }: {
+export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId: _examId }: {
   answeredCount: number;
   totalQuestions: number;
   studentName: string;

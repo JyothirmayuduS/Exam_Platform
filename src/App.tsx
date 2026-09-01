@@ -12,15 +12,16 @@ import StudentExamDetail from "./pages/StudentExamDetail";
 import PracticeModeExam from "./pages/PracticeModeExam";
 import TeacherProctoring from "./pages/TeacherProctoring";
 import MobileUpload from "./pages/MobileUpload";
-import AuthLogin from "./pages/AuthLogin";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SystemCheckPage from "./components/SystemCheckPage";
+import OfflineIndicator from "./components/OfflineIndicator";
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/login" element={<AuthLogin />} />
+    <>
+      <OfflineIndicator />
+      <Routes>
+        <Route path="/" element={<Landing />} />
       
       {/* Student Routes */}
       <Route path="/student" element={<ProtectedRoute allowedRole="student"><StudentHome /></ProtectedRoute>} />
@@ -39,5 +40,6 @@ export default function App() {
       <Route path="/teacher/*" element={<ProtectedRoute allowedRole="teacher"><TeacherDashboard /></ProtectedRoute>} />
       <Route path="/proctor" element={<ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
     </Routes>
+    </>
   );
 }

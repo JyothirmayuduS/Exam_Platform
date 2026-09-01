@@ -153,7 +153,7 @@ export default function StudentResultDetail() {
                 
                 <p className="text-[14px] text-ink mb-4">{q.text}</p>
                 
-                {q.type === 'mcq' && (
+                {q.type === 'mcq' && q.options && (
                   <div className="space-y-2 mb-4">
                     {q.options.map((opt, optIdx) => {
                       const isStudentAns = q.studentAnswer === optIdx;

@@ -393,3 +393,36 @@ entrypoint = "./functions/unsubscribe-email/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/unsubscribe-email/*.html" ]
+
+[functions.generate-pdf-report]
+enabled = true
+verify_jwt = false
+import_map = "./functions/generate-pdf-report/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/generate-pdf-report/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/generate-pdf-report/*.html" ]
+
+[functions.export-csv-log]
+enabled = true
+verify_jwt = false
+import_map = "./functions/export-csv-log/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/export-csv-log/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/export-csv-log/*.html" ]
+
+[functions.canvas-sync]
+enabled = true
+verify_jwt = false
+import_map = "./functions/canvas-sync/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/canvas-sync/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/canvas-sync/*.html" ]

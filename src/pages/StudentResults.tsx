@@ -1,5 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import { STUDENT_NAV } from "./StudentExams";
+import { useAuth } from "../lib/auth";
+import { getSupabase } from "../lib/supabase";
 
 type Result = {
   name: string;
@@ -10,13 +14,6 @@ type Result = {
   status: "published" | "under-review";
 };
 
-const RESULTS: Result[] = [
-  { name: "Operating Systems", code: "EXAM-2025-088", date: "12 Mar 2026", score: 84, outOf: 100, status: "published" },
-  { name: "Database Management", code: "EXAM-2025-072", date: "28 Feb 2026", score: 76, outOf: 100, status: "published" },
-  { name: "Computer Networks", code: "EXAM-2025-061", date: "14 Feb 2026", score: 91, outOf: 100, status: "published" },
-  { name: "Data Structures & Algorithms", code: "EXAM-2026-014", date: "Awaiting evaluation", score: 0, outOf: 70, status: "under-review" },
-];
-
 function grade(pct: number) {
   if (pct >= 90) return "O";
   if (pct >= 80) return "A+";
@@ -26,7 +23,44 @@ function grade(pct: number) {
 }
 
 export default function StudentResults() {
-  const published = RESULTS.filter((r) => r.status === "published");
+  const { user } = useAuth();
+  
+  const { data: results = [], isLoading } = useQuery({
+    queryKey: ['studentResults', user?.id],
+    queryFn: async () => {
+      const db = getSupabase();
+      if (!db || !user?.id) return [];
+
+      const { data: student } = await db
+        .from("students")
+        .select("id")
+        .eq("auth_id", user.id)
+        .maybeSingle();
+        
+      if (!student) return [];
+
+      const { data, error } = await db
+        .from("attempts")
+        .select("state, score, submitted_at, exam:exams(id, name, total_marks)")
+        .eq("student_id", student.id)
+        .eq("state", "submitted");
+
+      if (error || !data) return [];
+
+      return data.map((a: any) => ({
+        name: a.exam?.name || "Unknown Exam",
+        code: a.exam?.id || "N/A",
+        date: a.submitted_at ? new Date(a.submitted_at).toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' }) : "N/A",
+        score: a.score ?? 0,
+        outOf: a.exam?.total_marks ?? 100,
+        // If score is null it means not fully evaluated (e.g. subjective pending)
+        status: a.score === null ? "under-review" : "published"
+      })) as Result[];
+    },
+    enabled: !!user?.id,
+  });
+
+  const published = results.filter((r) => r.status === "published");
   const avg = published.length ? Math.round(published.reduce((s, r) => s + (r.score / r.outOf) * 100, 0) / published.length) : 0;
 
   return (
@@ -49,7 +83,7 @@ export default function StudentResults() {
         </div>
         <div className="border border-line bg-paper-raised p-5">
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Awaiting</p>
-          <p className="mt-2 font-serif text-3xl text-amber">{RESULTS.length - published.length}</p>
+          <p className="mt-2 font-serif text-3xl text-amber">{results.length - published.length}</p>
           <p className="mt-1 text-[12px] text-ink-soft">under evaluation</p>
         </div>
       </div>
@@ -65,14 +99,30 @@ export default function StudentResults() {
             </tr>
           </thead>
           <tbody>
-            {RESULTS.map((r) => {
+            {isLoading && (
+              <tr>
+                <td colSpan={4} className="p-8 text-center text-[13px] text-ink-soft">
+                  <div className="animate-pulse flex space-x-4 justify-center">
+                    <div className="h-4 bg-line rounded w-3/4"></div>
+                  </div>
+                </td>
+              </tr>
+            )}
+            {!isLoading && results.length === 0 && (
+              <tr>
+                <td colSpan={4} className="p-10 text-center text-[13px] text-ink-soft border-t border-line border-dashed">
+                  No submitted exams found. Once you complete an exam, the results will appear here.
+                </td>
+              </tr>
+            )}
+            {results.map((r) => {
               const pct = Math.round((r.score / r.outOf) * 100);
               return (
                 <tr key={r.code} className="border-b border-line last:border-0 hover:bg-paper">
                   <td className="px-5 py-4">
                     <p className="font-serif text-[15px] font-medium text-ink hover:underline">
                       {r.status === "published" ? (
-                        <a href={`/student/results/${r.code}`}>{r.name}</a>
+                        <Link to={`/student/results/${r.code}`}>{r.name}</Link>
                       ) : (
                         r.name
                       )}
@@ -91,7 +141,7 @@ export default function StudentResults() {
                     {r.status === "published" ? (
                       <div className="flex items-center justify-between">
                         <span className="border border-success/50 bg-success/10 px-2 py-1 font-mono text-[11px] text-success">{grade(pct)}</span>
-                        <a href={`/student/results/${r.code}`} className="font-mono text-[9px] uppercase tracking-wider text-ink hover:underline">View Details →</a>
+                        <Link to={`/student/results/${r.code}`} className="font-mono text-[9px] uppercase tracking-wider text-ink hover:underline">View Details →</Link>
                       </div>
                     ) : (
                       <span className="text-ink-soft">—</span>
