@@ -15,10 +15,14 @@ if (inTauri && onOnboarding && window.location.pathname !== entry) {
   window.history.replaceState(null, "", entry);
 }
 
+import { AuthProvider } from './lib/auth'
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
-      <App />
+      <AuthProvider>
+        <App />
+      </AuthProvider>
     </BrowserRouter>
   </StrictMode>,
 )

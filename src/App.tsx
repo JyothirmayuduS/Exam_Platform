@@ -8,22 +8,28 @@ import StudentExams from "./pages/StudentExams";
 import StudentResults from "./pages/StudentResults";
 import StudentHelp from "./pages/StudentHelp";
 import TeacherProctoring from "./pages/TeacherProctoring";
-
 import MobileUpload from "./pages/MobileUpload";
+import AuthLogin from "./pages/AuthLogin";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Landing />} />
-      <Route path="/student" element={<StudentHome />} />
-      <Route path="/student/exams" element={<StudentExams />} />
-      <Route path="/student/results" element={<StudentResults />} />
-      <Route path="/student/help" element={<StudentHelp />} />
-      <Route path="/student/exam" element={<StudentExam />} />
-      <Route path="/mobile-upload" element={<MobileUpload />} />
-      <Route path="/teacher/proctoring" element={<TeacherProctoring />} />
-      <Route path="/teacher/*" element={<TeacherDashboard />} />
-      <Route path="/proctor" element={<ProctorGrid />} />
+      <Route path="/login" element={<AuthLogin />} />
+      
+      {/* Student Routes */}
+      <Route path="/student" element={<ProtectedRoute allowedRole="student"><StudentHome /></ProtectedRoute>} />
+      <Route path="/student/exams" element={<ProtectedRoute allowedRole="student"><StudentExams /></ProtectedRoute>} />
+      <Route path="/student/results" element={<ProtectedRoute allowedRole="student"><StudentResults /></ProtectedRoute>} />
+      <Route path="/student/help" element={<ProtectedRoute allowedRole="student"><StudentHelp /></ProtectedRoute>} />
+      <Route path="/student/exam" element={<ProtectedRoute allowedRole="student"><StudentExam /></ProtectedRoute>} />
+      <Route path="/mobile-upload" element={<ProtectedRoute allowedRole="student"><MobileUpload /></ProtectedRoute>} />
+      
+      {/* Teacher Routes */}
+      <Route path="/teacher/proctoring" element={<ProtectedRoute allowedRole="teacher"><TeacherProctoring /></ProtectedRoute>} />
+      <Route path="/teacher/*" element={<ProtectedRoute allowedRole="teacher"><TeacherDashboard /></ProtectedRoute>} />
+      <Route path="/proctor" element={<ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
     </Routes>
   );
 }
