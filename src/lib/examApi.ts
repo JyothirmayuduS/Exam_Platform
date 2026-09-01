@@ -37,6 +37,18 @@ export async function publishExam(
   return error ? { ok: false, error: String(error.message ?? error) } : { ok: true };
 }
 
+/** Trigger the Supabase Edge Function to send emails to students */
+export async function triggerExamEmail(examId: string): Promise<{ ok: boolean; error?: string }> {
+  const db = getSupabase();
+  if (!db) return { ok: false, error: "offline" };
+  
+  const { error } = await db.functions.invoke("send-exam-email", {
+    body: { examId }
+  });
+  
+  return error ? { ok: false, error: String(error.message ?? error) } : { ok: true };
+}
+
 /**
  * Student-facing: fetch the exams a student is allowed to see right now.
  * Returns `null` when the query FAILS (network/RLS/offline) so callers can keep

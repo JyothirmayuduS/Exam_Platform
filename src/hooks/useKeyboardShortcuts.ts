@@ -10,6 +10,7 @@ type UseKeyboardShortcutsOpts = {
   onSave: () => void;
   onSubmit: () => void;
   onShowHelp: () => void;
+  onToggleAnswer?: () => void; // Spacebar: toggle T/F or clear MCQ selection
 };
 
 function shouldIgnoreTarget(target: EventTarget | null): boolean {
@@ -28,6 +29,7 @@ export default function useKeyboardShortcuts({
   onSave,
   onSubmit,
   onShowHelp,
+  onToggleAnswer,
 }: UseKeyboardShortcutsOpts) {
   useEffect(() => {
     if (!enabled) return;
@@ -70,6 +72,12 @@ export default function useKeyboardShortcuts({
           event.preventDefault();
           onLast();
           break;
+        case " ":
+          if (onToggleAnswer) {
+            event.preventDefault();
+            onToggleAnswer();
+          }
+          break;
         case "r":
         case "R":
           event.preventDefault();
@@ -85,5 +93,5 @@ export default function useKeyboardShortcuts({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [enabled, onFirst, onLast, onNext, onPrev, onSave, onShowHelp, onSubmit, onToggleReview]);
+  }, [enabled, onFirst, onLast, onNext, onPrev, onSave, onShowHelp, onSubmit, onToggleReview, onToggleAnswer]);
 }

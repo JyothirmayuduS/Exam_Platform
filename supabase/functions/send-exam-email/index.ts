@@ -44,15 +44,16 @@ Deno.serve(async (req) => {
   } else {
     const { data } = await db
       .from("enrollments")
-      .select("student_id,student:students(email,full_name)")
+      .select("student_id,student:students(email,full_name,unsubscribed_emails)")
       .eq("exam_id", examId);
 
     recipients = (data ?? [])
       .map((row) => {
         const student = Array.isArray((row as { student: unknown }).student)
-          ? (row as { student: { email?: string; full_name?: string }[] }).student[0]
-          : ((row as { student: { email?: string; full_name?: string } }).student ?? null);
+          ? (row as { student: { email?: string; full_name?: string; unsubscribed_emails?: boolean }[] }).student[0]
+          : ((row as { student: { email?: string; full_name?: string; unsubscribed_emails?: boolean } }).student ?? null);
         if (!student?.email) return null;
+        if (student.unsubscribed_emails === true) return null; // Skip unsubscribed students
         return {
           student_id: String((row as { student_id?: string }).student_id ?? ""),
           email: student.email,
@@ -67,6 +68,7 @@ Deno.serve(async (req) => {
       sendWithRetry(async () => {
         const joinLink = `${Deno.env.get("APP_BASE_URL") ?? "http://localhost:5173"}/student/exam?examId=${encodeURIComponent(exam.id)}`;
         const html = examPublishedTemplate({
+          studentId: recipient.student_id,
           studentName: recipient.full_name,
           examName: exam.name,
           dateTime: exam.scheduled_at ? new Date(exam.scheduled_at).toLocaleString() : "Available now",
@@ -121,6 +123,7 @@ async function sendWithRetry(task: () => Promise<void>, max = 3): Promise<void> 
 }
 
 function examPublishedTemplate(payload: {
+  studentId: string;
   studentName: string;
   examName: string;
   dateTime: string;
@@ -140,6 +143,10 @@ function examPublishedTemplate(payload: {
       <p><a href="${payload.joinLink}" style="background:#7A1F2B;color:#fff;padding:10px 14px;text-decoration:none">Join Exam</a></p>
       <p>✓ Before starting:<br/>- Check internet connection<br/>- Run system compatibility check<br/>- Try practice mode if available</p>
       <p>Regards,<br/>Vignan Exam Platform</p>
+      <hr style="border:none;border-top:1px solid #eee;margin-top:20px;margin-bottom:20px" />
+      <p style="font-size:11px;color:#999;text-align:center">
+        Don't want to receive these emails? <a href="${Deno.env.get("SUPABASE_URL")}/functions/v1/unsubscribe-email?studentId=${payload.studentId}" style="color:#999">Unsubscribe</a>
+      </p>
     </div>
   `;
 }

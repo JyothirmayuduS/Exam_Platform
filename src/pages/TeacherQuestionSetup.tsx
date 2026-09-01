@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { publishExam, type ExamRecord } from "../lib/examApi";
+import { publishExam, triggerExamEmail, type ExamRecord } from "../lib/examApi";
 
 type Exam = { id: string; name: string; batch: string; state: string; tone: string };
 type Question = { id: string; title: string; unit: string; type: string; difficulty: string; marks: number };
@@ -90,10 +90,13 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   // Persist to Supabase and report the real outcome. `offline` = no backend
   // configured (prototype demo data); a DB error usually means RLS is still
   // auth-scoped — run supabase/demo-policies.sql once to open the anon flow.
-  const persist = (rec: ExamRecord | null, okMsg: string) => {
+  const persist = (rec: ExamRecord | null, okMsg: string, sendEmail = false) => {
     if (!rec) return;
     void publishExam(rec).then((res) => {
-      if (res.ok) notify(okMsg);
+      if (res.ok) {
+        if (sendEmail) void triggerExamEmail(rec.id);
+        notify(okMsg);
+      }
       else if (res.error === "offline") notify("Published in demo mode — connect Supabase to reach students live.");
       else notify(`Couldn't reach students: ${res.error}. Run supabase/demo-policies.sql, then republish.`);
     });
@@ -101,14 +104,14 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   const publishNow = () => {
     const n = notifyStudents ? ENROLLED : 0;
     setPublish({ status: "published", link: studentLink(selected), notified: n });
-    persist(buildRecord("published", null), n ? `Exam published — join link emailed to ${n} students` : "Exam published — students can start now");
+    persist(buildRecord("published", null), n ? `Exam published — join link emailed to ${n} students` : "Exam published — students can start now", notifyStudents);
   };
   const schedule = () => {
     if (!schedDate || !schedTime) return;
     const n = notifyStudents ? ENROLLED : 0;
     const whenIso = new Date(`${schedDate}T${schedTime}`).toISOString();
     setPublish({ status: "scheduled", link: studentLink(selected), when: `${schedDate} · ${schedTime}`, notified: n });
-    persist(buildRecord("scheduled", whenIso), n ? `Scheduled for ${schedDate} ${schedTime} — students will be emailed` : `Scheduled for ${schedDate} ${schedTime}`);
+    persist(buildRecord("scheduled", whenIso), n ? `Scheduled for ${schedDate} ${schedTime} — students will be emailed` : `Scheduled for ${schedDate} ${schedTime}`, notifyStudents);
   };
   const copyLink = () => { navigator.clipboard?.writeText(publish.link ?? "").catch(() => undefined); setCopied(true); notify("Student link copied"); window.setTimeout(() => setCopied(false), 2000); };
   const canContinue = step === 0 ? pool.length > 0 : true;
