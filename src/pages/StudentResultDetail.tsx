@@ -6,66 +6,8 @@ import { useAuth } from "../lib/auth";
 import { getSupabase } from "../lib/supabase";
 import { useQuery } from "@tanstack/react-query";
 import AppealForm from "../components/exam/AppealForm";
+import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
-// ── Mock Data for Detailed Results ────────────────────────────────────────────
-const EXAM_DETAIL = {
-  name: "Computer Networks",
-  code: "EXAM-2025-061",
-  date: "14 Feb 2026",
-  score: 91,
-  outOf: 100,
-  percentile: 88,
-  classAvg: 72,
-  passMark: 40,
-  timeSpent: "1h 42m",
-  categoryBreakdown: [
-    { category: "OSI Model", score: 100 },
-    { category: "TCP/IP", score: 85 },
-    { category: "Routing", score: 90 },
-    { category: "Network Security", score: 75 },
-  ],
-  questions: [
-    {
-      id: 1,
-      type: "mcq",
-      text: "Which layer of the OSI model is responsible for routing?",
-      options: ["Data Link", "Network", "Transport", "Session"],
-      studentAnswer: 1,
-      correctAnswer: 1,
-      marksAwarded: 2,
-      maxMarks: 2,
-      explanation: "The Network layer (Layer 3) handles packet routing across multiple networks.",
-      markedForReview: false,
-      timeSpentSec: 45,
-    },
-    {
-      id: 2,
-      type: "mcq",
-      text: "TCP is a connectionless protocol.",
-      options: ["True", "False"],
-      studentAnswer: 0,
-      correctAnswer: 1,
-      marksAwarded: 0,
-      maxMarks: 2,
-      explanation: "TCP is connection-oriented. UDP is connectionless.",
-      teacherComment: "Review the differences between TCP and UDP.",
-      markedForReview: true,
-      timeSpentSec: 12,
-    },
-    {
-      id: 3,
-      type: "subjective",
-      text: "Explain the three-way handshake in TCP.",
-      studentAnswerText: "[Image Uploaded via Mobile]",
-      marksAwarded: 8,
-      maxMarks: 10,
-      teacherComment: "Good explanation of SYN and ACK, but missed mentioning the sequence numbers in detail.",
-      markedForReview: false,
-      timeSpentSec: 320,
-      appealStatus: "none", // none, pending, reviewed
-    }
-  ],
-};
 
 function MiniBarChart({ data }: { data: { category: string; score: number }[] }) {
   return (
@@ -89,10 +31,11 @@ function MiniBarChart({ data }: { data: { category: string; score: number }[] })
 export default function StudentResultDetail() {
   const { resultId } = useParams();
   const { user } = useAuth();
+  const { profile } = useCurrentProfile();
   const [appealingQ, setAppealingQ] = useState<number | null>(null);
   const [submittedAppeals, setSubmittedAppeals] = useState<Record<number, string>>({});
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['resultDetail', resultId, user?.id],
     queryFn: async () => {
       const db = getSupabase();
@@ -126,14 +69,41 @@ export default function StudentResultDetail() {
         .eq("exam_id", resultId)
         .order("id", { ascending: true });
 
-      const answersObj = attempt.answers || {};
+      // Compute real class average and percentile from all submitted attempts
+      const { data: allAttempts } = await db
+        .from("attempts")
+        .select("score")
+        .eq("exam_id", resultId)
+        .eq("state", "submitted");
 
+      const validScores = (allAttempts ?? [])
+        .map((a: any) => a.score)
+        .filter((s: any): s is number => typeof s === "number");
+
+      const myScore = attempt.score ?? 0;
+      const classAvg = validScores.length
+        ? Math.round(validScores.reduce((a: number, b: number) => a + b, 0) / validScores.length)
+        : 0;
+      const percentile = validScores.length
+        ? Math.round((validScores.filter((s: number) => s < myScore).length / validScores.length) * 100)
+        : 0;
+
+      const answersObj = attempt.answers || {};
+      const totalMarks = exam?.total_marks ?? 100;
+
+      // Build category breakdown from questions
+      const categoryMap: Record<string, { correct: number; total: number }> = {};
       const processedQuestions = (questions || []).map((q: any, i: number) => {
         const studentAns = answersObj[i];
-        let type = q.type === "Subjective" || q.type === "Coding" ? "subjective" : "mcq";
-        let isCorrect = q.answer === studentAns;
-        let awarded = isCorrect ? q.marks : 0;
-        
+        const type = q.type === "Subjective" || q.type === "Coding" ? "subjective" : "mcq";
+        const isCorrect = type === "mcq" && String(q.answer) === String(studentAns);
+        const awarded = type === "mcq" ? (isCorrect ? q.marks : 0) : (attempt.score === null ? "..." : 0);
+
+        const cat = q.category || "General";
+        if (!categoryMap[cat]) categoryMap[cat] = { correct: 0, total: 0 };
+        categoryMap[cat].total += q.marks;
+        if (isCorrect) categoryMap[cat].correct += q.marks;
+
         return {
           id: i,
           type,
@@ -142,27 +112,36 @@ export default function StudentResultDetail() {
           studentAnswer: type === "mcq" ? (studentAns !== undefined ? parseInt(studentAns) : -1) : -1,
           studentAnswerText: type === "subjective" ? (studentAns || "") : "",
           correctAnswer: type === "mcq" ? (q.answer !== null ? parseInt(q.answer) : -1) : -1,
-          marksAwarded: type === "mcq" ? awarded : (attempt.score === null ? "..." : awarded),
+          marksAwarded: awarded,
           maxMarks: q.marks,
-          explanation: null,
-          teacherComment: null,
+          explanation: q.explanation ?? null,
+          teacherComment: q.teacher_comment ?? null,
           markedForReview: false,
           timeSpentSec: 0,
         };
       });
 
+      const categoryBreakdown = Object.entries(categoryMap).map(([category, { correct, total }]) => ({
+        category,
+        score: total > 0 ? Math.round((correct / total) * 100) : 0,
+      }));
+
+      const minutesUsed = attempt.minutes_used ?? 0;
       return {
         name: exam?.name || "Unknown Exam",
         code: resultId,
         date: attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : "N/A",
-        score: attempt.score ?? 0,
-        outOf: exam?.total_marks ?? 100,
-        percentile: 88, // Mock
-        classAvg: 72, // Mock
-        passMark: (exam?.total_marks ?? 100) * 0.4,
-        timeSpent: `${Math.floor(attempt.minutes_used / 60)}h ${attempt.minutes_used % 60}m`,
-        categoryBreakdown: [], // Mock or empty
-        questions: processedQuestions
+        score: myScore,
+        outOf: totalMarks,
+        percentile,
+        classAvg,
+        validScoresCount: validScores.length,
+        passMark: Math.round(totalMarks * 0.4),
+        timeSpent: minutesUsed >= 60
+          ? `${Math.floor(minutesUsed / 60)}h ${minutesUsed % 60}m`
+          : `${minutesUsed}m`,
+        categoryBreakdown,
+        questions: processedQuestions,
       };
     },
     enabled: !!user?.id && !!resultId,
@@ -170,7 +149,7 @@ export default function StudentResultDetail() {
 
   if (isLoading) {
     return (
-      <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={STUDENT_NAV}>
+      <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV}>
         <div className="p-10 text-center text-ink-soft">Loading results...</div>
       </RoleLayout>
     );
@@ -178,7 +157,7 @@ export default function StudentResultDetail() {
 
   if (!data) {
     return (
-      <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={STUDENT_NAV}>
+      <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV}>
         <div className="p-10 text-center text-alert">Failed to load exam result.</div>
       </RoleLayout>
     );
@@ -194,7 +173,7 @@ export default function StudentResultDetail() {
   const isPassed = EXAM_DETAIL.score >= EXAM_DETAIL.passMark;
 
   return (
-    <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={STUDENT_NAV}>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV}>
       <div className="mb-6 flex items-center justify-between">
         <div>
           <Link to="/student/results" className="text-[12px] text-ink-soft hover:text-ink font-mono uppercase tracking-wider mb-2 inline-block">← Back to Results</Link>
@@ -326,16 +305,29 @@ export default function StudentResultDetail() {
           <div className="border border-line bg-paper-raised p-5">
             <h3 className="font-serif text-lg mb-1">Category Breakdown</h3>
             <p className="text-[11px] text-ink-soft mb-4">Your performance across topics</p>
-            <MiniBarChart data={EXAM_DETAIL.categoryBreakdown} />
+            {EXAM_DETAIL.categoryBreakdown.length > 0 ? (
+              <MiniBarChart data={EXAM_DETAIL.categoryBreakdown} />
+            ) : (
+              <p className="text-[12px] text-ink-soft italic">Category data not available for this exam.</p>
+            )}
           </div>
 
           <div className="border border-line bg-paper-raised p-5">
-            <h3 className="font-serif text-lg mb-1">Analytics Insights</h3>
-            <ul className="text-[12.5px] space-y-3 mt-4 text-ink-soft list-disc pl-4 marker:text-line-strong">
-              <li>You spent <strong className="text-ink">45% less time</strong> than average on OSI Model questions, yet scored 100%.</li>
-              <li>Your accuracy drops on questions flagged for review (0% correct).</li>
-              <li><strong className="text-amber">Weak Area Identified:</strong> Transport Layer Protocols. Focus on TCP vs UDP.</li>
-            </ul>
+            <h3 className="font-serif text-lg mb-1">Class Stats</h3>
+            <div className="space-y-3 mt-3 text-[13px]">
+              <div className="flex justify-between">
+                <span className="text-ink-soft">Class average</span>
+                <span className="font-mono font-bold">{EXAM_DETAIL.classAvg} / {EXAM_DETAIL.outOf}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-soft">Your percentile</span>
+                <span className="font-mono font-bold text-success">{EXAM_DETAIL.percentile}th</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-soft">Students assessed</span>
+                <span className="font-mono font-bold">{EXAM_DETAIL.validScoresCount}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>

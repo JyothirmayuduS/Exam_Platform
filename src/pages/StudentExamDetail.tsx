@@ -4,6 +4,7 @@ import RoleLayout from "../components/RoleLayout";
 import ExamCountdown from "../components/ExamCountdown";
 import SystemCheckPage from "../components/SystemCheckPage";
 import { loadExamForStudent, type ExamRecord } from "../lib/examApi";
+import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
 const NAV = [
   { label: "Overview", to: "/student", end: true },
@@ -23,6 +24,7 @@ function canStartExam(exam: ExamRecord | null): boolean {
 
 export default function StudentExamDetail() {
   const { examId = "" } = useParams();
+  const { profile } = useCurrentProfile();
   const [exam, setExam] = useState<ExamRecord | null>(null);
   const [questionCount, setQuestionCount] = useState(0);
 
@@ -41,7 +43,7 @@ export default function StudentExamDetail() {
   const startVisible = useMemo(() => canStartExam(exam), [exam]);
 
   return (
-    <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={NAV}>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={NAV}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exam details</p>

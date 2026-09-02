@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import { loadExamBundle, type DBQuestion } from "../lib/examApi";
+import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
 type AnswerMap = Record<string, string>;
 
@@ -28,6 +29,7 @@ const FALLBACK: DBQuestion[] = [
 
 export default function PracticeModeExam() {
   const { examId = "" } = useParams();
+  const { profile } = useCurrentProfile();
   const [title, setTitle] = useState("Practice Mode");
   const [questions, setQuestions] = useState<DBQuestion[]>(FALLBACK);
   const [answers, setAnswers] = useState<AnswerMap>({});
@@ -58,7 +60,7 @@ export default function PracticeModeExam() {
   }, [answers, questions]);
 
   return (
-    <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={NAV}>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={NAV}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">No grading · no timer · no proctoring</p>

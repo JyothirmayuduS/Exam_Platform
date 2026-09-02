@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { loadExamBundle, updateAttemptScore } from "../lib/examApi";
 import { type Attempt, type Flag } from "../data/examSession";
 import useLiveAttempts from "../hooks/useLiveAttempts";
+import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
 type QType = "MCQ" | "MSQ" | "TrueFalse" | "Numerical" | "Subjective" | "Coding";
 type RubricItem = { id: string; label: string; detail: string; marks: number };
@@ -73,6 +74,7 @@ function buildPaper(questions: any[], answers: Record<string, any>): Question[] 
 }
 
 export default function TeacherEvaluation({ notify }: { notify: (message: string) => void }) {
+  const { profile } = useCurrentProfile();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: liveAttempts = [] } = useLiveAttempts("EXAM-2026-014");
 
@@ -169,7 +171,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     setRoster((cur) => cur.map((c) => (c.id === cid ? { ...c, status: "Graded", awarded } : c)));
   };
 
-  return <>
+  return <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav}>
     <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
       <div>
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Faculty console / Evaluate</p>
@@ -410,7 +412,7 @@ function CameraPip({ cam, minimized, onToggle }: { cam: ReturnType<typeof useEva
           </div>
         )}
         {state === "connecting" && <div className="absolute inset-0 flex items-center justify-center bg-[#1f3027]/70 font-mono text-[9px] uppercase tracking-wider text-paper/80">Starting camera…</div>}
-        <span className="absolute bottom-1.5 right-1.5 bg-ink/70 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper">Evaluator · Dr. K. Venkatesh</span>
+        <span className="absolute bottom-1.5 right-1.5 bg-ink/70 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper">Evaluator · {profile?.full_name ?? "Faculty"}</span>
       </div>
     </div>
   );

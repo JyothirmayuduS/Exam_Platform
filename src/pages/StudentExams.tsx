@@ -4,6 +4,7 @@ import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
 import { listEnrolledExamsForAuthUser, subscribeToStudentExams, type ExamRecord } from "../lib/examApi";
 import { isTauri } from "../lib/platform";
+import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
 export const STUDENT_NAV = [
   { label: "Overview", to: "/student", end: true },
@@ -29,6 +30,7 @@ function toRow(e: ExamRecord): Row {
 
 export default function StudentExams() {
   const navigate = useNavigate();
+  const { profile } = useCurrentProfile();
   const [enterModal, setEnterModal] = useState<string | null>(null);
 
   const [rows, setRows] = useState<Row[]>([]);
@@ -92,7 +94,7 @@ export default function StudentExams() {
   };
 
   return (
-    <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={STUDENT_NAV} status={live ? "● Live · synced" : "Profile verified"}>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV} status={live ? "● Live · synced" : "Profile verified"}>
       <div className="flex items-end justify-between">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Assessments</p>

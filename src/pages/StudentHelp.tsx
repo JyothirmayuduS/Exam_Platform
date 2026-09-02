@@ -1,6 +1,7 @@
 import { useState } from "react";
 import RoleLayout from "../components/RoleLayout";
 import { STUDENT_NAV } from "./StudentExams";
+import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
 const FAQS: { q: string; a: string }[] = [
   { q: "What do I need before starting an exam?", a: "A working webcam and microphone, a stable internet connection, your ID card, and a quiet, well-lit room. The system check at the start of every exam confirms these automatically." },
@@ -11,10 +12,11 @@ const FAQS: { q: string; a: string }[] = [
 ];
 
 export default function StudentHelp() {
+  const { profile } = useCurrentProfile();
   const [open, setOpen] = useState<number | null>(0);
 
   return (
-    <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={STUDENT_NAV}>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV}>
       <div>
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Support</p>
         <h1 className="mt-2 font-serif text-3xl font-semibold">Help &amp; support</h1>

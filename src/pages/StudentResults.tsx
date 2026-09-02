@@ -4,6 +4,7 @@ import RoleLayout from "../components/RoleLayout";
 import { STUDENT_NAV } from "./StudentExams";
 import { useAuth } from "../lib/auth";
 import { getSupabase } from "../lib/supabase";
+import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
 type Result = {
   name: string;
@@ -24,6 +25,7 @@ function grade(pct: number) {
 
 export default function StudentResults() {
   const { user } = useAuth();
+  const { profile } = useCurrentProfile();
   
   const { data: results = [], isLoading } = useQuery({
     queryKey: ['studentResults', user?.id],
@@ -64,7 +66,7 @@ export default function StudentResults() {
   const avg = published.length ? Math.round(published.reduce((s, r) => s + (r.score / r.outOf) * 100, 0) / published.length) : 0;
 
   return (
-    <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={STUDENT_NAV}>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV}>
       <div>
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Performance</p>
         <h1 className="mt-2 font-serif text-3xl font-semibold">Results</h1>

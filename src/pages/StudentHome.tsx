@@ -6,6 +6,7 @@ import ExamCountdown from "../components/ExamCountdown";
 import ExamCountdownBanner from "../components/ExamCountdownBanner";
 import { listEnrolledExamsForAuthUser, type ExamRecord } from "../lib/examApi";
 import { useAuth } from "../lib/auth";
+import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
 type ViewStatus = "upcoming" | "live" | "completed";
 
@@ -50,6 +51,7 @@ function toRow(exam: ExamRecord): Row {
 
 export default function StudentHome() {
   const { user } = useAuth();
+  const { profile } = useCurrentProfile();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | ViewStatus>("all");
 
@@ -78,7 +80,7 @@ export default function StudentHome() {
   }, [filter, query, rows]);
 
   return (
-    <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={nav}>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={nav}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Student dashboard</p>

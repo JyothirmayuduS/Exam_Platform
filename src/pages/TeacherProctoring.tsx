@@ -3,6 +3,7 @@ import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
 import { listLiveAttempts, subscribeToAttempts, type LiveAttempt } from "../lib/examApi";
 import { startProctorViewing, identityLabel, type RemoteFeed } from "../lib/proctorViewer";
+import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
 const EXAM_ID = "EXAM-2026-014";
 const ROOM = EXAM_ID; // must match the student's ProctorCamera room
@@ -27,6 +28,7 @@ function attemptToStudent(a: LiveAttempt): Student {
 type FeedLookup = (s: Student) => RemoteFeed | null;
 
 export default function TeacherProctoring() {
+  const { profile } = useCurrentProfile();
   const [students, setStudents] = useState<Student[]>([]);
   const [live, setLive] = useState(false);
   const [feeds, setFeeds] = useState<RemoteFeed[]>([]);
@@ -75,7 +77,7 @@ export default function TeacherProctoring() {
   }, [filter, students]);
   const selectCandidate = (candidate: Student) => { setSelected(candidate); setView("wall"); setScreenMode(true); };
   const feedCount = feeds.filter((f) => f.camera).length;
-  return <RoleLayout role="Teacher" name="Dr. K. Venkatesh" subtitle="Computer Science · Faculty" tone="#284B34" items={nav} status="Live monitoring active">
+  return <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav} status="Live monitoring active">
     <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Faculty console / Proctoring</p><h1 className="mt-2 font-serif text-3xl font-semibold">Live proctoring</h1><p className="mt-2 text-[13px] text-ink-soft">Data Structures &amp; Algorithms · Hall B · Slot 2</p></div><div className="flex items-center gap-3"><button className="border border-line-strong px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Assign Proctors</button><button className="border border-line-strong px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Export Report</button><span className="border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert">● Session live · 00:27:14</span></div></div>
     <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Active candidates" value="118" sub="of 142 enrolled"/><Stat label="Clear" value="114" sub="No active flags"/><Stat label="Needs attention" value="4" sub="2 critical · 2 notices" alert/><Stat label="Recordings" value="142" sub="Camera + screen saved"/></div>
     <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat (2)</button></div><div className="flex items-center gap-3"><span className={`font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}>● {live ? `${feedCount} feed(s) · DB live` : "Demo mode"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
@@ -157,7 +159,7 @@ function ProctorChat() {
         <div className="flex gap-3">
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-forest text-paper text-[12px]">KV</span>
           <div>
-            <p className="text-[12px] font-medium">Dr. K. Venkatesh <span className="ml-2 font-mono text-[9px] text-ink-soft">10:15 AM</span></p>
+            <p className="text-[12px] font-medium">Proctor Lead <span className="ml-2 font-mono text-[9px] text-ink-soft">10:15 AM</span></p>
             <p className="mt-1 text-[13px]">Can someone keep an eye on Hall B? Seeing a lot of gaze warnings.</p>
           </div>
         </div>
