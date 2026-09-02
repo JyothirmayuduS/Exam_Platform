@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
-import { listExamsForStudent, subscribeToStudentExams, type ExamRecord } from "../lib/examApi";
+import { listEnrolledExamsForAuthUser, subscribeToStudentExams, type ExamRecord } from "../lib/examApi";
 import { isTauri } from "../lib/platform";
 
 export const STUDENT_NAV = [
@@ -12,15 +12,9 @@ export const STUDENT_NAV = [
   { label: "Help & support", to: "/student/help" },
 ];
 
-export const STUDENT_BATCH = "CSE — Sem III · Sec A/B";
+export const STUDENT_BATCH = "CSE — Sem III · Sec A/B"; // Keep for fallback purposes
 
 type Row = { id: string; name: string; meta: string; when: string; status: "published" | "scheduled" | "completed" };
-
-const FALLBACK: Row[] = [
-  { id: "EXAM-2026-014", name: "Data Structures & Algorithms", meta: "CSE · Sem III · 45 min · 70 marks", when: "Available now", status: "published" },
-  { id: "EXAM-2026-021", name: "Digital Electronics", meta: "ECE · Sem III · 60 min · 50 marks", when: "18 Mar 2026 · 2:00 PM", status: "scheduled" },
-  { id: "EXAM-2025-088", name: "Operating Systems", meta: "CSE · Sem III · 60 min · 60 marks", when: "Completed 12 Mar 2026", status: "completed" },
-];
 
 function toRow(e: ExamRecord): Row {
   const when = e.scheduled_at ? new Date(e.scheduled_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Available now";
@@ -37,25 +31,33 @@ export default function StudentExams() {
   const navigate = useNavigate();
   const [enterModal, setEnterModal] = useState<string | null>(null);
 
-  // Demo mode shows FALLBACK; configured mode starts empty + loading so a
-  // failed/empty query never flashes demo rows then blanks them.
-  const [rows, setRows] = useState<Row[]>(supabaseConfigured ? [] : FALLBACK);
+  const [rows, setRows] = useState<Row[]>([]);
   const [live, setLive] = useState(false);
-  const [loading, setLoading] = useState(supabaseConfigured);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!supabaseConfigured) return;
     let active = true;
     const load = async () => {
-      const data = await listExamsForStudent(STUDENT_BATCH);
-      if (!active) return;
-      
       const { getSupabase } = await import("../lib/supabase");
       const db = getSupabase();
+      if (!db) {
+        if (active) setLoading(false);
+        return;
+      }
+      
+      const { data: { user } } = await db.auth.getUser();
+      if (!user) {
+        if (active) setLoading(false);
+        return;
+      }
+
+      const data = await listEnrolledExamsForAuthUser(user.id);
+      if (!active) return;
+      
       let attemptsMap: Record<string, string> = {};
       
-      if (db && data) {
-         const { data: st } = await db.from("students").select("id").eq("roll", "21VGN0142").maybeSingle();
+      if (data) {
+         const { data: st } = await db.from("students").select("id").eq("auth_id", user.id).maybeSingle();
          if (st?.id) {
            const { data: att } = await db.from("attempts").select("exam_id, state").eq("student_id", st.id);
             if (att) {

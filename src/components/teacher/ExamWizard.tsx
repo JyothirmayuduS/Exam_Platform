@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import type { ExamRecord } from "../../lib/examApi";
 import { publishExam } from "../../lib/examApi";
-import { Button, PageHeading, questions } from "../../pages/TeacherDashboard";
+import { Button, PageHeading } from "../../pages/TeacherDashboard";
 
 export default function ExamWizard({ notify, navigate, onCreate }: { notify: (s: string) => void; navigate: (s: string) => void; onCreate: (exam: ExamRecord) => void }) {
   const [step, setStep] = useState(1);
@@ -10,9 +10,9 @@ export default function ExamWizard({ notify, navigate, onCreate }: { notify: (s:
   // Step 1: Details
   const [title, setTitle] = useState("");
   const [enrollmentMode, setEnrollmentMode] = useState<"all" | "manual">("all");
-  const [course, setCourse] = useState("Data Structures & Algorithms");
-  const [batch, setBatch] = useState("CSE — Sem III · Sec A/B");
-  const [date, setDate] = useState("18 March 2026");
+  const [course, setCourse] = useState("");
+  const [batch, setBatch] = useState("");
+  const [date, setDate] = useState("");
   const [duration, setDuration] = useState("00:45");
   
   // Step 2: Question Set
@@ -127,9 +127,15 @@ export default function ExamWizard({ notify, navigate, onCreate }: { notify: (s:
                 <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Data Structures Midterm" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
               </label>
               <div className="mt-5 grid gap-5 sm:grid-cols-2">
-                <SelectField label="Course" value={course} onChange={setCourse} options={["Data Structures & Algorithms", "Digital Electronics", "Database Management Systems"]}/>
-                <SelectField label="Batch" value={batch} onChange={setBatch} options={["CSE — Sem III · Sec A/B", "CSE — Sem V", "ECE — Sem III"]}/>
-                <SelectField label="Date" value={date} onChange={setDate} options={["18 March 2026", "19 March 2026", "20 March 2026"]}/>
+                <label className="block text-[12px] text-ink-soft">Course
+                  <input type="text" value={course} onChange={(e) => setCourse(e.target.value)} placeholder="e.g. Data Structures & Algorithms" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
+                </label>
+                <label className="block text-[12px] text-ink-soft">Batch
+                  <input type="text" value={batch} onChange={(e) => setBatch(e.target.value)} placeholder="e.g. CSE — Sem III · Sec A/B" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
+                </label>
+                <label className="block text-[12px] text-ink-soft">Date & Time
+                  <input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
+                </label>
                 <label className="block text-[12px] text-ink-soft">Duration
                   <input type="time" value={duration} onChange={(e) => setDuration(e.target.value)} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
                   <span className="mt-1 block text-[10px] text-ink-soft">Select the exact exam duration (hours : minutes).</span>
@@ -152,9 +158,35 @@ export default function ExamWizard({ notify, navigate, onCreate }: { notify: (s:
                 ))}
               </div>
               <div className="mt-6 grid gap-5 sm:grid-cols-2">
-                <SelectField label="Questions" value={questionCount} onChange={setQuestionCount} options={["30", "40", "50"]}/>
-                <SelectField label="Marking scheme" value={markingScheme} onChange={setMarkingScheme} options={["1 mark each · No negative", "2 marks each · -0.5 negative"]}/>
+                <label className="block text-[12px] text-ink-soft">Questions per student
+                  <input type="number" min="1" value={questionCount} onChange={(e) => setQuestionCount(e.target.value)} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
+                  <span className="mt-1 block text-[10px] text-ink-soft">How many questions each candidate will face.</span>
+                </label>
+                <SelectField label="Marking scheme" value={markingScheme} onChange={setMarkingScheme} options={["1 mark each · No negative", "2 marks each · -0.5 negative", "Custom (Set per question)"]}/>
               </div>
+              {questionMode === "pool" && (
+                <div className="mt-5">
+                  <label className="block text-[12px] text-ink-soft">Units / Tags to include
+                    <input type="text" placeholder="e.g. Arrays, Trees, Recursion" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
+                  </label>
+                </div>
+              )}
+              {questionMode === "fixed" && (
+                <div className="mt-5 border border-dashed border-forest/40 bg-success/5 p-4 text-[13px] text-ink-soft">
+                  <p>In fixed mode, you will hand-pick exactly {questionCount || "X"} questions from your Question Bank after creating the exam workspace.</p>
+                </div>
+              )}
+              {questionMode === "import" && (
+                <div className="mt-5">
+                  <label className="block text-[12px] text-ink-soft">Select previous exam to clone
+                    <select className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest">
+                      <option>Select an exam</option>
+                      <option>Data Structures Midterm (Fall 2025)</option>
+                      <option>Operating Systems Final (Spring 2026)</option>
+                    </select>
+                  </label>
+                </div>
+              )}
             </FormStep>
           )}
           

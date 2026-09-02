@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AIViolation } from "../components/ProctorAI";
+import { saveViolation } from "../lib/examApi";
 
 export type Violation = { id: number; kind: string; at: string };
 
-export default function useProctoring(active: boolean) {
+export default function useProctoring(active: boolean, attemptId?: string, examId?: string, studentId?: string) {
   const [violations, setViolations] = useState<Violation[]>([]);
   const [activeViolation, setActiveViolation] = useState<Violation | null>(null);
   const violationId = useRef(0);
@@ -16,7 +17,12 @@ export default function useProctoring(active: boolean) {
     };
     setViolations((list) => [...list, v]);
     setActiveViolation(v);
-  }, []);
+    
+    // Save to database if we are in a real exam context
+    if (attemptId && examId && studentId) {
+      saveViolation(attemptId, examId, studentId, kind, kind).catch(console.error);
+    }
+  }, [attemptId, examId, studentId]);
 
   const handleAIViolation = useCallback((v: AIViolation) => {
     flag(`[AI] ${v.label}`);

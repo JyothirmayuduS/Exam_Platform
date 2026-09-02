@@ -11,28 +11,26 @@ const nav = [{ label: "Overview", to: "/teacher", end: true }, { label: "Exams",
 
 type Student = { name: string; roll: string; status: string; progress: number; violation: string; studentId?: string; timeLeft?: string };
 
-const DEMO_STUDENTS: Student[] = [
-  { name: "B. Priya Nikitha", roll: "21VGN0142", status: "Writing", progress: 68, violation: "", timeLeft: "12m" },
-  { name: "K. Rohan Teja", roll: "21VGN0158", status: "Writing", progress: 92, violation: "Second face detected", timeLeft: "5m" },
-  { name: "M. Sai Charan", roll: "21VGN0163", status: "Submitted", progress: 100, violation: "", timeLeft: "0m" },
-  { name: "A. Deepika Reddy", roll: "21VGN0171", status: "Writing", progress: 35, violation: "Gaze away from screen", timeLeft: "24m" },
-  { name: "P. Meghana", roll: "21VGN0217", status: "Paused", progress: 54, violation: "Restricted software", timeLeft: "18m" },
-  { name: "N. Harika Sree", roll: "21VGN0191", status: "Writing", progress: 47, violation: "", timeLeft: "20m" },
-];
+
 
 function attemptToStudent(a: LiveAttempt): Student {
   const pct = a.total ? Math.round((a.answered / a.total) * 100) : 0;
   const status = a.state === "submitted" ? "Submitted" : a.state === "in_progress" ? "Writing" : "Not started";
-  return { name: a.student?.full_name ?? "Unknown", roll: a.student?.roll ?? "—", status, progress: pct, violation: "", studentId: a.student?.id };
+  
+  // Sort violations descending by created_at (most recent first)
+  const sortedVio = [...(a.violations || [])].sort((x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime());
+  const activeVio = sortedVio.length > 0 ? sortedVio[0].description : "";
+  
+  return { name: a.student?.full_name ?? "Unknown", roll: a.student?.roll ?? "—", status, progress: pct, violation: activeVio, studentId: a.student?.id };
 }
 
 type FeedLookup = (s: Student) => RemoteFeed | null;
 
 export default function TeacherProctoring() {
-  const [students, setStudents] = useState<Student[]>(DEMO_STUDENTS);
+  const [students, setStudents] = useState<Student[]>([]);
   const [live, setLive] = useState(false);
   const [feeds, setFeeds] = useState<RemoteFeed[]>([]);
-  const [selected, setSelected] = useState<Student>(DEMO_STUDENTS[1]);
+  const [selected, setSelected] = useState<Student | null>(null);
   const [view, setView] = useState<"wall" | "activity" | "chat">("wall");
   const [filter, setFilter] = useState("All candidates");
   const [screenMode, setScreenMode] = useState(false);
@@ -47,7 +45,7 @@ export default function TeacherProctoring() {
       setLive(true);
       const mapped = rows.map(attemptToStudent);
       setStudents(mapped);
-      setSelected((cur) => mapped.find((s) => s.roll === cur.roll) ?? mapped[0] ?? cur);
+      setSelected((cur) => (cur ? mapped.find((s) => s.roll === cur.roll) ?? mapped[0] ?? null : mapped[0] ?? null));
     };
     void load();
     const unsub = subscribeToAttempts(EXAM_ID, () => void load());
@@ -82,12 +80,59 @@ export default function TeacherProctoring() {
     <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Active candidates" value="118" sub="of 142 enrolled"/><Stat label="Clear" value="114" sub="No active flags"/><Stat label="Needs attention" value="4" sub="2 critical · 2 notices" alert/><Stat label="Recordings" value="142" sub="Camera + screen saved"/></div>
     <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat (2)</button></div><div className="flex items-center gap-3"><span className={`font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}>● {live ? `${feedCount} feed(s) · DB live` : "Demo mode"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
     {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChat />}
-    <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]"><section className="border border-line bg-paper p-5 sm:p-6"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Selected candidate</p><div className="mt-4 flex items-center justify-between gap-4"><div><h2 className="font-serif text-xl font-semibold">{selected.name}</h2><p className="mt-1 font-mono text-[10px] text-ink-soft">{selected.roll} · {selected.status} · {selected.progress}% complete</p></div><span className={`font-mono text-[10px] uppercase ${selected.violation ? "text-alert" : "text-success"}`}>{selected.violation ? "Violation detected" : "Clear"}</span></div><div className="mt-5 flex border-b border-line font-mono text-[10px] uppercase tracking-wider"><button onClick={() => setScreenMode(false)} className={`border-b-2 px-3 py-2 ${!screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Camera view</button><button onClick={() => setScreenMode(true)} className={`border-b-2 px-3 py-2 ${screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Screen recording</button></div>{screenMode ? <ScreenRecording selected={selected} feed={feedFor(selected)}/> : <div className="relative mt-4 flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#D9D5CB]"><FeedView feed={feedFor(selected)} initials={selected.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}/><span className="absolute bottom-2 left-2 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">● LIVE CAMERA</span></div>}<div className="mt-5 border-l-2 border-alert px-3 py-2 text-[12px] text-ink-soft">{selected.violation || "No active proctoring flags. All checks are passing."}</div></section><aside className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Candidate activity</p><div className="mt-4 space-y-4">{[["10:17 AM", "Answered question 04"], ["10:16 AM", selected.violation || "Camera check passed"], ["10:12 AM", "Session connection stable"], ["10:00 AM", "Exam started"]].map(([time, event]) => <div key={time} className="flex gap-3"><span className="font-mono text-[10px] text-ink-soft">{time}</span><p className="text-[12px]">{event}</p></div>)}</div><div className="mt-6 grid gap-2"><button onClick={() => setSelected({ ...selected, violation: "Warning sent" })} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">Send warning</button><button onClick={() => setSelected({ ...selected, status: "Paused" })} className="border border-amber py-2 font-mono text-[10px] uppercase tracking-wider text-amber">Pause candidate</button><button onClick={() => setSelected({ ...selected, violation: "Escalated" })} className="border border-alert py-2 font-mono text-[10px] uppercase tracking-wider text-alert">Escalate incident</button></div></aside></div>
+    <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
+      <section className="border border-line bg-paper p-5 sm:p-6">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Selected candidate</p>
+        {!selected ? (
+          <div className="mt-4 text-[13px] text-ink-soft">No candidate selected or no active candidates.</div>
+        ) : (
+          <>
+            <div className="mt-4 flex items-center justify-between gap-4">
+              <div>
+                <h2 className="font-serif text-xl font-semibold">{selected.name}</h2>
+                <p className="mt-1 font-mono text-[10px] text-ink-soft">{selected.roll} · {selected.status} · {selected.progress}% complete</p>
+              </div>
+              <span className={`font-mono text-[10px] uppercase ${selected.violation ? "text-alert" : "text-success"}`}>{selected.violation ? "Violation detected" : "Clear"}</span>
+            </div>
+            <div className="mt-5 flex border-b border-line font-mono text-[10px] uppercase tracking-wider">
+              <button onClick={() => setScreenMode(false)} className={`border-b-2 px-3 py-2 ${!screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Camera view</button>
+              <button onClick={() => setScreenMode(true)} className={`border-b-2 px-3 py-2 ${screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Screen recording</button>
+            </div>
+            {screenMode ? (
+              <ScreenRecording selected={selected} feed={feedFor(selected)}/>
+            ) : (
+              <div className="relative mt-4 flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#D9D5CB]">
+                <FeedView feed={feedFor(selected)} initials={selected.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}/>
+                <span className="absolute bottom-2 left-2 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">● LIVE CAMERA</span>
+              </div>
+            )}
+            <div className="mt-5 border-l-2 border-alert px-3 py-2 text-[12px] text-ink-soft">{selected.violation || "No active proctoring flags. All checks are passing."}</div>
+          </>
+        )}
+      </section>
+      <aside className="border border-line p-5">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Candidate activity</p>
+        <div className="mt-4 space-y-4">
+          {!selected ? (
+            <p className="text-[12px] text-ink-soft">Select a candidate to view activity.</p>
+          ) : (
+            [["10:17 AM", "Answered question 04"], ["10:16 AM", selected.violation || "Camera check passed"], ["10:12 AM", "Session connection stable"], ["10:00 AM", "Exam started"]].map(([time, event]) => (
+              <div key={time} className="flex gap-3"><span className="font-mono text-[10px] text-ink-soft">{time}</span><p className="text-[12px]">{event}</p></div>
+            ))
+          )}
+        </div>
+        <div className="mt-6 grid gap-2">
+          <button disabled={!selected} onClick={() => selected && setSelected({ ...selected, violation: "Warning sent" })} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft disabled:opacity-50">Send warning</button>
+          <button disabled={!selected} onClick={() => selected && setSelected({ ...selected, status: "Paused" })} className="border border-amber py-2 font-mono text-[10px] uppercase tracking-wider text-amber disabled:opacity-50">Pause candidate</button>
+          <button disabled={!selected} onClick={() => selected && setSelected({ ...selected, violation: "Escalated" })} className="border border-alert py-2 font-mono text-[10px] uppercase tracking-wider text-alert disabled:opacity-50">Escalate incident</button>
+        </div>
+      </aside>
+    </div>
   </RoleLayout>;
 }
 
-function VideoWall({ visible, selected, onSelect, feedFor }: { visible: Student[]; selected: Student; onSelect: (student: Student) => void; feedFor: FeedLookup }) { return <section className="mt-6 border border-line bg-paper p-5 sm:p-6"><div className="flex items-center justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">All student video feeds</p><h2 className="mt-1 font-serif text-xl font-semibold">Live camera wall</h2></div><span className="font-mono text-[10px] text-ink-soft">Flagged feeds appear first</span></div><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">{visible.map((student, index) => <button key={student.roll} onClick={() => onSelect(student)} className={`overflow-hidden border text-left ${student.violation ? "border-alert ring-1 ring-alert" : selected.roll === student.roll ? "border-forest ring-1 ring-forest" : "border-line hover:border-line-strong"}`}><div className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#D9D5CB]"><FeedView feed={feedFor(student)} initials={student.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}/><span className={`absolute right-2 top-2 z-10 h-2 w-2 rounded-full ${student.violation ? "bg-alert" : "bg-success"}`}/><span className="absolute left-2 top-2 z-10 bg-ink/75 px-1.5 py-0.5 font-mono text-[8px] text-paper">{index === 0 && student.violation ? "REVIEW FIRST" : "REC"}</span><span className="absolute bottom-0 left-0 right-0 z-10 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">{student.status} · {student.progress}%</span></div><div className="p-2"><p className="truncate text-[11px] font-medium">{student.name}</p><p className={`truncate font-mono text-[9px] ${student.violation ? "text-alert" : "text-ink-soft"}`}>{student.violation || "No violations"}</p></div></button>)}{visible.length === 0 && <div className="col-span-full border border-dashed border-line-strong p-10 text-center font-mono text-[11px] text-ink-soft">Waiting for candidates to begin…</div>}</div></section>; }
-function ActivityView({ visible, selected, onSelect }: { visible: Student[]; selected: Student; onSelect: (student: Student) => void }) { return <section className="mt-6 border border-line"><div className="border-b border-line bg-paper-raised px-5 py-4"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Activity stream</p><h2 className="mt-1 font-serif text-xl font-semibold">Student activity by priority</h2></div><div className="divide-y divide-line">{visible.map((student) => <button key={student.roll} onClick={() => onSelect(student)} className={`flex w-full flex-col gap-3 px-5 py-4 text-left sm:flex-row sm:items-center sm:justify-between ${selected.roll === student.roll ? "bg-success/5" : "hover:bg-paper-raised"}`}><div><p className="text-[13px] font-medium">{student.name} <span className="ml-2 font-mono text-[10px] text-ink-soft">{student.roll}</span></p><p className="mt-1 text-[11px] text-ink-soft">Last event: {student.violation || "Answer saved · 18 seconds ago"}</p></div><span className={`font-mono text-[10px] uppercase ${student.violation ? "text-alert" : "text-success"}`}>{student.violation ? "Review violation →" : "Monitoring clear"}</span></button>)}</div></section>; }
+function VideoWall({ visible, selected, onSelect, feedFor }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void; feedFor: FeedLookup }) { return <section className="mt-6 border border-line bg-paper p-5 sm:p-6"><div className="flex items-center justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">All student video feeds</p><h2 className="mt-1 font-serif text-xl font-semibold">Live camera wall</h2></div><span className="font-mono text-[10px] text-ink-soft">Flagged feeds appear first</span></div><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">{visible.map((student, index) => <button key={student.roll} onClick={() => onSelect(student)} className={`overflow-hidden border text-left ${student.violation ? "border-alert ring-1 ring-alert" : selected?.roll === student.roll ? "border-forest ring-1 ring-forest" : "border-line hover:border-line-strong"}`}><div className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#D9D5CB]"><FeedView feed={feedFor(student)} initials={student.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}/><span className={`absolute right-2 top-2 z-10 h-2 w-2 rounded-full ${student.violation ? "bg-alert" : "bg-success"}`}/><span className="absolute left-2 top-2 z-10 bg-ink/75 px-1.5 py-0.5 font-mono text-[8px] text-paper">{index === 0 && student.violation ? "REVIEW FIRST" : "REC"}</span><span className="absolute bottom-0 left-0 right-0 z-10 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">{student.status} · {student.progress}%</span></div><div className="p-2"><p className="truncate text-[11px] font-medium">{student.name}</p><p className={`truncate font-mono text-[9px] ${student.violation ? "text-alert" : "text-ink-soft"}`}>{student.violation || "No violations"}</p></div></button>)}{visible.length === 0 && <div className="col-span-full border border-dashed border-line-strong p-10 text-center font-mono text-[11px] text-ink-soft">Waiting for candidates to begin…</div>}</div></section>; }
+function ActivityView({ visible, selected, onSelect }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void }) { return <section className="mt-6 border border-line"><div className="border-b border-line bg-paper-raised px-5 py-4"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Activity stream</p><h2 className="mt-1 font-serif text-xl font-semibold">Student activity by priority</h2></div><div className="divide-y divide-line">{visible.map((student) => <button key={student.roll} onClick={() => onSelect(student)} className={`flex w-full flex-col gap-3 px-5 py-4 text-left sm:flex-row sm:items-center sm:justify-between ${selected?.roll === student.roll ? "bg-success/5" : "hover:bg-paper-raised"}`}><div><p className="text-[13px] font-medium">{student.name} <span className="ml-2 font-mono text-[10px] text-ink-soft">{student.roll}</span></p><p className="mt-1 text-[11px] text-ink-soft">Last event: {student.violation || "Answer saved · 18 seconds ago"}</p></div><span className={`font-mono text-[10px] uppercase ${student.violation ? "text-alert" : "text-success"}`}>{student.violation ? "Review violation →" : "Monitoring clear"}</span></button>)}{visible.length === 0 && <div className="p-10 text-center font-mono text-[11px] text-ink-soft">No active candidates.</div>}</div></section>; }
 function ScreenRecording({ selected, feed }: { selected: Student; feed: RemoteFeed | null }) { const liveScreen = !!feed?.screen; return <div className="mt-4"><div className="relative flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#252923]">{liveScreen ? <ScreenFeedView feed={feed}/> : <><div className="absolute inset-3 bg-[#f5f3ed] p-3 text-left"><div className="flex justify-between border-b border-black/10 pb-2 font-mono text-[8px] text-black/50"><span>DSA MIDTERM · QUESTION 04 / 30</span><span>00:27:14</span></div><p className="mt-4 text-[10px] text-black/70">Which traversal visits the root between the left and right subtrees?</p><p className="mt-3 bg-black/5 p-1 text-[9px] text-black/50">● Inorder</p></div><span className="relative flex h-10 w-10 items-center justify-center rounded-full bg-ink/80 text-paper">▶</span></>}<span className="absolute bottom-2 left-2 z-10 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">{liveScreen ? "● LIVE SCREEN SHARE" : "○ SCREEN PREVIEW"}</span></div><p className="mt-3 text-[11px] text-ink-soft">{selected.name} · {liveScreen ? "Live screen share" : "Screen recording · awaiting feed"}</p></div>; }
 function FeedView({ feed, initials }: { feed: RemoteFeed | null; initials: string }) {
   const holderRef = useRef<HTMLDivElement | null>(null);

@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { publishExam, triggerExamEmail, enrollEntireBatch, type ExamRecord } from "../lib/examApi";
+import { useState, useEffect } from "react";
+import { publishExam, triggerExamEmail, type ExamRecord } from "../lib/examApi";
+import { getExamRoster, type StudentRosterRecord } from "../lib/examApi";
 
 type Exam = { id: string; name: string; batch: string; state: string; tone: string };
 type Question = { id: string; title: string; unit: string; type: string; difficulty: string; marks: number };
@@ -28,16 +29,7 @@ const RECIPIENTS = [
   "21vgn0171@vignan.ac.in",
 ];
 
-const QUESTIONS: Question[] = [
-  { id: "Q-1042", title: "Which traversal visits the root between the left and right subtrees?", unit: "Trees & Graphs", type: "MCQ", difficulty: "Medium", marks: 1 },
-  { id: "Q-1043", title: "Which normal form removes transitive dependencies?", unit: "Normalization", type: "MCQ", difficulty: "Hard", marks: 1 },
-  { id: "Q-1044", title: "Calculate the number of comparisons merge sort makes on 8 elements.", unit: "Sorting", type: "Numerical", difficulty: "Easy", marks: 2 },
-  { id: "Q-1045", title: "Explain how priority scheduling can lead to starvation and how ageing solves it.", unit: "OS Scheduling", type: "Subjective", difficulty: "Medium", marks: 10 },
-  { id: "Q-1046", title: "Which protocol provides reliable, ordered delivery of a byte stream?", unit: "Networking", type: "MCQ", difficulty: "Medium", marks: 1 },
-  { id: "Q-1047", title: "Write a function that returns the height of a binary tree.", unit: "Trees & Graphs", type: "Coding", difficulty: "Medium", marks: 5 },
-  { id: "Q-1048", title: "A hash table with chaining has load factor 0.75 — state the expected lookup cost.", unit: "Hashing", type: "Numerical", difficulty: "Medium", marks: 2 },
-  { id: "Q-1049", title: "TCP and UDP both operate at the transport layer.", unit: "Networking", type: "True / False", difficulty: "Easy", marks: 1 },
-];
+import { getSupabase } from "../lib/supabase";
 
 const STEP_LABELS = ["Add questions", "Delivery & rules", "Review & publish"];
 function studentLink(exam: Exam | null) { return `https://vignan.exam/join/${(exam?.id ?? "exam").toLowerCase()}`; }
@@ -60,14 +52,49 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   const [s, setS] = useState<Settings>({ perStudent: 5, randomSelect: true, shuffleOrder: true, shuffleOptions: true, autoSubmit: true, duration: 45, mode: "lockdown", attempts: 1, negative: false, calculator: false, instantFeedback: false, photoId: false, violationLimit: 3, violationAction: "submit", releaseDate: "", ipWhitelist: "", sections: false, sectionTiming: false, autoClose: false, durationLock: true });
   const set = <K extends keyof Settings,>(k: K, v: Settings[K]) => setS((cur) => ({ ...cur, [k]: v }));
 
-  const poolQuestions = QUESTIONS.filter((q) => pool.includes(q.id));
-  const visible = QUESTIONS.filter((q) => `${q.id} ${q.title} ${q.unit}`.toLowerCase().includes(search.toLowerCase()) && (filter === "All" || q.type === filter));
+  const [dbQuestions, setDbQuestions] = useState<Question[]>([]);
+
+  // Fetch all questions from the database
+
+  useEffect(() => {
+    let active = true;
+    const fetchQ = async () => {
+      const db = getSupabase();
+      if (!db) return;
+      const { data } = await db.from("questions").select("*");
+      if (active && data) {
+        setDbQuestions(data.map((q: any) => ({
+          id: q.id,
+          title: q.title,
+          unit: q.unit || "General",
+          type: q.type,
+          difficulty: q.difficulty || "Medium",
+          marks: q.marks || 1
+        })));
+      }
+    };
+    fetchQ();
+    return () => { active = false; };
+  }, []);
+
+  const poolQuestions = dbQuestions.filter((q) => pool.includes(q.id));
+  const visible = dbQuestions.filter((q) => `${q.id} ${q.title} ${q.unit}`.toLowerCase().includes(search.toLowerCase()) && (filter === "All" || q.type === filter));
   const totalMarks = poolQuestions.reduce((sum, q) => sum + q.marks, 0);
   const perStudent = Math.min(s.perStudent, Math.max(1, pool.length));
 
   const chooseExam = (exam: Exam) => {
     setSelected(exam); setStep(0);
     setPool(exam.id === "EXAM-2026-014" ? ["Q-1042", "Q-1044", "Q-1046"] : []);
+    // Also, load this exam's actual questions into the pool
+    const fetchExamQ = async () => {
+      const db = getSupabase();
+      if (!db) return;
+      const { data } = await db.from("questions").select("id").eq("exam_id", exam.id);
+      if (data && data.length > 0) {
+        setPool(data.map((d: any) => d.id));
+      }
+    };
+    fetchExamQ();
     setSearch(""); setFilter("All"); setBulkOpen(false); setBulkFile(null);
     setPublish({ status: "draft" }); setDraftSaved(false);
   };
@@ -104,7 +131,7 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
     if (!rec) return;
     void publishExam(rec).then(async (res) => {
       if (res.ok) {
-        if (enrollBatch) await enrollEntireBatch(rec.id, rec.batch);
+        // Note: Students are now enrolled via the Global Directory in the Students tab.
         if (sendEmail) void triggerExamEmail(rec.id);
         notify(okMsg);
       }

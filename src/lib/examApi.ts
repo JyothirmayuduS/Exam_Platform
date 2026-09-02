@@ -76,7 +76,7 @@ export async function listEnrolledExamsForAuthUser(
 
   const { data: student } = await db
     .from("students")
-    .select("id,batch")
+    .select("id")
     .eq("auth_id", authUserId)
     .maybeSingle();
 
@@ -99,8 +99,7 @@ export async function listEnrolledExamsForAuthUser(
       });
     return exams;
   }
-
-  return listExamsForStudent(String(student.batch));
+  return [];
 }
 
 /**
@@ -143,6 +142,23 @@ export type DBQuestion = {
 };
 
 export type ExamBundle = { exam: ExamRecord | null; questions: DBQuestion[] };
+
+export async function saveQuestion(question: Omit<DBQuestion, "id"> & { id?: string }): Promise<{ ok: boolean; data?: DBQuestion; error?: string }> {
+  const db = getSupabase();
+  if (!db) return { ok: false, error: "Supabase not connected" };
+  
+  if (question.id) {
+    const { data, error } = await db.from("questions").update(question).eq("id", question.id).select().single();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, data: data as DBQuestion };
+  } else {
+    // Generate a quick ID
+    const newId = `Q-${Math.floor(1000 + Math.random() * 9000)}`;
+    const { data, error } = await db.from("questions").insert({ ...question, id: newId }).select().single();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, data: data as DBQuestion };
+  }
+}
 
 /**
  * Load one exam and its question set for a student sitting it. Returns
@@ -362,6 +378,8 @@ export type LiveAttempt = {
   answered: number;
   total: number;
   minutes_used: number;
+  score: number | null;
+  answers: Record<string, unknown>;
   submitted_at: string | null;
   auto_saved_at: string | null;
   student: { id: string; roll: string; full_name: string } | null;
@@ -374,7 +392,7 @@ export async function listLiveAttempts(examId: string): Promise<LiveAttempt[]> {
   if (!db) return [];
   const { data, error } = await db
     .from("attempts")
-    .select("id,exam_id,state,answered,total,minutes_used,submitted_at,auto_saved_at,student:students(id,roll,full_name),violations:violation_events(id,severity,description,created_at)")
+    .select("id,exam_id,state,answered,total,minutes_used,score,answers,submitted_at,auto_saved_at,student:students(id,roll,full_name),violations:violation_events(id,severity,description,created_at)")
     .eq("exam_id", examId)
     .order("auto_saved_at", { ascending: false });
   if (error) return [];
@@ -389,6 +407,8 @@ export async function listLiveAttempts(examId: string): Promise<LiveAttempt[]> {
       answered: Number(r.answered ?? 0),
       total: Number(r.total ?? 0),
       minutes_used: Number(r.minutes_used ?? 0),
+      score: typeof r.score === "number" ? r.score : null,
+      answers: (r.answers as Record<string, unknown>) ?? {},
       submitted_at: (r.submitted_at as string) ?? null,
       auto_saved_at: (r.auto_saved_at as string) ?? null,
       student: student
@@ -424,16 +444,27 @@ export function subscribeToAttempts(examId: string, onChange: () => void): () =>
     db.removeChannel(channel);
   };
 }
-
-
 // --- Student Enrollment Management ---
+
+export type Student = {
+  id: string;
+  roll: string;
+  full_name: string;
+  email: string;
+  branch: string;
+  section: string;
+  phone?: string | null;
+  created_at: string;
+};
 
 export type StudentRosterRecord = {
   id: string;
   roll: string;
   full_name: string;
   email: string;
-  batch: string;
+  branch: string;
+  section: string;
+  phone?: string | null;
 };
 
 export async function getExamRoster(examId: string): Promise<StudentRosterRecord[]> {
@@ -442,7 +473,7 @@ export async function getExamRoster(examId: string): Promise<StudentRosterRecord
   
   const { data, error } = await db
     .from("enrollments")
-    .select("student:students(id, roll, full_name, email, batch)")
+    .select("student:students(id, roll, full_name, email, branch, section, phone)")
     .eq("exam_id", examId);
     
   if (error || !data) return [];
@@ -452,7 +483,7 @@ export async function getExamRoster(examId: string): Promise<StudentRosterRecord
     .filter(Boolean) as StudentRosterRecord[];
 }
 
-export async function enrollStudent(examId: string, student: { roll: string; name: string; email: string; batch: string }): Promise<{ error?: string }> {
+export async function enrollStudent(examId: string, student: { roll: string; name: string; email: string; branch: string; section: string; phone?: string }): Promise<{ error?: string }> {
   const db = getSupabase();
   if (!db) return { error: "No DB connection" };
 
@@ -460,7 +491,7 @@ export async function enrollStudent(examId: string, student: { roll: string; nam
   const { data: sData, error: sErr } = await db
     .from("students")
     .upsert(
-      { roll: student.roll, full_name: student.name, email: student.email, batch: student.batch },
+      { roll: student.roll, full_name: student.name, email: student.email, branch: student.branch, section: student.section, phone: student.phone || null },
       { onConflict: "roll" }
     )
     .select("id")
@@ -477,32 +508,48 @@ export async function enrollStudent(examId: string, student: { roll: string; nam
   return {};
 }
 
-export async function bulkEnrollStudents(examId: string, batch: string, students: { roll: string; name: string; email: string }[]): Promise<{ error?: string; count: number }> {
+export async function bulkEnrollStudents(examId: string, students: { id: string }[]): Promise<{ error?: string; count: number }> {
   const db = getSupabase();
   if (!db) return { error: "No DB connection", count: 0 };
   if (students.length === 0) return { count: 0 };
 
-  // 1. Upsert all students
-  const { data: sData, error: sErr } = await db
-    .from("students")
-    .upsert(
-      students.map(s => ({ roll: s.roll, full_name: s.name, email: s.email, batch })),
-      { onConflict: "roll" }
-    )
-    .select("id");
-
-  if (sErr || !sData) return { error: sErr?.message || "Failed to bulk upsert students", count: 0 };
-
-  // 2. Insert enrollments
+  // Insert enrollments mapping the existing students to this exam
   const { error: eErr } = await db
     .from("enrollments")
     .upsert(
-      sData.map((s: any) => ({ exam_id: examId, student_id: s.id })),
+      students.map((s) => ({ exam_id: examId, student_id: s.id })),
       { onConflict: "exam_id, student_id" }
     );
 
   if (eErr) return { error: eErr.message, count: 0 };
-  return { count: sData.length };
+  return { count: students.length };
+}
+
+export async function getStudentsByBranchAndSection(branch?: string, section?: string): Promise<Student[]> {
+  const db = getSupabase();
+  if (!db) return [];
+  let query = db.from("students").select("*");
+  if (branch) query = query.eq("branch", branch);
+  if (section) query = query.eq("section", section);
+  const { data } = await query;
+  return data as Student[] || [];
+}
+
+export async function bulkImportGlobalStudents(students: { roll: string; name: string; email: string; branch: string; section: string; phone?: string }[]): Promise<{ error?: string; count: number }> {
+  const db = getSupabase();
+  if (!db) return { error: "No DB connection", count: 0 };
+  if (students.length === 0) return { count: 0 };
+
+  const { data, error } = await db
+    .from("students")
+    .upsert(
+      students.map(s => ({ roll: s.roll, full_name: s.name, email: s.email, branch: s.branch, section: s.section, phone: s.phone || null })),
+      { onConflict: "roll" }
+    )
+    .select("id");
+
+  if (error || !data) return { error: error?.message || "Failed to bulk import students", count: 0 };
+  return { count: data.length };
 }
 
 export async function removeStudentFromExam(examId: string, roll: string): Promise<{ error?: string }> {
@@ -523,25 +570,41 @@ export async function removeStudentFromExam(examId: string, roll: string): Promi
 }
 
 
-export async function enrollEntireBatch(examId: string, batch: string): Promise<{ error?: string, count: number }> {
+export async function listExamsForTeacher(): Promise<ExamRecord[]> { const db = getSupabase(); if (!db) return []; const { data } = await db.from('exams').select('*').order('created_at', { ascending: false }); return (data ?? []).map(normalizeExamRecord); }
+
+export async function updateAttemptScore(attemptId: string, score: number): Promise<boolean> {
   const db = getSupabase();
-  if (!db) return { error: "No DB connection", count: 0 };
+  if (!db) return false;
+  const { error } = await db
+    .from("attempts")
+    .update({ score, status: "graded" })
+    .eq("id", attemptId);
+  return !error;
+}
 
-  const { data: students, error: sErr } = await db
-    .from("students")
-    .select("id")
-    .eq("batch", batch);
-    
-  if (sErr) return { error: sErr.message, count: 0 };
-  if (!students || students.length === 0) return { count: 0 };
-
-  const { error: eErr } = await db
-    .from("enrollments")
-    .upsert(
-      students.map((s: any) => ({ exam_id: examId, student_id: s.id })),
-      { onConflict: "exam_id, student_id" }
-    );
-
-  if (eErr) return { error: eErr.message, count: 0 };
-  return { count: students.length };
+export async function saveViolation(
+  attemptId: string,
+  examId: string,
+  studentId: string,
+  violationType: string,
+  description: string
+): Promise<boolean> {
+  const db = getSupabase();
+  if (!db) return false;
+  
+  const { error } = await db.from("violation_events").insert({
+    attempt_id: attemptId,
+    exam_id: examId,
+    student_id: studentId,
+    violation_type: violationType,
+    severity: "warning",
+    description,
+    timestamp: new Date().toISOString()
+  });
+  
+  if (error) {
+    console.error("Failed to save violation:", error);
+    return false;
+  }
+  return true;
 }

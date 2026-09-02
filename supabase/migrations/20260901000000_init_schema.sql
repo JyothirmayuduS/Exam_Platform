@@ -15,7 +15,9 @@ create table if not exists public.students (
   roll        text unique not null,
   full_name   text not null,
   email       text unique not null,
-  batch       text not null,                     -- e.g. 'CSE · Sem III'
+  branch      text not null,                     -- e.g. 'CSE', 'ECE'
+  section     text not null,                     -- e.g. 'A', 'B'
+  phone       text,
   created_at  timestamptz not null default now()
 );
 
@@ -119,12 +121,11 @@ alter table public.proctor_sessions enable row level security;
 create policy "students read self" on public.students
   for select using (auth.uid() = auth_id);
 
--- Anyone signed in can read exams that are live (published/scheduled) for their
--- batch. Draft exams stay hidden from students.
+-- Anyone signed in can read exams that are live (published/scheduled) if they are enrolled
 create policy "read live exams" on public.exams
   for select using (
     status <> 'draft'
-    and batch in (select batch from public.students where auth_id = auth.uid())
+    and id in (select exam_id from public.enrollments where student_id in (select id from public.students where auth_id = auth.uid()))
   );
 
 -- Teachers (authenticated) manage exams they create.

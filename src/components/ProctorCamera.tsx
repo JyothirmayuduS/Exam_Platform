@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { startProctorPublishing, type ProctorHandle, type ProctorState } from "../lib/proctor";
 import { env } from "../lib/env";
 import { startFrameCapture, type FrameCaptureHandle } from "../lib/storage";
+import { startVideoRecording, type RecorderHandle } from "../lib/recorder";
 
 export default function ProctorCamera({
   room,
@@ -27,6 +28,8 @@ export default function ProctorCamera({
   const handleRef = useRef<ProctorHandle | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const captureRef = useRef<FrameCaptureHandle | null>(null);
+  const cameraRecordRef = useRef<RecorderHandle | null>(null);
+  const screenRecordRef = useRef<RecorderHandle | null>(null);
 
   const connect = useCallback(async () => {
     // Clean up any prior session
@@ -61,6 +64,8 @@ export default function ProctorCamera({
       handleRef.current?.stop();
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       captureRef.current?.stop();
+      cameraRecordRef.current?.stop();
+      screenRecordRef.current?.stop();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room, identity]);
@@ -76,19 +81,49 @@ export default function ProctorCamera({
     return () => clearTimeout(id);
   }, [state, retryCount, connect]);
 
-  // Per-second proctoring screenshot capture
+  // Per-second proctoring screenshot capture & Video Recording
   useEffect(() => {
     if (!env.proctorCapture || !examId || !studentId) return;
     const video = videoRef.current;
     if (!video) return;
+
+    // Screenshot capture
     const start = () => {
       if (captureRef.current) return;
       captureRef.current = startFrameCapture({ video, examId, studentId, intervalMs: 1000 });
+      
+      // Also start video recording
+      if (!cameraRecordRef.current && video.srcObject instanceof MediaStream) {
+        cameraRecordRef.current = startVideoRecording({
+          stream: video.srcObject,
+          examId,
+          studentId,
+          kind: "camera",
+        });
+      }
+      if (!screenRecordRef.current && screenStream) {
+        screenRecordRef.current = startVideoRecording({
+          stream: screenStream,
+          examId,
+          studentId,
+          kind: "screen",
+        });
+      }
     };
+    
     video.addEventListener("playing", start);
     if (video.readyState >= 2 && !video.paused) start();
-    return () => { video.removeEventListener("playing", start); captureRef.current?.stop(); };
-  }, [examId, studentId]);
+    
+    return () => { 
+      video.removeEventListener("playing", start); 
+      captureRef.current?.stop();
+      cameraRecordRef.current?.stop();
+      screenRecordRef.current?.stop();
+      captureRef.current = null;
+      cameraRecordRef.current = null;
+      screenRecordRef.current = null;
+    };
+  }, [examId, studentId, screenStream]);
 
   // Show new proctor messages as a toast
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { Routes, Route } from "react-router-dom";
 import Landing from "./pages/Landing";
+import ErrorPage from "./pages/ErrorPage";
 import StudentExam from "./pages/StudentExam";
 import TeacherDashboard from "./pages/TeacherDashboard";
 import ProctorGrid from "./pages/ProctorGrid";
@@ -39,6 +40,9 @@ export default function App() {
       <Route path="/teacher/proctoring" element={<ProtectedRoute allowedRole="teacher"><TeacherProctoring /></ProtectedRoute>} />
       <Route path="/teacher/*" element={<ProtectedRoute allowedRole="teacher"><TeacherDashboard /></ProtectedRoute>} />
       <Route path="/proctor" element={<ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
+      
+      {/* 404 Catch All */}
+      <Route path="*" element={<ErrorPage />} />
     </Routes>
     </>
   );

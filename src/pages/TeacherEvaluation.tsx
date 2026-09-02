@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { loadExamBundle, updateAttemptScore } from "../lib/examApi";
 import { type Attempt, type Flag } from "../data/examSession";
 import useLiveAttempts from "../hooks/useLiveAttempts";
 
@@ -32,83 +34,70 @@ function codingTests(passed: number): TestCase[] {
   return CODE_TESTS.map((name, i) => ({ name, passed: i < passed }));
 }
 
-type DsaAns = { mcq1: number | null; mcq2: number | null; tf: number | null; msq: number[]; num: string; subj: string; code: string; codePass: number };
-function dsaPaper(a: DsaAns): Question[] {
-  return [
-    { id: "q1", no: 1, type: "MCQ", marks: 2, prompt: "Which binary-tree traversal visits the root between its left and right subtrees?", options: ["Preorder", "Inorder", "Postorder", "Level-order"], correct: 1, chosen: a.mcq1 },
-    { id: "q2", no: 2, type: "MCQ", marks: 2, prompt: "What is the worst-case time complexity of merge sort?", options: ["O(n)", "O(n log n)", "O(n²)", "O(log n)"], correct: 1, chosen: a.mcq2 },
-    { id: "q3", no: 3, type: "TrueFalse", marks: 1, prompt: "True or False: a stack follows First-In-First-Out (FIFO) ordering.", options: ["True", "False"], correct: 1, chosen: a.tf },
-    { id: "q4", no: 4, type: "MSQ", marks: 3, prompt: "Select ALL sorting algorithms with O(n log n) average-case time complexity.", options: ["Merge sort", "Quicksort", "Bubble sort", "Heapsort"], correctSet: [0, 1, 3], chosenSet: a.msq },
-    { id: "q5", no: 5, type: "Numerical", marks: 2, prompt: "A complete binary tree has 15 nodes. What is its height, measured in edges from the root to the deepest leaf?", expected: "3", response: a.num },
-    { id: "q6", no: 6, type: "Subjective", marks: 10, prompt: "Explain how priority scheduling can lead to starvation, and describe one technique used to prevent it.", response: a.subj, rubric: SUBJECTIVE_RUBRIC },
-    { id: "q7", no: 7, type: "Coding", marks: 8, language: "python", prompt: "Implement a queue using two stacks. Provide the enqueue and dequeue operations.", response: a.code, tests: codingTests(a.codePass) },
-  ];
+function buildPaper(questions: any[], answers: Record<string, any>): Question[] {
+  return questions.map((q, i) => {
+    const qType: QType = q.type as QType;
+    const ans = answers[q.id];
+    
+    // Map DB question to UI question
+    const base: any = {
+      id: q.id,
+      no: i + 1,
+      type: qType,
+      prompt: q.title,
+      marks: q.marks,
+      options: q.options || [],
+    };
+    
+    if (qType === "MCQ" || qType === "TrueFalse") {
+      base.correct = q.answer ? parseInt(q.answer) : 0;
+      base.chosen = typeof ans === "number" ? ans : null;
+    } else if (qType === "MSQ") {
+      base.correctSet = q.answer ? JSON.parse(q.answer) : [];
+      base.chosenSet = Array.isArray(ans) ? ans : [];
+    } else if (qType === "Numerical") {
+      base.expected = q.answer || "";
+      base.response = typeof ans === "string" ? ans : "";
+    } else if (qType === "Subjective") {
+      base.response = typeof ans === "string" ? ans : "";
+      // Mock rubric for now
+      base.rubric = SUBJECTIVE_RUBRIC;
+    } else if (qType === "Coding") {
+      base.language = "python";
+      base.response = typeof ans === "string" ? ans : "";
+      base.tests = codingTests(0); // Mock tests for now
+    }
+    
+    return base as Question;
+  });
 }
-type DbmsAns = { mcq: number | null; num: string; tf: number | null; subj: string };
-function dbmsPaper(a: DbmsAns): Question[] {
-  return [
-    { id: "q1", no: 1, type: "MCQ", marks: 2, prompt: "Which normal form removes transitive dependency on the primary key?", options: ["1NF", "2NF", "3NF", "BCNF"], correct: 2, chosen: a.mcq },
-    { id: "q2", no: 2, type: "Numerical", marks: 2, prompt: "A relation has 6 attributes. Given one fixed candidate key {A}, how many superkeys contain it? (2^(n-1))", expected: "32", response: a.num },
-    { id: "q3", no: 3, type: "TrueFalse", marks: 1, prompt: "True or False: BCNF is a stricter normal form than 3NF.", options: ["True", "False"], correct: 0, chosen: a.tf },
-    { id: "q4", no: 4, type: "Subjective", marks: 10, prompt: "Explain the update anomaly in an unnormalized relation and how normalization to 3NF prevents it.", response: a.subj, rubric: DBMS_RUBRIC },
-  ];
-}
-
-const key = (cid: string, qid: string, item?: string) => (item ? `${cid}:${qid}:${item}` : `${cid}:${qid}`);
-const isAuto = (q: Question) => q.type !== "Subjective";
-function setsEqual(a: number[] = [], b: number[] = []) {
-  const x = [...a].sort((m, n) => m - n); const y = [...b].sort((m, n) => m - n);
-  return x.length === y.length && x.every((v, i) => v === y[i]);
-}
-function codingPassed(q: Question) { const t = q.tests ?? []; return { passed: t.filter((c) => c.passed).length, total: t.length }; }
-function autoScore(q: Question): number {
-  switch (q.type) {
-    case "MCQ":
-    case "TrueFalse": return q.chosen != null && q.chosen === q.correct ? q.marks : 0;
-    case "MSQ": return setsEqual(q.chosenSet, q.correctSet) ? q.marks : 0;
-    case "Numerical": return (q.response ?? "").trim().toLowerCase() === (q.expected ?? "").trim().toLowerCase() ? q.marks : 0;
-    case "Coding": { const { passed, total } = codingPassed(q); return total ? Math.round((passed / total) * q.marks) : 0; }
-    default: return 0;
-  }
-}
-const typeLabel = (t: QType) => (t === "TrueFalse" ? "True / False" : t === "MSQ" ? "Multi-select" : t);
-const paperMax = (p: Question[]) => p.reduce((t, q) => t + q.marks, 0);
-function fmt(s: number) { const m = Math.floor(s / 60).toString().padStart(2, "0"); const sec = (s % 60).toString().padStart(2, "0"); return `${m}:${sec}`; }
-
-const PAPERS: Record<string, Question[]> = {
-  "A-031": dsaPaper({ mcq1: 1, mcq2: 1, tf: 1, msq: [0, 1, 3], num: "3", subj: "Priority scheduling always gives the CPU to the highest-priority process, so a low-priority process can wait indefinitely if higher-priority processes keep arriving — this is starvation. Aging prevents it by gradually raising a process's priority the longer it waits, so it is eventually scheduled.", code: "class Queue:\n    def __init__(self):\n        self.inbox, self.outbox = [], []\n    def enqueue(self, x):\n        self.inbox.append(x)\n    def dequeue(self):\n        if not self.outbox:\n            while self.inbox:\n                self.outbox.append(self.inbox.pop())\n        return self.outbox.pop() if self.outbox else None", codePass: 5 }),
-  "A-032": dsaPaper({ mcq1: 1, mcq2: 2, tf: 0, msq: [0, 1], num: "4", subj: "Low-priority processes may never execute because high-priority processes always run first. It can be avoided by increasing the priority of waiting processes over time.", code: "def enqueue(q, x):\n    q.append(x)\n\ndef dequeue(q):\n    return q.pop(0)  # single list, not two stacks", codePass: 2 }),
-  "A-033": dsaPaper({ mcq1: 1, mcq2: 1, tf: 1, msq: [0, 1, 3], num: "3", subj: "Starvation happens when one process gets no CPU because others are always higher priority. Aging changes the priority after some time so it will eventually be scheduled.", code: "class Queue:\n    def __init__(self):\n        self.s1, self.s2 = [], []\n    def enqueue(self, x): self.s1.append(x)\n    def dequeue(self):\n        if not self.s2:\n            while self.s1: self.s2.append(self.s1.pop())\n        return self.s2.pop()", codePass: 5 }),
-  "A-034": dsaPaper({ mcq1: 1, mcq2: 1, tf: 1, msq: [0, 1, 3], num: "3", subj: "A continuous flow of high-priority processes can cause a low-priority process to wait forever. Aging raises the priority of processes that have waited longer, ensuring they eventually run.", code: "class Queue:\n    def __init__(self):\n        self.inbox, self.outbox = [], []\n    def enqueue(self, x): self.inbox.append(x)\n    def dequeue(self):\n        if not self.outbox:\n            while self.inbox: self.outbox.append(self.inbox.pop())\n        if not self.outbox: raise IndexError('empty queue')\n        return self.outbox.pop()", codePass: 5 }),
-  "A-035": dsaPaper({ mcq1: 0, mcq2: 1, tf: 1, msq: [0, 3], num: "3", subj: "Priority scheduling can starve low-priority jobs when higher-priority jobs keep arriving. Aging increases a waiting job's priority over time to guarantee it eventually makes progress.", code: "class Queue:\n    def __init__(self):\n        self.a, self.b = [], []\n    def enqueue(self, x): self.a.append(x)\n    def dequeue(self):\n        if not self.b:\n            while self.a: self.b.append(self.a.pop())\n        return self.b.pop() if self.b else None", codePass: 4 }),
-  "B-018": dbmsPaper({ mcq: 2, num: "32", tf: 0, subj: "In an unnormalized table that repeats an instructor's department across many rows, changing the department means updating every row — miss one and the data becomes inconsistent (the update anomaly). Decomposing to 3NF stores the instructor–department fact in its own relation exactly once." }),
-  "B-019": dbmsPaper({ mcq: 3, num: "16", tf: 1, subj: "Update anomaly means repeated data can become inconsistent. Normalization splits the table so each fact is stored once." }),
-};
-
-const SEED_STATUS: Record<string, { status: Status; awarded?: number }> = {
-  "A-033": { status: "In review" },
-  "A-034": { status: "Graded", awarded: 27 },
-  "B-019": { status: "In review" },
-};
 
 export default function TeacherEvaluation({ notify }: { notify: (message: string) => void }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: liveAttempts = [] } = useLiveAttempts("EXAM-2026-014");
 
+  const { data: examBundle } = useQuery({
+    queryKey: ["examBundle", "EXAM-2026-014"],
+    queryFn: () => loadExamBundle("EXAM-2026-014"),
+  });
+
   const [roster, setRoster] = useState<Candidate[]>([]);
   
   useEffect(() => {
+    if (!examBundle) return;
+    const questions = examBundle.questions ?? [];
+    
     // Merge live DB attempts with the mock paper content for evaluation
     const mapped: Candidate[] = liveAttempts
       .filter((a) => a.state === "Submitted") // We only grade submitted
       .map((a, i) => {
-        // Find paper mock, fallback to first one if not present, because DB IDs differ from mock IDs
-        const paper = PAPERS[a.id] || PAPERS["A-031"];
+        const paper = buildPaper(questions, a.answers || {});
         return {
           ...a,
           order: i + 1,
           paper,
-          status: "To grade", // By default all from DB are 'To grade'
+          status: a.score != null ? "Graded" : "To grade",
+          awarded: a.score ?? undefined,
         };
       });
       
@@ -116,7 +105,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     const deepLink = searchParams.get("review");
     setRoster(mapped.map((c) => (c.id === deepLink && c.status === "To grade" ? { ...c, status: "In review" } : c)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveAttempts]);
+  }, [liveAttempts, examBundle]);
 
   const [statusFilter, setStatusFilter] = useState<"All" | Status>("All");
   const [flaggedOnly, setFlaggedOnly] = useState(false);
@@ -175,8 +164,10 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
   const navigateReview = (cid: string) => { markInReview(cid); setReviewParam(cid, true); };
   const closeReview = () =>
     setSearchParams((prev) => { const p = new URLSearchParams(prev); p.delete("review"); return p; }, { replace: true });
-  const finalizeGrade = (cid: string, awarded: number) =>
+  const finalizeGrade = async (cid: string, awarded: number) => {
+    await updateAttemptScore(cid, awarded);
     setRoster((cur) => cur.map((c) => (c.id === cid ? { ...c, status: "Graded", awarded } : c)));
+  };
 
   return <>
     <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">

@@ -2,6 +2,9 @@ import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import { STUDENT_NAV } from "./StudentExams";
+import { useAuth } from "../lib/auth";
+import { getSupabase } from "../lib/supabase";
+import { useQuery } from "@tanstack/react-query";
 import AppealForm from "../components/exam/AppealForm";
 
 // ── Mock Data for Detailed Results ────────────────────────────────────────────
@@ -85,8 +88,103 @@ function MiniBarChart({ data }: { data: { category: string; score: number }[] })
 
 export default function StudentResultDetail() {
   const { resultId } = useParams();
+  const { user } = useAuth();
   const [appealingQ, setAppealingQ] = useState<number | null>(null);
   const [submittedAppeals, setSubmittedAppeals] = useState<Record<number, string>>({});
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['resultDetail', resultId, user?.id],
+    queryFn: async () => {
+      const db = getSupabase();
+      if (!db || !user?.id || !resultId) return null;
+
+      const { data: student } = await db
+        .from("students")
+        .select("id")
+        .eq("auth_id", user.id)
+        .maybeSingle();
+      if (!student) return null;
+
+      const { data: attempt } = await db
+        .from("attempts")
+        .select("score, submitted_at, answers, minutes_used")
+        .eq("exam_id", resultId)
+        .eq("student_id", student.id)
+        .maybeSingle();
+
+      if (!attempt) return null;
+
+      const { data: exam } = await db
+        .from("exams")
+        .select("name, total_marks, settings")
+        .eq("id", resultId)
+        .maybeSingle();
+
+      const { data: questions } = await db
+        .from("questions")
+        .select("*")
+        .eq("exam_id", resultId)
+        .order("id", { ascending: true });
+
+      const answersObj = attempt.answers || {};
+
+      const processedQuestions = (questions || []).map((q: any, i: number) => {
+        const studentAns = answersObj[i];
+        let type = q.type === "Subjective" || q.type === "Coding" ? "subjective" : "mcq";
+        let isCorrect = q.answer === studentAns;
+        let awarded = isCorrect ? q.marks : 0;
+        
+        return {
+          id: i,
+          type,
+          text: q.title,
+          options: q.options || [],
+          studentAnswer: type === "mcq" ? (studentAns !== undefined ? parseInt(studentAns) : -1) : -1,
+          studentAnswerText: type === "subjective" ? (studentAns || "") : "",
+          correctAnswer: type === "mcq" ? (q.answer !== null ? parseInt(q.answer) : -1) : -1,
+          marksAwarded: type === "mcq" ? awarded : (attempt.score === null ? "..." : awarded),
+          maxMarks: q.marks,
+          explanation: null,
+          teacherComment: null,
+          markedForReview: false,
+          timeSpentSec: 0,
+        };
+      });
+
+      return {
+        name: exam?.name || "Unknown Exam",
+        code: resultId,
+        date: attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : "N/A",
+        score: attempt.score ?? 0,
+        outOf: exam?.total_marks ?? 100,
+        percentile: 88, // Mock
+        classAvg: 72, // Mock
+        passMark: (exam?.total_marks ?? 100) * 0.4,
+        timeSpent: `${Math.floor(attempt.minutes_used / 60)}h ${attempt.minutes_used % 60}m`,
+        categoryBreakdown: [], // Mock or empty
+        questions: processedQuestions
+      };
+    },
+    enabled: !!user?.id && !!resultId,
+  });
+
+  if (isLoading) {
+    return (
+      <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={STUDENT_NAV}>
+        <div className="p-10 text-center text-ink-soft">Loading results...</div>
+      </RoleLayout>
+    );
+  }
+
+  if (!data) {
+    return (
+      <RoleLayout role="Student" name="Priya Nikitha" subtitle="21VGN0142 · CSE — Sem III" tone="#7A1F2B" items={STUDENT_NAV}>
+        <div className="p-10 text-center text-alert">Failed to load exam result.</div>
+      </RoleLayout>
+    );
+  }
+
+  const EXAM_DETAIL = data;
 
   const handleAppealSubmit = (qId: number, reason: string) => {
     setSubmittedAppeals(prev => ({ ...prev, [qId]: reason }));

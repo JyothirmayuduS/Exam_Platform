@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import * as Sentry from "@sentry/react";
 import Seal from "../components/Seal";
 import ProctorCamera from "../components/ProctorCamera";
 import ExamTools from "../components/ExamTools";
@@ -47,16 +48,6 @@ const DURATION_MIN = 45;
 
 type Question = { id: number; text: string; options: string[]; category: string; type?: "mcq" | "subjective" };
 
-// Built-in questions — used when Supabase isn't configured (prototype/offline).
-const DEMO_QUESTIONS: Question[] = [
-  { id: 1, text: "Explain the data structure that underlies the call stack used for recursive function execution.", options: [], category: "Data Structures", type: "subjective" },
-  { id: 2, text: "In relational databases, which normal form eliminates transitive dependency on the primary key?", options: ["1NF", "2NF", "3NF", "BCNF"], category: "Databases", type: "mcq" },
-  { id: 3, text: "What is the time complexity of binary search on a sorted array of n elements?", options: ["O(n)", "O(log n)", "O(n log n)", "O(1)"], category: "Algorithms", type: "mcq" },
-  { id: 4, text: "Describe the process and flags used to gracefully terminate a TCP connection.", options: [], category: "Networks", type: "subjective" },
-  { id: 5, text: "In operating systems, which scheduling algorithm can cause starvation of low-priority processes?", options: ["Round Robin", "FCFS", "Priority Scheduling", "SJF (non-preemptive, fair queue)"], category: "Operating Systems", type: "mcq" },
-  { id: 6, text: "Which of these is NOT a property required for a valid B-tree of order m?", options: ["Every node has at most m children", "Every non-leaf node has at least ⌈m/2⌉ children", "All leaves appear at the same level", "Every node must be colored red or black"], category: "Data Structures", type: "mcq" },
-];
-
 // Map a DB question row → the shape the exam UI renders. MCQ options only;
 // subjective questions still render (options fall back to none) so the paper is
 // complete even if the pool mixes types.
@@ -97,13 +88,14 @@ export default function StudentExam() {
   // continue into the pre-exam checks and the actual exam flow.
   const [step, setStep] = useState<Step>(() => (lockdownReady() ? "check" : "gate"));
 
-  // Questions: DB-backed when configured, else built-in demo set.
-  const [questions, setQuestions] = useState<Question[]>(DEMO_QUESTIONS);
-  const [examName, setExamName] = useState("Data Structures & Algorithms — Sem III");
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [loadError, setLoadError] = useState("");
+  const [examName, setExamName] = useState("");
 
   // Attempt / DB
   const studentIdRef = useRef<string | null>(null);
   const attemptStartedRef = useRef(false);
+  const [attemptId, setAttemptId] = useState<string | undefined>();
 
   // Device access state
   const [cam, setCam] = useState<"idle" | "granted" | "denied">("idle");
@@ -155,7 +147,12 @@ export default function StudentExam() {
 
   useOfflineSync(studentIdRef.current);
 
-  const { violations, activeViolation, setActiveViolation, flag, handleAIViolation } = useProctoring(step === "exam");
+  const { violations, activeViolation, setActiveViolation, flag, handleAIViolation } = useProctoring(
+    step === "exam",
+    attemptId,
+    EXAM_ID,
+    studentIdRef.current ?? undefined
+  );
 
   // Download gate: only offer the installer after confirming the link resolves
   // to real installer bytes. Without the probe, an unhosted path returns a 404
@@ -215,15 +212,43 @@ export default function StudentExam() {
   const checksDone = checks.length > 0 && checkIndex >= checks.length;
   const checksPassed = checksDone && checks.every((c) => c.ok);
 
-  // Load exam + questions from the DB (falls back to demo set silently).
+  if (loadError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper text-center">
+        <div className="max-w-md p-6">
+          <h1 className="font-serif text-2xl font-semibold text-alert">Error loading exam</h1>
+          <p className="mt-2 text-[13px] text-ink-soft">{loadError}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Load exam + questions from the DB
   useEffect(() => {
     if (!supabaseConfigured) return;
     let active = true;
     (async () => {
       const { exam, questions: rows } = await loadExamBundle(EXAM_ID);
       if (!active) return;
-      if (exam?.name) setExamName(`${exam.name} — Sem III`);
-      if (rows.length) setQuestions(rows.map(toUIQuestion));
+      if (!exam) {
+        setLoadError("Exam not found or you are not enrolled.");
+        return;
+      }
+      
+      // Set Sentry Context
+      Sentry.setTag("exam_id", exam.id);
+      Sentry.setTag("attempt_id", studentIdRef.current ?? "unknown");
+      Sentry.setUser({ id: studentIdRef.current ?? "unknown" });
+      Sentry.setTag("student_id", studentIdRef.current ?? "unknown");
+      Sentry.setTag("route", "/student/exam");
+
+      if (rows.length === 0) {
+        setLoadError("No questions found for this exam.");
+        return;
+      }
+      
+      setExamName(`${exam.name}`);
+      setQuestions(rows.map(toUIQuestion));
       
       const db = await import("../lib/supabase").then(m => m.getSupabase());
       if (db) {
@@ -472,7 +497,9 @@ export default function StudentExam() {
     // Start / resume the DB attempt.
     if (supabaseConfigured && studentIdRef.current && !attemptStartedRef.current) {
       attemptStartedRef.current = true;
-      void startAttempt({ examId: EXAM_ID, studentId: studentIdRef.current, total: questions.length });
+      void startAttempt({ examId: EXAM_ID, studentId: studentIdRef.current, total: questions.length }).then(id => {
+        if (id) setAttemptId(id);
+      });
     }
     
     // Start Recording and Screenshots
