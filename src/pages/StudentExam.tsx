@@ -647,11 +647,11 @@ export default function StudentExam() {
         deepLinkFailed={deepLinkFailed}
         onEnter={() => {
           setDeepLinkTried(true);
-          window.location.href = `vignan-exam://open?exam=${EXAM_ID}&roll=${STUDENT_ROLL}`;
+          window.location.href = `vignan-exam://open?exam=${encodeURIComponent(EXAM_ID)}&roll=${encodeURIComponent(STUDENT_ROLL)}`;
           setTimeout(() => setDeepLinkFailed(true), 3000);
         }}
         onTryAgain={() => {
-          window.location.href = `vignan-exam://open?exam=${EXAM_ID}&roll=${STUDENT_ROLL}`;
+          window.location.href = `vignan-exam://open?exam=${encodeURIComponent(EXAM_ID)}&roll=${encodeURIComponent(STUDENT_ROLL)}`;
         }}
         onBack={() => setStep("gate")}
         downloadHref={downloadUrl(detectOS()) || ""}
