@@ -72,16 +72,27 @@ export default function TeacherProctoring() {
     return () => { active = false; unsub(); };
   }, [selectedExamId]);
 
-  // Live camera feeds from LiveKit
+  // Subscribe to LiveKit room for real-time video feeds (camera + screen)
   useEffect(() => {
-    if (!selectedExamId) return;
-    let handle: Awaited<ReturnType<typeof startProctorViewing>> | null = null;
-    let cancelled = false;
+    if (!supabaseConfigured || !selectedExamId) {
+      setFeeds([]);
+      return;
+    }
+    let active = true;
+    let viewer: Awaited<ReturnType<typeof startProctorViewing>> | null = null;
     (async () => {
-      handle = await startProctorViewing({ room: selectedExamId, onFeeds: setFeeds });
-      if (cancelled) handle?.stop();
+      viewer = await startProctorViewing({
+        room: selectedExamId,
+        onState: (state) => { /* optional: could expose connection state */ },
+        onFeeds: (feeds: RemoteFeed[]) => {
+          if (active) setFeeds(feeds);
+        },
+      });
     })();
-    return () => { cancelled = true; handle?.stop(); };
+    return () => {
+      active = false;
+      viewer?.stop();
+    };
   }, [selectedExamId]);
 
   const feedFor: FeedLookup = useMemo(() => {
@@ -262,13 +273,115 @@ export default function TeacherProctoring() {
 function VideoWall({ visible, selected, onSelect, feedFor }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void; feedFor: FeedLookup }) { return <section className="mt-6 border border-line bg-paper p-5 sm:p-6"><div className="flex items-center justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">All student video feeds</p><h2 className="mt-1 font-serif text-xl font-semibold">Live camera wall</h2></div><span className="font-mono text-[10px] text-ink-soft">Flagged feeds appear first</span></div><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">{visible.map((student, index) => <button key={student.roll} onClick={() => onSelect(student)} className={`overflow-hidden border text-left ${student.violation ? "border-alert ring-1 ring-alert" : selected?.roll === student.roll ? "border-forest ring-1 ring-forest" : "border-line hover:border-line-strong"}`}><div className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#D9D5CB]"><FeedView feed={feedFor(student)} initials={student.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}/><span className={`absolute right-2 top-2 z-10 h-2 w-2 rounded-full ${student.violation ? "bg-alert" : "bg-success"}`}/><span className="absolute left-2 top-2 z-10 bg-ink/75 px-1.5 py-0.5 font-mono text-[8px] text-paper">{index === 0 && student.violation ? "REVIEW FIRST" : "REC"}</span><span className="absolute bottom-0 left-0 right-0 z-10 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">{student.status} · {student.progress}%</span></div><div className="p-2"><p className="truncate text-[11px] font-medium">{student.name}</p><p className={`truncate font-mono text-[9px] ${student.violation ? "text-alert" : "text-ink-soft"}`}>{student.violation || "No violations"}</p></div></button>)}{visible.length === 0 && <div className="col-span-full border border-dashed border-line-strong p-10 text-center font-mono text-[11px] text-ink-soft">Waiting for candidates to begin…</div>}</div></section>; }
 function AudioPlayer({ track }: { track: any }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [isMuted, setIsMuted] = useState(true);
+  const [volume, setVolume] = useState(0.7);
+  const [audioReady, setAudioReady] = useState(false);
+  const [needsUserGesture, setNeedsUserGesture] = useState(true);
+
   useEffect(() => {
     const el = audioRef.current;
     if (!el || !track) return;
+
+    // Attach the track so the audio element receives the media stream
     track.attach(el);
-    return () => { track.detach(el); };
+    el.volume = volume;
+    el.muted = isMuted;
+    setAudioReady(true);
+
+    // Try to play (may fail due to autoplay policy)
+    const tryPlay = async () => {
+      try {
+        await el.play();
+        setNeedsUserGesture(false);
+      } catch (err) {
+        // Autoplay blocked - user needs to click to enable
+        setNeedsUserGesture(true);
+        setIsMuted(true);
+      }
+    };
+    void tryPlay();
+
+    return () => {
+      try { track.detach(el); } catch { /* ignore */ }
+    };
   }, [track]);
-  return track ? <audio ref={audioRef} autoPlay controls className="mt-3 w-full h-8 outline-none rounded bg-ink/10" /> : null;
+
+  // Update volume when slider changes
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume]);
+
+  // Update muted state
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.muted = isMuted;
+  }, [isMuted]);
+
+  const handleEnableAudio = async () => {
+    if (!audioRef.current) return;
+    setIsMuted(false);
+    audioRef.current.muted = false;
+    try {
+      await audioRef.current.play();
+      setNeedsUserGesture(false);
+    } catch (err) {
+      console.warn("Audio play failed:", err);
+    }
+  };
+
+  const handleToggleMute = () => {
+    setIsMuted(!isMuted);
+  };
+
+  if (!track) return null;
+
+  return (
+    <div className="mt-3 border border-line bg-paper-raised p-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`h-2 w-2 rounded-full ${audioReady && !isMuted ? "bg-success animate-pulse" : "bg-ink-soft"}`} />
+          <span className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">
+            {isMuted ? "Muted (teacher-side only)" : "Live Audio"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          {needsUserGesture && (
+            <button
+              onClick={handleEnableAudio}
+              className="border border-forest bg-forest/10 px-2 py-1 font-mono text-[9px] uppercase text-forest hover:bg-forest/20"
+            >
+              ▶ Enable Audio
+            </button>
+          )}
+          <button
+            onClick={handleToggleMute}
+            disabled={needsUserGesture}
+            className={`px-2 py-1 font-mono text-[9px] uppercase ${isMuted ? "text-alert hover:bg-alert/10" : "text-success hover:bg-success/10"} ${needsUserGesture ? "opacity-50" : ""}`}
+            title={isMuted ? "Unmute (teacher only)" : "Mute (teacher only)"}
+          >
+            {isMuted ? "🔇 Muted" : "🔊 Unmuted"}
+          </button>
+        </div>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <span className="font-mono text-[9px] text-ink-soft">VOL</span>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={volume}
+          onChange={(e) => setVolume(parseFloat(e.target.value))}
+          className="flex-1 accent-forest"
+          disabled={needsUserGesture}
+        />
+        <span className="font-mono text-[9px] text-ink-soft w-8">{Math.round(volume * 100)}%</span>
+      </div>
+      <p className="mt-1.5 font-mono text-[8px] text-ink-soft/70">
+        Mute only silences audio in this proctor view. Student's mic stays active.
+      </p>
+      <audio ref={audioRef} autoPlay playsInline className="hidden" />
+    </div>
+  );
 }
 
 function ActivityView({ visible, selected, onSelect }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void }) { return <section className="mt-6 border border-line"><div className="border-b border-line bg-paper-raised px-5 py-4"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Activity stream</p><h2 className="mt-1 font-serif text-xl font-semibold">Student activity by priority</h2></div><div className="divide-y divide-line">{visible.map((student) => <button key={student.roll} onClick={() => onSelect(student)} className={`flex w-full flex-col gap-3 px-5 py-4 text-left sm:flex-row sm:items-center sm:justify-between ${selected?.roll === student.roll ? "bg-success/5" : "hover:bg-paper-raised"}`}><div><p className="text-[13px] font-medium">{student.name} <span className="ml-2 font-mono text-[10px] text-ink-soft">{student.roll}</span></p><p className="mt-1 text-[11px] text-ink-soft">Last event: {student.violation || "Status updated recently"}</p></div><span className={`font-mono text-[10px] uppercase ${student.violation ? "text-alert" : "text-success"}`}>{student.violation ? "Review violation →" : "Monitoring clear"}</span></button>)}{visible.length === 0 && <div className="p-10 text-center font-mono text-[11px] text-ink-soft">No active candidates.</div>}</div></section>; }
