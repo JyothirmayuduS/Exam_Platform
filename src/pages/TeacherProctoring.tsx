@@ -279,8 +279,8 @@ function FeedView({ feed, initials }: { feed: RemoteFeed | null; initials: strin
     const video = videoRef.current;
     if (!video || !feed?.cameraTrack) return;
     feed.cameraTrack.attach(video);
-    return () => { feed.cameraTrack?.detach?.(video); };
-  }, [feed]);
+    return () => { feed?.cameraTrack?.detach?.(video); };
+  }, [feed?.cameraTrack]);
   return (
     <div className="absolute inset-0 z-0 flex items-center justify-center">
       {feed?.cameraTrack ? (
@@ -316,8 +316,8 @@ function ScreenFeedView({ feed }: { feed: RemoteFeed | null }) {
     const video = videoRef.current;
     if (!video || !feed?.screenTrack) return;
     feed.screenTrack.attach(video);
-    return () => { feed.screenTrack?.detach?.(video); };
-  }, [feed]);
+    return () => { feed?.screenTrack?.detach?.(video); };
+  }, [feed?.screenTrack]);
   return (
     <div className="absolute inset-0 z-0 flex items-center justify-center">
       {feed?.screenTrack && <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-contain" />}

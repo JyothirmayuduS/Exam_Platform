@@ -74,7 +74,7 @@ Deno.serve(async (req: Request) => {
     const { data: studentRow } = await supabase
       .from("students")
       .select("roll")
-      .eq("id", user.id)
+      .eq("auth_id", user.id)
       .maybeSingle();
     const roll = studentRow?.roll as string | undefined;
     // Fall back to auth UUID if no row found (shouldn't happen in production).
