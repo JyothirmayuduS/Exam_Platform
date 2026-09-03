@@ -97,9 +97,12 @@ export default function ProctorCamera({
 
     handleRef.current = handle;
 
-    // If the server returned null (feature disabled / not configured) rather
-    // than throwing, still fall back to local camera gracefully.
-    if (!handle) {
+    if (handle?.stream) {
+      localStreamRef.current = handle.stream;
+      if (videoRef.current) videoRef.current.srcObject = handle.stream;
+    } else if (!handle) {
+      // If the server returned null (feature disabled / not configured) rather
+      // than throwing, still fall back to local camera gracefully.
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         localStreamRef.current = stream;

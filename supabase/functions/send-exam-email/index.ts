@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
   if (!supabaseUrl || !serviceRole) return json({ error: "Missing Supabase secrets" }, 500);
 
   const db = createClient(supabaseUrl, serviceRole);
-  const { examId, studentEmails } = await req.json().catch(() => ({ examId: null, studentEmails: [] }));
+  const { examId, studentEmails, appBaseUrl: reqBaseUrl } = await req.json().catch(() => ({ examId: null, studentEmails: [], appBaseUrl: null }));
 
   if (!examId) return json({ error: "examId is required" }, 400);
 
@@ -63,10 +63,12 @@ Deno.serve(async (req) => {
       .filter((row): row is Recipient => !!row);
   }
 
+  const baseUrl = (reqBaseUrl || Deno.env.get("APP_BASE_URL") || "http://localhost:5173").replace(/\/$/, "");
+
   const results = await Promise.all(
     recipients.map((recipient) =>
       sendWithRetry(async () => {
-        const joinLink = `${Deno.env.get("APP_BASE_URL") ?? "http://localhost:5173"}/student/exam?examId=${encodeURIComponent(exam.id)}`;
+        const joinLink = `${baseUrl}/student/exam?examId=${encodeURIComponent(exam.id)}`;
         const dateObj = exam.scheduled_at ? new Date(exam.scheduled_at) : null;
         const html = examPublishedTemplate({
           studentId: recipient.student_id,
@@ -77,8 +79,8 @@ Deno.serve(async (req) => {
           duration: Number(exam.duration_minutes ?? 0),
           marks: Number(exam.total_marks ?? 0),
           joinLink,
-          systemCheckLink: `${Deno.env.get("APP_BASE_URL") ?? "http://localhost:5173"}/system-check`,
-          practiceLink: `${Deno.env.get("APP_BASE_URL") ?? "http://localhost:5173"}/student/practice`,
+          systemCheckLink: `${baseUrl}/student/exams/${encodeURIComponent(exam.id)}/system-check`,
+          practiceLink: `${baseUrl}/student/exams/${encodeURIComponent(exam.id)}/practice`,
         });
 
         await transporter.sendMail({

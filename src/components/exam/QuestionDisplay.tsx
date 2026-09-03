@@ -6,14 +6,19 @@ type Question = {
   options: string[];
   category: string;
   type?: "mcq" | "subjective";
+  subjective_mode?: "both" | "qr" | "textbox" | null;
 };
 
 type QuestionDisplayProps = {
   question: Question | undefined;
   examId: string;
+  attemptId?: string;
   studentId: string | null;
   answer: unknown;
   isReviewed: boolean;
+  examName: string;
+  studentName: string;
+  questionIndex: number;
   onSelectOption: (optionIndex: number) => void;
   onToggleReview: () => void;
 };
@@ -21,9 +26,13 @@ type QuestionDisplayProps = {
 export default function QuestionDisplay({
   question,
   examId,
+  attemptId,
   studentId,
   answer,
   isReviewed,
+  examName,
+  studentName,
+  questionIndex,
   onSelectOption,
   onToggleReview,
 }: QuestionDisplayProps) {
@@ -78,14 +87,67 @@ export default function QuestionDisplay({
         </div>
       )}
 
-      {/* Subjective — QR upload block */}
+      {/* Subjective — QR upload block / Answer box / Both */}
       {isSubjective && (
-        <SubjectiveQRBlock
-          examId={examId}
-          questionId={question.id}
-          studentId={studentId}
-          questionText={question.text}
-        />
+        <div className="mt-6 space-y-4">
+          {typeof answer === "string" && answer.startsWith("[Uploaded answer:") ? (
+            <div className="border border-line bg-paper-raised p-4">
+              <div className="flex justify-between items-center mb-3">
+                <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-bold">✓ Handwritten Answer Uploaded</p>
+                <button 
+                  onClick={() => onSelectOption("" as unknown as number)}
+                  className="border border-alert text-alert px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10"
+                >
+                  Remove & Retake
+                </button>
+              </div>
+              <iframe 
+                src={`${answer.replace("[Uploaded answer: ", "").replace("]", "")}#toolbar=0`} 
+                className="w-full h-[500px] border border-line bg-ink" 
+                title="Uploaded Answer"
+              />
+            </div>
+          ) : (
+            <>
+              {(!question.subjective_mode || question.subjective_mode === "both" || question.subjective_mode === "textbox") && (
+                <div>
+                  <label className="block font-mono text-[10px] uppercase tracking-wider text-ink-soft mb-1.5">
+                    {question.subjective_mode === "both" ? "Option 1: Type your answer" : "Type your answer"}
+                  </label>
+                  <textarea
+                    className="h-32 w-full border border-line bg-paper p-3 text-[14px] outline-none focus:border-forest"
+                    placeholder="Type your response here..."
+                    value={typeof answer === "string" ? answer : ""}
+                    onChange={(e) => onSelectOption(e.target.value as unknown as number)}
+                  />
+                </div>
+              )}
+
+              {(!question.subjective_mode || question.subjective_mode === "both" || question.subjective_mode === "qr") && (
+                <div>
+                  {question.subjective_mode === "both" && (
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-medium mt-3 mb-1">
+                      Option 2: Scan QR &amp; upload handwritten answer from phone
+                    </p>
+                  )}
+                  <SubjectiveQRBlock
+                    examId={examId}
+                    attemptId={attemptId}
+                    questionId={question.id}
+                    questionIndex={questionIndex}
+                    studentId={studentId}
+                    studentName={studentName}
+                    examName={examName}
+                    questionText={question.text}
+                    onAnswerUploaded={(url) => {
+                      onSelectOption(`[Uploaded answer: ${url}]` as unknown as number);
+                    }}
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
 
       {/* Mark for review */}

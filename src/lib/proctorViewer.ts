@@ -21,6 +21,9 @@ export type RemoteFeed = {
   // Both are separate video elements when the student publishes camera + screen.
   camera: HTMLVideoElement | null;
   screen: HTMLVideoElement | null;
+  cameraTrack: any | null;
+  screenTrack: any | null;
+  audioTrack: any | null;
 };
 
 export type ViewerHandle = {
@@ -66,7 +69,7 @@ export async function startProctorViewing(opts: {
   const emit = () => opts.onFeeds?.([...feeds.values()]);
   const ensure = (identity: string): RemoteFeed => {
     let f = feeds.get(identity);
-    if (!f) { f = { identity, camera: null, screen: null }; feeds.set(identity, f); }
+    if (!f) { f = { identity, camera: null, screen: null, cameraTrack: null, screenTrack: null, audioTrack: null }; feeds.set(identity, f); }
     return f;
   };
 
@@ -84,8 +87,11 @@ export async function startProctorViewing(opts: {
       el.muted = true;
       el.playsInline = true;
       const isScreen = String(track?.source ?? "").includes("screen");
-      if (isScreen) feed.screen = el;
-      else feed.camera = el;
+      if (isScreen) { feed.screen = el; feed.screenTrack = track; }
+      else { feed.camera = el; feed.cameraTrack = track; }
+      emit();
+    } else if (track?.kind === "audio") {
+      feed.audioTrack = track;
       emit();
     }
   });
@@ -94,8 +100,11 @@ export async function startProctorViewing(opts: {
     const feed = feeds.get(String(participant?.identity ?? "unknown"));
     if (feed && track?.kind === "video") {
       const isScreen = String(track?.source ?? "").includes("screen");
-      if (isScreen) feed.screen = null;
-      else feed.camera = null;
+      if (isScreen) { feed.screen = null; feed.screenTrack = null; }
+      else { feed.camera = null; feed.cameraTrack = null; }
+      emit();
+    } else if (feed && track?.kind === "audio") {
+      feed.audioTrack = null;
       emit();
     }
   });

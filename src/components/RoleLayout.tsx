@@ -49,7 +49,7 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
               const { getSupabase } = await import("../lib/supabase");
               const supabase = getSupabase();
               if (supabase) await supabase.auth.signOut();
-              window.location.href = "/";
+              window.location.href = "/login";
             }}
             className="mt-3 block text-[12px] text-ink-soft hover:text-ink text-left"
           >

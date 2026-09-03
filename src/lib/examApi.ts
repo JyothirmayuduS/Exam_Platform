@@ -41,9 +41,9 @@ export async function publishExam(
 export async function triggerExamEmail(examId: string): Promise<{ ok: boolean; error?: string }> {
   const db = getSupabase();
   if (!db) return { ok: false, error: "offline" };
-  
+  const appBaseUrl = typeof window !== "undefined" ? window.location.origin : undefined;
   const { error } = await db.functions.invoke("send-exam-email", {
-    body: { examId }
+    body: { examId, appBaseUrl }
   });
   
   return error ? { ok: false, error: String(error.message ?? error) } : { ok: true };
@@ -74,32 +74,79 @@ export async function listEnrolledExamsForAuthUser(
   const db = getSupabase();
   if (!db) return null;
 
-  const { data: student } = await db
+  // 1. Resolve student by auth_id or user email
+  let student: { id: string; branch?: string | null; section?: string | null } | null = null;
+  const { data: byAuth } = await db
     .from("students")
-    .select("id")
+    .select("id, branch, section")
     .eq("auth_id", authUserId)
     .maybeSingle();
 
-  if (!student?.id) return null;
-
-  const { data, error } = await db
-    .from("enrollments")
-    .select("exam:exams(*)")
-    .eq("student_id", student.id);
-
-  if (!error && data) {
-    const exams = (data as { exam: ExamRecord | null }[])
-      .map((row) => row.exam)
-      .filter((exam): exam is ExamRecord => !!exam && exam.status !== "draft")
-      .map(normalizeExamRecord)
-      .sort((a, b) => {
-        const left = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
-        const right = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
-        return left - right;
-      });
-    return exams;
+  if (byAuth) {
+    student = byAuth;
+  } else {
+    const { data: authData } = await db.auth.getUser();
+    if (authData?.user?.email) {
+      const { data: byEmail } = await db
+        .from("students")
+        .select("id, branch, section")
+        .eq("email", authData.user.email)
+        .maybeSingle();
+      if (byEmail) {
+        student = byEmail;
+        // Self-heal: link auth_id
+        await db.from("students").update({ auth_id: authUserId }).eq("id", byEmail.id);
+      }
+    }
   }
-  return [];
+
+  const examMap = new Map<string, ExamRecord>();
+
+  // 2. Query explicitly enrolled exams
+  if (student?.id) {
+    const { data, error } = await db
+      .from("enrollments")
+      .select("exam:exams(*)")
+      .eq("student_id", student.id);
+
+    if (!error && data) {
+      (data as { exam: ExamRecord | null }[]).forEach((row) => {
+        if (row.exam && row.exam.status !== "draft") {
+          examMap.set(row.exam.id, normalizeExamRecord(row.exam));
+        }
+      });
+    }
+  }
+
+  // 3. Fallback: also include published exams matching batch/branch
+  const { data: allPublished } = await db
+    .from("exams")
+    .select("*")
+    .neq("status", "draft")
+    .order("created_at", { ascending: false });
+
+  if (allPublished) {
+    for (const raw of allPublished) {
+      const norm = normalizeExamRecord(raw);
+      if (!examMap.has(norm.id)) {
+        if (
+          !student?.branch ||
+          norm.batch.toLowerCase().includes(student.branch.toLowerCase()) ||
+          norm.batch.toLowerCase().includes("all")
+        ) {
+          examMap.set(norm.id, norm);
+        }
+      }
+    }
+  }
+
+  const exams = Array.from(examMap.values()).sort((a, b) => {
+    const left = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+    const right = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+    return left - right;
+  });
+
+  return exams;
 }
 
 /**
@@ -139,6 +186,7 @@ export type DBQuestion = {
   marks: number;
   options: string[] | null;
   answer: string | null;
+  subjective_mode?: "both" | "qr" | "textbox" | null;
 };
 
 export type ExamBundle = { exam: ExamRecord | null; questions: DBQuestion[] };
@@ -392,51 +440,110 @@ export async function listLiveAttempts(examId: string): Promise<LiveAttempt[]> {
   if (!db) return [];
   const { data, error } = await db
     .from("attempts")
-    .select("id,exam_id,state,answered,total,minutes_used,score,answers,submitted_at,auto_saved_at,student:students(id,roll,full_name),violations:violation_events(id,severity,description,created_at)")
+    .select("id,exam_id,state,answered,total,minutes_used,score,answers,submitted_at,auto_saved_at,student:students(id,roll,full_name)")
     .eq("exam_id", examId)
     .order("auto_saved_at", { ascending: false });
-  if (error) return [];
-  return ((data ?? []) as unknown[]).map((row) => {
-    const r = row as Record<string, unknown>;
-    const s = r.student as Record<string, unknown> | Record<string, unknown>[] | null;
-    const student = Array.isArray(s) ? (s[0] ?? null) : s;
-    return {
-      id: String(r.id),
-      exam_id: String(r.exam_id),
-      state: r.state as AttemptState,
-      answered: Number(r.answered ?? 0),
-      total: Number(r.total ?? 0),
-      minutes_used: Number(r.minutes_used ?? 0),
-      score: typeof r.score === "number" ? r.score : null,
-      answers: (r.answers as Record<string, unknown>) ?? {},
-      submitted_at: (r.submitted_at as string) ?? null,
-      auto_saved_at: (r.auto_saved_at as string) ?? null,
-      student: student
-        ? {
-            id: String((student as Record<string, unknown>).id),
-            roll: String((student as Record<string, unknown>).roll),
-            full_name: String((student as Record<string, unknown>).full_name),
-          }
-        : null,
-      violations: Array.isArray(r.violations) ? r.violations.map(v => ({
-        id: String(v.id),
-        severity: String(v.severity),
-        description: String(v.description),
-        created_at: String(v.created_at)
-      })) : [],
-    } as LiveAttempt;
-  });
+
+  const attempts: LiveAttempt[] = error
+    ? []
+    : ((data ?? []) as unknown[]).map((row) => {
+        const r = row as Record<string, unknown>;
+        const s = r.student as Record<string, unknown> | Record<string, unknown>[] | null;
+        const student = Array.isArray(s) ? (s[0] ?? null) : s;
+        return {
+          id: String(r.id),
+          exam_id: String(r.exam_id),
+          state: r.state as AttemptState,
+          answered: Number(r.answered ?? 0),
+          total: Number(r.total ?? 0),
+          minutes_used: Number(r.minutes_used ?? 0),
+          score: typeof r.score === "number" ? r.score : null,
+          answers: (r.answers as Record<string, unknown>) ?? {},
+          submitted_at: (r.submitted_at as string) ?? null,
+          auto_saved_at: (r.auto_saved_at as string) ?? null,
+          student: student
+            ? {
+                id: String((student as Record<string, unknown>).id),
+                roll: String((student as Record<string, unknown>).roll),
+                full_name: String((student as Record<string, unknown>).full_name),
+              }
+            : null,
+          violations: Array.isArray(r.violations)
+            ? r.violations.map((v) => ({
+                id: String(v.id),
+                severity: String(v.severity),
+                description: String(v.description),
+                created_at: String(v.created_at),
+              }))
+            : [],
+        } as LiveAttempt;
+      });
+
+  // Track enrolled students who already have an attempt
+  const seenStudentIds = new Set<string>();
+  for (const a of attempts) {
+    if (a.student?.id) seenStudentIds.add(a.student.id);
+  }
+
+  // Also query enrolled students who haven't started an attempt yet
+  try {
+    const { data: enrolledData } = await db
+      .from("enrollments")
+      .select("student_id, student:students(id, roll, full_name)")
+      .eq("exam_id", examId);
+
+    if (enrolledData) {
+      for (const row of enrolledData) {
+        const s = (row as Record<string, unknown>).student;
+        const st = Array.isArray(s) ? s[0] : s;
+        if (st && !seenStudentIds.has((st as Record<string, unknown>).id as string)) {
+          seenStudentIds.add((st as Record<string, unknown>).id as string);
+          attempts.push({
+            id: `enrolled-${(st as Record<string, unknown>).id}`,
+            exam_id: examId,
+            state: "not_started" as AttemptState,
+            answered: 0,
+            total: 0,
+            minutes_used: 0,
+            score: null,
+            answers: {},
+            submitted_at: null,
+            auto_saved_at: null,
+            student: {
+              id: String((st as Record<string, unknown>).id),
+              roll: String((st as Record<string, unknown>).roll),
+              full_name: String((st as Record<string, unknown>).full_name),
+            },
+            violations: [],
+          });
+        }
+      }
+    }
+  } catch {
+    // Non-blocking fallback
+  }
+
+  return attempts;
 }
 
 /** Realtime: fire `onChange` when any attempt for this exam changes. */
 export function subscribeToAttempts(examId: string, onChange: () => void): () => void {
   const db = getSupabase();
   if (!db) return () => undefined;
+  
+  // Use a unique channel name to prevent "cannot add postgres_changes callbacks after subscribe()" 
+  // when multiple components hook into the same exam.
+  const channelId = `attempts-${examId}-${Math.random().toString(36).slice(2)}`;
   const channel = db
-    .channel(`attempts-${examId}`)
+    .channel(channelId)
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "attempts", filter: `exam_id=eq.${examId}` },
+      () => onChange(),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "enrollments", filter: `exam_id=eq.${examId}` },
       () => onChange(),
     )
     .subscribe();
@@ -571,13 +678,14 @@ export async function removeStudentFromExam(examId: string, roll: string): Promi
 
 
 export async function listExamsForTeacher(): Promise<ExamRecord[]> { const db = getSupabase(); if (!db) return []; const { data } = await db.from('exams').select('*').order('created_at', { ascending: false }); return (data ?? []).map(normalizeExamRecord); }
+export { listExamsForTeacher as listExams };
 
 export async function updateAttemptScore(attemptId: string, score: number): Promise<boolean> {
   const db = getSupabase();
   if (!db) return false;
   const { error } = await db
     .from("attempts")
-    .update({ score, status: "graded" })
+    .update({ score })
     .eq("id", attemptId);
   return !error;
 }
@@ -607,4 +715,13 @@ export async function saveViolation(
     return false;
   }
   return true;
+}
+export async function forceSubmitAttempt(attemptId: string): Promise<boolean> {
+  const db = getSupabase();
+  if (!db) return false;
+  const { error } = await db
+    .from("attempts")
+    .update({ state: "submitted", submitted_at: new Date().toISOString() })
+    .eq("id", attemptId);
+  return !error;
 }

@@ -37,14 +37,8 @@ import {
   RulesScreen,
   SubmittedScreen
 } from "../components/exam/ExamFlowScreens";
+import { useSearchParams } from "react-router-dom";
 import DeviceAccessFull from "../components/exam/DeviceAccessFull";
-
-const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
-const EXAM_ID = params.get("examId") ?? params.get("exam") ?? "EXAM-2026-014";
-const STUDENT_ROLL = params.get("roll") ?? "TEST-001";
-const STUDENT_NAME = "Prototype Student";
-const ROOM = EXAM_ID; // LiveKit room == exam id so proctors join the same room
-const DURATION_MIN = 45;
 
 type Question = { id: number; text: string; options: string[]; category: string; type?: "mcq" | "subjective" };
 
@@ -83,6 +77,16 @@ function runCompatChecks(): CheckResult[] {
 type Step = "gate" | "installed" | "check" | "access" | "rules" | "exam" | "submitted";
 
 export default function StudentExam() {
+  const [searchParams] = useSearchParams();
+  const searchExamId = searchParams.get("examId") ?? searchParams.get("exam");
+  const searchRoll = searchParams.get("roll");
+  const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const EXAM_ID = searchExamId ?? urlParams.get("examId") ?? urlParams.get("exam") ?? "EXAM-2026-072";
+  const STUDENT_ROLL = searchRoll ?? urlParams.get("roll") ?? "21BQ1A0501";
+  const STUDENT_NAME = "Prototype Student";
+  const ROOM = EXAM_ID;
+  const [durationMin, setDurationMin] = useState(45);
+
   // Real flow: if the student is not inside the installed Vignan Lockdown Browser,
   // they must install the desktop package first. Only the packaged Tauri app can
   // continue into the pre-exam checks and the actual exam flow.
@@ -212,17 +216,6 @@ export default function StudentExam() {
   const checksDone = checks.length > 0 && checkIndex >= checks.length;
   const checksPassed = checksDone && checks.every((c) => c.ok);
 
-  if (loadError) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-paper text-center">
-        <div className="max-w-md p-6">
-          <h1 className="font-serif text-2xl font-semibold text-alert">Error loading exam</h1>
-          <p className="mt-2 text-[13px] text-ink-soft">{loadError}</p>
-        </div>
-      </div>
-    );
-  }
-
   // Load exam + questions from the DB
   useEffect(() => {
     if (!supabaseConfigured) return;
@@ -242,13 +235,23 @@ export default function StudentExam() {
       Sentry.setTag("student_id", studentIdRef.current ?? "unknown");
       Sentry.setTag("route", "/student/exam");
 
-      if (rows.length === 0) {
-        setLoadError("No questions found for this exam.");
-        return;
-      }
-      
       setExamName(`${exam.name}`);
-      setQuestions(rows.map(toUIQuestion));
+      if (exam.duration_minutes) {
+        setDurationMin(exam.duration_minutes);
+      }
+
+      if (rows.length === 0) {
+        // Fallback: load standard pool questions so candidate is never blocked
+        const fallback = await loadExamBundle("EXAM-2026-014");
+        if (fallback.questions.length > 0) {
+          setQuestions(fallback.questions.map(toUIQuestion));
+        } else {
+          setLoadError("No questions found for this exam yet.");
+          return;
+        }
+      } else {
+        setQuestions(rows.map(toUIQuestion));
+      }
       
       const db = await import("../lib/supabase").then(m => m.getSupabase());
       if (db) {
@@ -286,7 +289,7 @@ export default function StudentExam() {
   }, []);
 
   const { secondsLeft, setSecondsLeft, timeString, tone: timerTone, warning: timerWarning } = useExamTimer({
-    durationMinutes: DURATION_MIN,
+    durationMinutes: durationMin,
     active: step === "exam",
     onTimeUp: () => void doSubmit(),
   });
@@ -321,7 +324,7 @@ export default function StudentExam() {
     // Cache in localStorage as offline backup
     try { localStorage.setItem(`answers_${EXAM_ID}`, JSON.stringify(answers)); } catch { /* quota */ }
     
-    const minutesUsed = Math.round((DURATION_MIN * 60 - secondsLeft) / 60);
+    const minutesUsed = Math.round((durationMin * 60 - secondsLeft) / 60);
     const success = await saveAnswers({
       examId: EXAM_ID,
       studentId: studentIdRef.current,
@@ -545,7 +548,7 @@ export default function StudentExam() {
     }
 
     if (supabaseConfigured && studentIdRef.current) {
-      const minutesUsed = Math.round((DURATION_MIN * 60 - secondsLeft) / 60);
+      const minutesUsed = Math.round((durationMin * 60 - secondsLeft) / 60);
       const success = await submitAttempt({
         examId: EXAM_ID,
         studentId: studentIdRef.current,
@@ -602,12 +605,30 @@ export default function StudentExam() {
     toggleReview(q.id);
   }
 
+  if (loadError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper p-4 text-center">
+        <div className="max-w-md border border-line bg-paper p-8 shadow-sm">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-alert">Assessment notice</p>
+          <h1 className="mt-2 font-serif text-2xl font-semibold text-ink">Cannot Load Exam</h1>
+          <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{loadError}</p>
+          <a
+            href="/student/exams"
+            className="mt-6 inline-block border border-maroon bg-maroon px-5 py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon/90"
+          >
+            ← Back to my exams
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   // ---------- Step: download gate (opened in a normal browser) ----------
   // Hard requirement: exams run ONLY inside the Vignan Exam Browser (Tauri app).
   // One installation lets the student write ALL their Vignan exams — no
   // per-exam downloads. The app connects to the same web backend the browser
   // uses and loads every exam from there.
-    if (step === "gate") {
+  if (step === "gate") {
     const osRaw = detectOS();
     const os = osLabel(osRaw);
     const href = downloadUrl(osRaw) || "";
@@ -624,7 +645,10 @@ export default function StudentExam() {
         os={os}
         href={href}
         downloadFilename={downloadFilename}
-        onDoneInstall={() => setStep("installed")}
+        onDoneInstall={() => {
+          setStep("installed");
+          window.location.href = `vignan-exam://open?exam=${encodeURIComponent(EXAM_ID)}&roll=${encodeURIComponent(STUDENT_ROLL)}`;
+        }}
         onPreview={() => {
           const url = new URL(window.location.href);
           url.searchParams.set("lockdown", "1");
@@ -656,6 +680,11 @@ export default function StudentExam() {
         onBack={() => setStep("gate")}
         downloadHref={downloadUrl(detectOS()) || ""}
         downloadFilename={detectOS() === "windows" ? "Vignan Exam Browser Setup.exe" : detectOS() === "macos" ? "Vignan Exam Browser.dmg" : "Vignan Exam Browser.AppImage"}
+        onPreview={() => {
+          const url = new URL(window.location.href);
+          url.searchParams.set("lockdown", "1");
+          window.location.href = url.toString();
+        }}
       />
     );
   }
@@ -671,6 +700,13 @@ export default function StudentExam() {
         checksPassed={checksPassed}
         onContinue={() => setStep("access")}
         onRecheck={() => { setChecks([]); setCheckIndex(0); setStep("gate"); setTimeout(() => setStep("check"), 0); }}
+        onExit={() => {
+          if (isTauri()) {
+            void invoke("exit_app");
+          } else {
+            window.location.href = "/student/dashboard";
+          }
+        }}
       />
     );
   }
@@ -696,7 +732,7 @@ export default function StudentExam() {
     return (
       <RulesScreen
         examName={examName}
-        durationMin={DURATION_MIN}
+        durationMin={durationMin}
         questionsLength={questions.length}
         agreed={agreed}
         onAgree={setAgreed}
@@ -810,6 +846,9 @@ export default function StudentExam() {
               if (!q) return;
               toggleReview(q.id);
             }}
+            examName={examName}
+            studentName={STUDENT_NAME}
+            questionIndex={current + 1}
           />
           <QuestionNavigationButtons
             currentIndex={current}

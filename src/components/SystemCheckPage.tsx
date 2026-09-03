@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 
 type CheckResult = {
   key: string;
@@ -47,6 +48,8 @@ function testInternetSpeed(): { ok: boolean; detail: string } {
 }
 
 export default function SystemCheckPage() {
+  const { examId } = useParams();
+  const navigate = useNavigate();
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState<CheckResult[]>([]);
 
@@ -132,8 +135,13 @@ export default function SystemCheckPage() {
       </div>
 
       {passed && (
-        <button className="mt-4 border border-success bg-success/10 px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-success">
-          All Good
+        <button
+          onClick={() => {
+            if (examId) navigate(`/student/exams/${examId}`);
+          }}
+          className="mt-4 border border-success bg-success/10 px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-success hover:bg-success hover:text-paper transition-colors"
+        >
+          All Good → Return to Exam
         </button>
       )}
     </section>

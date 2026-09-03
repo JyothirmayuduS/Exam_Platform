@@ -17,6 +17,7 @@ export type ProctorState = "connecting" | "connected" | "reconnecting" | "discon
 
 export type ProctorHandle = {
   room: InstanceType<typeof Room> | null;
+  stream: MediaStream | null;
   stop: () => void;
 };
 
@@ -71,6 +72,13 @@ export async function startProctorPublishing(opts: {
       await room.localParticipant.publishTrack(screenTrack, { source: "screen_share", name: "screen" });
     }
     opts.onState?.("connected");
+
+    const stream = new MediaStream(tracks.map((t) => t.mediaStreamTrack));
+    return {
+      room,
+      stream,
+      stop: () => { void room.disconnect(); tracks.forEach((t) => t.stop()); },
+    };
   } catch (err) {
     // Connect / camera / publish failed — tear down and let the caller fall back
     // to a local-only preview instead of throwing an unhandled rejection.
@@ -78,9 +86,4 @@ export async function startProctorPublishing(opts: {
     console.warn("[proctor] LiveKit publishing failed, falling back to local-only:", err);
     return null;
   }
-
-  return {
-    room,
-    stop: () => { void room.disconnect(); },
-  };
 }

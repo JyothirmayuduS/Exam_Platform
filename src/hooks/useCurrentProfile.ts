@@ -55,14 +55,18 @@ export default function useCurrentProfile() {
           : null
         );
       } else {
-        const { data } = await db!
+        const { data, error } = await db!
           .from("students")
-          .select("id, full_name, roll, department, semester, email")
+          .select("id, full_name, roll, branch, section, email")
           .eq("auth_id", user!.id)
           .maybeSingle();
 
+        if (error) {
+          console.error("useCurrentProfile: Error loading student profile:", error);
+        }
+
         setProfile(data
-          ? { kind: "student", ...data }
+          ? { kind: "student", ...data, department: data.branch, semester: null }
           : null
         );
       }

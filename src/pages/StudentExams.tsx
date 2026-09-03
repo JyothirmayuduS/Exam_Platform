@@ -120,10 +120,10 @@ export default function StudentExams() {
                   e.preventDefault();
                   if (isTauri()) {
                     // Already inside the lockdown browser — go straight into the exam.
-                    void navigate("/student/exam");
+                    void navigate(`/student/exam?examId=${encodeURIComponent(r.id)}`);
                   } else {
                     // Normal browser: instantly trigger the deep link to open the app
-                    window.location.href = `vignan-exam://open?exam=${r.id}&roll=21VGN0142`;
+                    window.location.href = `vignan-exam://open?exam=${encodeURIComponent(r.id)}&roll=${encodeURIComponent(profile && "roll" in profile ? profile.roll : "21BQ1A0501")}`;
                     // If it doesn't open (not installed), show the gate/modal fallback after a delay
                     setTimeout(() => {
                       setEnterModal(r.name);
@@ -168,7 +168,7 @@ export default function StudentExams() {
             </div>
             <div className="mt-5 flex gap-3">
               <a
-                href="/student/exam"
+                href={`/student/exam?examId=${encodeURIComponent(rows.find(x => x.name === enterModal)?.id || "")}`}
                 className="flex-1 border border-maroon bg-maroon py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon/90"
               >
                 Install Lockdown Browser →

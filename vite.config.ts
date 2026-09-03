@@ -1,9 +1,25 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import os from 'os';
+
+function getLocalIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
 
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    '__LOCAL_IP__': JSON.stringify(getLocalIP()),
+  },
   plugins: [
     react(),
     VitePWA({
@@ -30,11 +46,12 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webp}'],
         navigateFallback: '/index.html',
-        navigateFallbackAllowlist: [/^\/student/]
+        navigateFallbackAllowlist: [/^\/student/],
+        maximumFileSizeToCacheInBytes: 5000000
       }
     })
   ],
-  server: { port: Number(process.env.PORT) || 5173 },
+  server: { host: true, port: Number(process.env.PORT) || 5173, allowedHosts: true },
   build: {
     sourcemap: true,
   },

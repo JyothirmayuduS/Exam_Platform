@@ -13,6 +13,7 @@ import StudentExamDetail from "./pages/StudentExamDetail";
 import PracticeModeExam from "./pages/PracticeModeExam";
 import TeacherProctoring from "./pages/TeacherProctoring";
 import MobileUpload from "./pages/MobileUpload";
+import Login from "./pages/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SystemCheckPage from "./components/SystemCheckPage";
 import OfflineIndicator from "./components/OfflineIndicator";
@@ -23,6 +24,7 @@ export default function App() {
       <OfflineIndicator />
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
       
       {/* Student Routes */}
       <Route path="/student" element={<ProtectedRoute allowedRole="student"><StudentHome /></ProtectedRoute>} />
@@ -34,6 +36,9 @@ export default function App() {
       <Route path="/student/results/:resultId" element={<ProtectedRoute allowedRole="student"><StudentResultDetail /></ProtectedRoute>} />
       <Route path="/student/help" element={<ProtectedRoute allowedRole="student"><StudentHelp /></ProtectedRoute>} />
       <Route path="/student/exam" element={<ProtectedRoute allowedRole="student"><StudentExam /></ProtectedRoute>} />
+      <Route path="/system-check" element={<ProtectedRoute allowedRole="student"><SystemCheckPage /></ProtectedRoute>} />
+      <Route path="/student/practice" element={<ProtectedRoute allowedRole="student"><PracticeModeExam /></ProtectedRoute>} />
+      <Route path="/mobile-upload/:token" element={<MobileUpload />} />
       <Route path="/mobile-upload" element={<MobileUpload />} />
       
       {/* Teacher Routes */}

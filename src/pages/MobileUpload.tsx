@@ -1,21 +1,25 @@
 import { useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import ImageCropper from "../components/ImageCropper";
+import { getSupabase } from "../lib/supabase";
 import {
-  uploadSubjectiveAnswer,
   compressImage,
   autoCropWhiteEdges,
   rotateImage,
 } from "../lib/subjectiveUpload";
 
-type UploadStep = "capture" | "preview" | "crop" | "uploading" | "done" | "error";
+type UploadStep = "capture" | "preview" | "crop" | "review" | "uploading" | "done" | "error";
 
 export default function MobileUpload() {
+  const { token } = useParams();
   const [searchParams] = useSearchParams();
   const examId = searchParams.get("examId") || "EXAM";
+  const examName = searchParams.get("examName") || "";
   const qId = searchParams.get("qId") || "1";
   const studentId = searchParams.get("student") || "";
+  const studentName = searchParams.get("studentName") || "";
 
+  const [pages, setPages] = useState<{ blob: Blob; url: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<UploadStep>("capture");
   const [rawBlob, setRawBlob] = useState<Blob | null>(null);
@@ -71,24 +75,47 @@ export default function MobileUpload() {
   };
 
   const doUpload = async () => {
-    if (!previewBlob) return;
+    if (pages.length === 0 || !token) {
+      setErrorMsg("Missing token or image. Please scan the QR code again.");
+      setStep("error");
+      return;
+    }
     setStep("uploading");
     setProgress(0);
     setErrorMsg(null);
 
-    const result = await uploadSubjectiveAnswer({
-      examId,
-      studentId,
-      questionId: qId,
-      blob: previewBlob,
-      onProgress: setProgress,
-    });
+    try {
+      const formData = new FormData();
+      formData.append("token", token);
+      pages.forEach((p, i) => formData.append(`image_${i}`, p.blob, `page_${i}.jpg`));
 
-    if (result.ok) {
-      setUploadedUrl(result.publicUrl);
+      const db = getSupabase();
+      if (!db) throw new Error("Database not connected");
+
+      setProgress(50);
+      const { data, error } = await db.functions.invoke("mobile-upload", {
+        body: formData,
+      });
+      setProgress(100);
+
+      if (error) {
+        let errMessage = error.message;
+        if (error.context && typeof error.context.json === 'function') {
+          try {
+            const errBody = await error.context.json();
+            if (errBody && errBody.error) errMessage = errBody.error;
+          } catch (e) {}
+        } else if (typeof error.message === 'string' && error.message.includes('{')) {
+           try { errMessage = JSON.parse(error.message).error || error.message; } catch(e) {}
+        }
+        throw new Error(errMessage || "Upload failed");
+      }
+
+      setUploadedUrl(pages[0].url); // just preview the first page
       setStep("done");
-    } else {
-      setErrorMsg(result.error);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || "An error occurred");
       setStep("error");
     }
   };
@@ -114,9 +141,9 @@ export default function MobileUpload() {
         <main className="flex-1 px-4 py-5 space-y-4 max-w-md mx-auto w-full">
           {/* Meta */}
           <div className="border border-line bg-paper-raised px-4 py-3 space-y-1 font-mono text-[11px]">
-            <div className="flex justify-between"><span className="text-ink-soft">Exam</span><span>{examId}</span></div>
+            <div className="flex justify-between"><span className="text-ink-soft">Exam</span><span>{examName || examId}</span></div>
             <div className="flex justify-between"><span className="text-ink-soft">Question</span><span>{qId}</span></div>
-            {studentId && <div className="flex justify-between"><span className="text-ink-soft">Roll No</span><span>{studentId}</span></div>}
+            {studentId && <div className="flex justify-between"><span className="text-ink-soft">Student</span><span>{studentName || studentId}</span></div>}
           </div>
 
           {/* ── CAPTURE ── */}
@@ -139,7 +166,10 @@ export default function MobileUpload() {
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
-                    if (file) void loadFile(file);
+                    if (file) {
+                       setRotation(0);
+                       void loadFile(file);
+                    }
                   }}
                 />
               </label>
@@ -155,6 +185,10 @@ export default function MobileUpload() {
           {/* ── PREVIEW ── */}
           {step === "preview" && previewUrl && (
             <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h2 className="font-mono text-[12px] uppercase tracking-widest">Adjust Page</h2>
+                <span className="font-mono text-[10px] text-ink-soft bg-paper-raised px-2 py-1">Page {pages.length + 1}</span>
+              </div>
               {/* Image preview */}
               <div className="border border-line overflow-hidden bg-ink">
                 <img src={previewUrl} alt="Answer sheet preview" className="w-full object-contain max-h-[55vh]" />
@@ -196,12 +230,13 @@ export default function MobileUpload() {
                     onClick={() => {
                       setPreviewBlob(null);
                       setPreviewUrl(null);
-                      setStep("capture");
+                      if (pages.length > 0) setStep("review");
+                      else setStep("capture");
                       if (fileInputRef.current) fileInputRef.current.value = "";
                     }}
                     className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-paper-raised"
                   >
-                    ✕ Retake
+                    ✕ Cancel Page
                   </button>
                 </div>
                 {processing && (
@@ -220,12 +255,60 @@ export default function MobileUpload() {
               )}
 
               <button
-                onClick={() => void doUpload()}
+                onClick={() => {
+                   setPages([...pages, { blob: previewBlob!, url: previewUrl! }]);
+                   setPreviewBlob(null);
+                   setPreviewUrl(null);
+                   setStep("review");
+                }}
                 disabled={processing}
-                className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper disabled:opacity-60"
+                className="w-full border border-forest bg-forest py-3 font-mono text-[12px] uppercase tracking-widest text-paper disabled:opacity-60"
               >
-                Submit Answer →
+                Confirm Page
               </button>
+            </div>
+          )}
+
+          {/* ── REVIEW ── */}
+          {step === "review" && pages.length > 0 && (
+            <div className="space-y-4">
+              <h2 className="font-mono text-[12px] uppercase tracking-widest">Review Pages ({pages.length})</h2>
+              <div className="grid grid-cols-2 gap-3">
+                {pages.map((p, i) => (
+                  <div key={i} className="relative border border-line bg-paper-raised aspect-[3/4]">
+                    <img src={p.url} alt={`Page ${i+1}`} className="w-full h-full object-cover" />
+                    <div className="absolute top-2 left-2 bg-black/60 text-white font-mono text-[10px] px-2 py-0.5 rounded">
+                      Page {i+1}
+                    </div>
+                    <button
+                      onClick={() => setPages(pages.filter((_, idx) => idx !== i))}
+                      className="absolute top-2 right-2 bg-alert text-white w-6 h-6 flex items-center justify-center rounded-full text-[12px]"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                
+                {pages.length < 10 && (
+                  <button
+                    onClick={() => setStep("capture")}
+                    className="border-2 border-dashed border-line-strong bg-paper flex flex-col items-center justify-center text-ink-soft hover:bg-paper-raised hover:text-ink aspect-[3/4]"
+                  >
+                    <span className="text-2xl mb-1">+</span>
+                    <span className="font-mono text-[9px] uppercase tracking-wider">Add Page</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="pt-4 border-t border-line">
+                <button
+                  onClick={() => void doUpload()}
+                  disabled={pages.length === 0}
+                  className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper disabled:opacity-60"
+                >
+                  Submit Answer ({pages.length} Pages) →
+                </button>
+              </div>
             </div>
           )}
 
@@ -260,17 +343,11 @@ export default function MobileUpload() {
                   <img src={uploadedUrl} alt="Uploaded answer" className="w-full max-h-48 object-contain" />
                 </div>
               )}
-              <button
-                onClick={() => {
-                  setStep("capture");
-                  setPreviewBlob(null);
-                  setPreviewUrl(null);
-                  setProgress(0);
-                }}
-                className="border border-line px-4 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised"
-              >
-                Upload another photo
-              </button>
+              <div className="border border-line px-4 py-2 bg-paper-raised">
+                <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                  You can now safely close this tab or window.
+                </p>
+              </div>
             </div>
           )}
 
@@ -286,16 +363,16 @@ export default function MobileUpload() {
               </div>
               <div className="flex gap-3 justify-center">
                 <button
-                  onClick={() => previewBlob && void doUpload()}
+                  onClick={() => pages.length > 0 ? void doUpload() : setStep("capture")}
                   className="border border-maroon bg-maroon px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-paper"
                 >
                   Retry upload
                 </button>
                 <button
-                  onClick={() => setStep("capture")}
+                  onClick={() => setStep(pages.length > 0 ? "review" : "capture")}
                   className="border border-line px-4 py-2 font-mono text-[10px] uppercase tracking-wider"
                 >
-                  Retake photo
+                  Go Back
                 </button>
               </div>
             </div>

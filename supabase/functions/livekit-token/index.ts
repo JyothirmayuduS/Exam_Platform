@@ -61,11 +61,25 @@ Deno.serve(async (req: Request) => {
   // may subscribe to watch feeds; everyone else can only publish their own.
   const role = String((user.app_metadata as Record<string, unknown> | undefined)?.role ?? "student");
   const isProctor = role === "proctor" || role === "teacher" || role === "admin";
-
-  // Identity is bound to the authenticated user — no client-supplied spoofing.
-  const identity = isProctor ? `proctor:${user.id}` : `student:${user.id}`;
   const canPublish = !isProctor;   // students publish their camera/mic
   const canSubscribe = isProctor;  // only proctors watch others
+
+  // For students, derive identity from their roll number so the teacher dashboard
+  // can map feeds by roll. We look it up server-side (never trust the client).
+  let identity: string;
+  if (isProctor) {
+    identity = `proctor:${user.id}`;
+  } else {
+    // Try to find the student's roll number from the students table.
+    const { data: studentRow } = await supabase
+      .from("students")
+      .select("roll")
+      .eq("id", user.id)
+      .maybeSingle();
+    const roll = studentRow?.roll as string | undefined;
+    // Fall back to auth UUID if no row found (shouldn't happen in production).
+    identity = roll ? `student:${roll}` : `student:${user.id}`;
+  }
 
   const at = new AccessToken(apiKey, apiSecret, { identity, ttl: "2h" });
   at.addGrant({ roomJoin: true, room, canPublish, canSubscribe, canPublishData: true });

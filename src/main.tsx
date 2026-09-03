@@ -8,8 +8,8 @@ import ErrorPage from './pages/ErrorPage.tsx'
 import * as Sentry from "@sentry/react";
 import LogRocket from 'logrocket';
 
-const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN;
-const LOGROCKET_ID = import.meta.env.VITE_LOGROCKET_ID;
+const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN?.replace(/^["']|["']$/g, '');
+const LOGROCKET_ID = import.meta.env.VITE_LOGROCKET_ID?.replace(/^["']|["']$/g, '');
 
 if (SENTRY_DSN) {
   Sentry.init({
@@ -73,7 +73,7 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <ErrorBoundary fallback={<ErrorPage />}>
+          <ErrorBoundary>
             <App />
           </ErrorBoundary>
         </AuthProvider>

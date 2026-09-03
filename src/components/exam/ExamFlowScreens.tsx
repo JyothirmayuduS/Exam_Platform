@@ -53,6 +53,7 @@ export function InstalledScreen({
   onBack,
   downloadHref,
   downloadFilename,
+  onPreview,
 }: {
   examName: string;
   deepLinkTried: boolean;
@@ -62,6 +63,7 @@ export function InstalledScreen({
   onBack: () => void;
   downloadHref: string;
   downloadFilename: string;
+  onPreview?: () => void;
 }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper px-6">
@@ -69,22 +71,38 @@ export function InstalledScreen({
         <h1 className="mt-5 font-serif text-2xl font-semibold">Vignan Exam Browser installed!</h1>
         <p className="mt-2 font-mono text-[11px] uppercase tracking-wider text-maroon">{examName}</p>
         {!deepLinkTried ? (
-          <button onClick={onEnter} className="mt-6 w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper">Enter exam →</button>
+          <button onClick={onEnter} className="mt-6 w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-maroon/90">Enter exam →</button>
         ) : deepLinkFailed ? (
           <div className="mt-4 space-y-3">
-            <button onClick={onTryAgain} className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper">Try again →</button>
-            <a href={downloadHref} download={downloadFilename} className="block w-full border border-line-strong py-3 text-center font-mono text-[12px] uppercase tracking-widest text-ink">↓ Download again</a>
+            <button onClick={onTryAgain} className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-maroon/90">Try again →</button>
+            {onPreview && (
+              <button
+                onClick={onPreview}
+                className="block w-full border border-forest bg-forest/10 py-3 text-center font-mono text-[11px] uppercase tracking-widest text-forest hover:bg-forest/20"
+              >
+                ⚡ Continue in browser (Demo / Bypass mode) →
+              </button>
+            )}
+            <a href={downloadHref} download={downloadFilename} className="block w-full border border-line-strong py-3 text-center font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-paper-raised">↓ Download again</a>
           </div>
         ) : (
           <div className="mt-5 font-mono text-[11px] text-ink-soft">Launching Vignan Exam Browser…</div>
         )}
-        <button onClick={onBack} className="mt-4 font-mono text-[10px] text-ink-soft underline">← Back</button>
+        <div className="mt-5 flex items-center justify-center gap-3">
+          <button onClick={onBack} className="font-mono text-[10px] text-ink-soft underline hover:text-ink">← Back</button>
+          {onPreview && (
+            <>
+              <span className="text-[10px] text-line-strong">·</span>
+              <button onClick={onPreview} className="font-mono text-[10px] text-forest underline hover:text-forest/80">Continue in browser (demo)</button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-export function SystemCheckScreen({ examName, checks, checkIndex, checksDone, checksPassed, onContinue, onRecheck }: {
+export function SystemCheckScreen({ examName, checks, checkIndex, checksDone, checksPassed, onContinue, onRecheck, onExit }: {
   examName: string;
   checks: CheckResult[];
   checkIndex: number;
@@ -92,6 +110,7 @@ export function SystemCheckScreen({ examName, checks, checkIndex, checksDone, ch
   checksPassed: boolean;
   onContinue: () => void;
   onRecheck: () => void;
+  onExit?: () => void;
 }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper px-6">
@@ -108,7 +127,12 @@ export function SystemCheckScreen({ examName, checks, checkIndex, checksDone, ch
           ))}
         </div>
         {checksDone && checksPassed && <button onClick={onContinue} className="mt-6 w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper">Continue</button>}
-        {checksDone && !checksPassed && <button onClick={onRecheck} className="mt-6 w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper">Re-check Environment</button>}
+        {checksDone && !checksPassed && (
+          <div className="mt-6 flex flex-col gap-3">
+            <button onClick={onRecheck} className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper">Re-check Environment</button>
+            {onExit && <button onClick={onExit} className="w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-paper-raised">Exit to Desktop</button>}
+          </div>
+        )}
       </div>
     </div>
   );

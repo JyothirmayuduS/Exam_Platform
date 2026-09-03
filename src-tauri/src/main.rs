@@ -31,6 +31,7 @@ const LOCKDOWN_JS: &str = r#"
     if (combo && ['u','p','s','f','r','w','t','n'].includes(k)) return block(e);
     if (k === 'f5') return block(e);
     if (e.altKey && k === 'tab') return block(e);
+    if (e.altKey && k === 'f4') return block(e);
     if (k === 'printscreen') { navigator.clipboard?.writeText(''); return block(e); }
   }, true);
 
@@ -54,6 +55,7 @@ fn check_prohibited_apps() -> Vec<String> {
     
     let prohibited = vec![
         "anydesk", "teamviewer", "zoom", "skype", "discord", "screensharing", "rustdesk",
+        "dws", "dwservice", "zoho", "logmein", "splashtop", "chrome remote desktop", "vnc",
         "cheatengine", "x64dbg", "ida", "wireshark", "processhacker", "ollydbg", "fiddler", "charles"
     ];
     
@@ -153,6 +155,11 @@ fn enforce_admin_privileges() {
 #[cfg(not(target_os = "windows"))]
 fn enforce_admin_privileges() {}
 
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
+}
+
 fn main() {
     enforce_admin_privileges();
     
@@ -203,6 +210,14 @@ fn main() {
                             let _: () = objc2::msg_send![ns_win, setLevel: 1000_isize];
                             // 0 is NSWindowSharingTypeNone (prevents screenshots/screen recording)
                             let _: () = objc2::msg_send![ns_win, setSharingType: 0_isize];
+                        }
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    if let Ok(hwnd) = win.hwnd() {
+                        unsafe {
+                            SetWindowDisplayAffinity(hwnd.0 as *mut _, 0x00000011); // WDA_EXCLUDEFROMCAPTURE
                         }
                     }
                 }
@@ -276,12 +291,12 @@ fn main() {
                     let _ = window.set_always_on_top(true);
                     let _ = window.set_focus();
                 }
-                WindowEvent::CloseRequested { api, .. } => {
-                    api.prevent_close(); // Block Cmd+Q
-                    // Notify frontend to show alert
-                    if let Some(webview_window) = window.get_webview_window("exam") {
-                        let _ = webview_window.eval("alert('Force close detected! The proctor has been notified.');");
-                    }
+                WindowEvent::CloseRequested { .. } => {
+                    // When the OS shuts down (or if the user forces a quit like Cmd+Q/Alt+F4),
+                    // exit immediately. If we prevent close here, the OS shutdown process
+                    // might take the app out of fullscreen but leave it running in the background,
+                    // creating a loophole where the user cancels shutdown and accesses the desktop.
+                    exit_app();
                 }
                 _ => {}
             }

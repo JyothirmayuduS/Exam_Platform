@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node tunnel.mjs & vite",
+    "dev": "vite",
     "tunnel": "node tunnel.mjs",
     "dev:lite": "node preview-server.mjs",
     "build": "tsc -b && vite build",

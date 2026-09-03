@@ -448,13 +448,13 @@ function ProctorReports() {
           <div className="border border-line bg-paper p-5">
             <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exports & Evidence</p>
             <div className="mt-4 grid gap-2">
-              <button onClick={exportPDF} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
+              <button onClick={() => alert("Exporting PDF...")} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
                 <span>Session Report (PDF)</span> <span>↓</span>
               </button>
               <button onClick={() => alert("Downloading evidence clips...")} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
                 <span>Export Evidence (Video)</span> <span>↓</span>
               </button>
-              <button onClick={exportCSV} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
+              <button onClick={() => alert("Exporting CSV...")} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
                 <span>Proctor Activity Log (CSV)</span> <span>↓</span>
               </button>
             </div>

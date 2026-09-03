@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 const roles = [
   {
     key: "student",
-    to: "/student",
+    to: "/login?role=student",
     title: "Student",
     tone: "#7A1F2B",
     desc: "Verify your identity, complete the system check, and take your exam in a locked, distraction-free window.",
@@ -11,7 +11,7 @@ const roles = [
   },
   {
     key: "teacher",
-    to: "/teacher",
+    to: "/login?role=teacher",
     title: "Teacher",
     tone: "#284B34",
     desc: "Build the question bank, configure the lockdown tier, and evaluate submissions once the window closes.",
@@ -19,7 +19,7 @@ const roles = [
   },
   {
     key: "proctor",
-    to: "/proctor",
+    to: "/login?role=proctor",
     title: "Proctor",
     tone: "#B7791F",
     desc: "Monitor the live candidate grid, review AI-raised flags, and act on incidents as they happen.",
@@ -31,7 +31,7 @@ export default function Landing() {
   return (
     <div className="min-h-screen bg-paper">
       <header className="border-b border-line">
-        <div className="mx-auto max-w-7xl px-6 py-6">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center border border-ink font-serif text-lg font-semibold">
               V
@@ -43,6 +43,12 @@ export default function Landing() {
               </p>
             </div>
           </div>
+          <Link
+            to="/login"
+            className="border border-line bg-paper px-4 py-2 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-paper-raised"
+          >
+            Sign In / Switch Role →
+          </Link>
         </div>
       </header>
 

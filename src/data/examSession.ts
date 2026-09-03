@@ -24,6 +24,8 @@ export type Attempt = {
   network: Network;
   autoSaveAt: string;
   flags: Flag[];
+  answers?: Record<string, any>;
+  score?: number | null;
 };
 
 export const LIVE_EXAM = "Data Structures & Algorithms";

@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import { loadExamBundle, type DBQuestion } from "../lib/examApi";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
+import SubjectiveQRBlock from "../components/exam/SubjectiveQRBlock";
 
 type AnswerMap = Record<string, string>;
 
@@ -32,8 +33,24 @@ export default function PracticeModeExam() {
   const { profile } = useCurrentProfile();
   const [title, setTitle] = useState("Practice Mode");
   const [questions, setQuestions] = useState<DBQuestion[]>(FALLBACK);
-  const [answers, setAnswers] = useState<AnswerMap>({});
+  const [answers, setAnswers] = useState<AnswerMap>(() => {
+    const saved = sessionStorage.getItem(`practice_answers_${examId}`);
+    try {
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem(`practice_answers_${examId}`, JSON.stringify(answers));
+  }, [answers, examId]);
+
   const [submitted, setSubmitted] = useState(false);
+
+  const [attemptId, setAttemptId] = useState<string | undefined>(() => {
+    return sessionStorage.getItem(`practice_attempt_${examId}`) || undefined;
+  });
 
   useEffect(() => {
     let active = true;
@@ -44,10 +61,34 @@ export default function PracticeModeExam() {
         setQuestions(rows);
       }
     });
+
+    const initPracticeAttempt = async () => {
+      if (attemptId) return; // Use existing from session
+      const studentId = profile?.id ?? "175741ff-ad12-4c01-aea3-8df6b55d1e74";
+      const db = (await import("../lib/supabase")).getSupabase();
+      if (db) {
+        const id = await (await import("../lib/examApi")).startAttempt({
+          examId: examId || "EXAM-2026-014",
+          studentId: studentId,
+          total: questions.length || 1
+        });
+        
+        if (!id) {
+          console.error("PracticeMode: Failed to initialize dummy attempt for student:", studentId);
+        }
+        
+        if (id && active) {
+          setAttemptId(id);
+          sessionStorage.setItem(`practice_attempt_${examId}`, id);
+        }
+      }
+    };
+    initPracticeAttempt();
+
     return () => {
       active = false;
     };
-  }, [examId]);
+  }, [examId, profile?.id]);
 
   const score = useMemo(() => {
     const total = questions.filter((q) => q.answer).length;
@@ -91,13 +132,64 @@ export default function PracticeModeExam() {
                   </label>
                 ))}
               </div>
+            ) : answers[q.id]?.startsWith("[Uploaded answer:") ? (
+              <div className="mt-3 space-y-4">
+                <div className="border border-line bg-paper-raised p-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-bold">✓ Handwritten Answer Uploaded</p>
+                    <button 
+                      onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: "" }))}
+                      className="border border-alert text-alert px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10"
+                    >
+                      Remove & Retake
+                    </button>
+                  </div>
+                  <iframe 
+                    src={`${answers[q.id].replace("[Uploaded answer: ", "").replace("]", "")}#toolbar=0`} 
+                    className="w-full h-[500px] border border-line bg-ink" 
+                    title="Uploaded Answer"
+                  />
+                </div>
+              </div>
             ) : (
-              <textarea
-                className="mt-3 h-24 w-full border border-line bg-paper-raised p-2 text-[13px]"
-                placeholder="Type your practice answer"
-                value={answers[q.id] ?? ""}
-                onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
-              />
+              <div className="mt-3 space-y-4">
+                {(!q.subjective_mode || q.subjective_mode === "both" || q.subjective_mode === "textbox") && (
+                  <div>
+                    <label className="block font-mono text-[10px] uppercase tracking-wider text-ink-soft mb-1.5">
+                      {q.subjective_mode === "both" ? "Option 1: Type answer directly" : "Type your answer"}
+                    </label>
+                    <textarea
+                      className="h-24 w-full border border-line bg-paper-raised p-2 text-[13px] outline-none focus:border-forest"
+                      placeholder="Type your practice answer"
+                      value={answers[q.id] ?? ""}
+                      onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                    />
+                  </div>
+                )}
+
+                {(!q.subjective_mode || q.subjective_mode === "both" || q.subjective_mode === "qr") && (
+                  <div>
+                    <label className="block font-mono text-[10px] uppercase tracking-wider text-ink-soft mb-1.5">
+                      {q.subjective_mode === "both"
+                        ? "Option 2: Scan QR & upload handwritten answer from mobile phone"
+                        : "Scan QR & upload handwritten answer from mobile phone"}
+                    </label>
+                    <SubjectiveQRBlock
+                      examId={examId || "EXAM-2026-014"}
+                      attemptId={attemptId}
+                      questionId={q.id}
+                      questionIndex={index + 1}
+                      studentId={profile?.id ?? "175741ff-ad12-4c01-aea3-8df6b55d1e74"}
+                      studentName={profile?.full_name ?? "Prototype Student"}
+                      examName={title.replace(" · Practice Mode", "")}
+                      questionText={q.title}
+                      onAnswerUploaded={(url) => {
+                        setAnswers((prev) => ({ ...prev, [q.id]: `[Uploaded answer: ${url}]` }));
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
             )}
 
             {submitted && (

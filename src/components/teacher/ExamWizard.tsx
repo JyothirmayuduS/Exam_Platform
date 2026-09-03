@@ -11,9 +11,13 @@ export default function ExamWizard({ notify, navigate, onCreate }: { notify: (s:
   const [title, setTitle] = useState("");
   const [enrollmentMode, setEnrollmentMode] = useState<"all" | "manual">("all");
   const [course, setCourse] = useState("");
-  const [batch, setBatch] = useState("");
+  const [department, setDepartment] = useState("CSE");
+  const [section, setSection] = useState("A");
+  const batch = `${department} — Sec ${section}`;
   const [date, setDate] = useState("");
-  const [duration, setDuration] = useState("00:45");
+  const [durationHours, setDurationHours] = useState(0);
+  const [durationMinutes, setDurationMinutes] = useState(45);
+  const totalDurationMinutes = (durationHours * 60) + durationMinutes;
   
   // Step 2: Question Set
   const [questionMode, setQuestionMode] = useState("pool");
@@ -54,7 +58,7 @@ export default function ExamWizard({ notify, navigate, onCreate }: { notify: (s:
       // In a real app we'd keep a ref to the ID once created
     }, 2000);
     return () => clearTimeout(timer);
-  }, [title, course, batch, date, duration, questionMode, proctoringOptions, autoSubmitEnabled]);
+  }, [title, course, department, section, date, durationHours, durationMinutes, questionMode, proctoringOptions, autoSubmitEnabled]);
 
   const handleSaveDraft = async () => {
     setSaved(true);
@@ -69,11 +73,11 @@ export default function ExamWizard({ notify, navigate, onCreate }: { notify: (s:
       batch,
       mode: "lockdown",
       status: "published",
-      duration_minutes: parseInt(duration.split(":")[1]) || 45,
+      duration_minutes: totalDurationMinutes || 45,
       per_student: parseInt(questionCount),
       pool_count: parseInt(questionCount),
       total_marks: parseInt(questionCount) * (markingScheme.includes("2 marks") ? 2 : 1),
-      scheduled_at: date,
+      scheduled_at: date ? new Date(date).toISOString() : null,
       join_link: `vignan-exam://open?exam=${id}`,
       settings: {
         proctoringOptions,
@@ -127,19 +131,137 @@ export default function ExamWizard({ notify, navigate, onCreate }: { notify: (s:
                 <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Data Structures Midterm" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
               </label>
               <div className="mt-5 grid gap-5 sm:grid-cols-2">
-                <label className="block text-[12px] text-ink-soft">Course
+                <label className="block text-[12px] text-ink-soft sm:col-span-2">Course Name
                   <input type="text" value={course} onChange={(e) => setCourse(e.target.value)} placeholder="e.g. Data Structures & Algorithms" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
                 </label>
-                <label className="block text-[12px] text-ink-soft">Batch
-                  <input type="text" value={batch} onChange={(e) => setBatch(e.target.value)} placeholder="e.g. CSE — Sem III · Sec A/B" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
-                </label>
-                <label className="block text-[12px] text-ink-soft">Date & Time
+
+                {/* Divided: Department / Branch */}
+                <div>
+                  <label className="block text-[12px] text-ink-soft">Department / Branch</label>
+                  <div className="mt-1 flex gap-2">
+                    <input
+                      type="text"
+                      value={department}
+                      onChange={(e) => setDepartment(e.target.value)}
+                      placeholder="e.g. CSE"
+                      className="block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] text-ink outline-none focus:border-forest"
+                    />
+                    <select
+                      value={["CSE", "ECE", "IT", "EEE", "MECH", "CIVIL", "AI & DS", "MBA", "MCA"].includes(department) ? department : "other"}
+                      onChange={(e) => { if (e.target.value !== "other") setDepartment(e.target.value); }}
+                      className="border border-line-strong bg-paper px-2 py-2 text-[12px] text-ink outline-none"
+                    >
+                      <option value="CSE">CSE</option>
+                      <option value="ECE">ECE</option>
+                      <option value="IT">IT</option>
+                      <option value="EEE">EEE</option>
+                      <option value="MECH">MECH</option>
+                      <option value="CIVIL">CIVIL</option>
+                      <option value="AI & DS">AI & DS</option>
+                      <option value="MBA">MBA</option>
+                      <option value="MCA">MCA</option>
+                      <option value="other">Custom</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Divided: Section */}
+                <div>
+                  <label className="block text-[12px] text-ink-soft">Section</label>
+                  <div className="mt-1 flex gap-2">
+                    <input
+                      type="text"
+                      value={section}
+                      onChange={(e) => setSection(e.target.value)}
+                      placeholder="e.g. A"
+                      className="block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] text-ink outline-none focus:border-forest"
+                    />
+                    <select
+                      value={["A", "B", "C", "D", "A & B", "All"].includes(section) ? section : "other"}
+                      onChange={(e) => { if (e.target.value !== "other") setSection(e.target.value); }}
+                      className="border border-line-strong bg-paper px-2 py-2 text-[12px] text-ink outline-none"
+                    >
+                      <option value="A">Sec A</option>
+                      <option value="B">Sec B</option>
+                      <option value="C">Sec C</option>
+                      <option value="D">Sec D</option>
+                      <option value="A & B">Sec A & B</option>
+                      <option value="All">All Sections</option>
+                      <option value="other">Custom</option>
+                    </select>
+                  </div>
+                  <span className="mt-1 block text-[10px] text-ink-soft">Target Batch: <strong>{batch}</strong></span>
+                </div>
+                <label className="block text-[12px] text-ink-soft">Date & Start Time
                   <input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
+                  <span className="mt-1 block text-[10px] text-ink-soft">Select the date and scheduled start time.</span>
                 </label>
-                <label className="block text-[12px] text-ink-soft">Duration
-                  <input type="time" value={duration} onChange={(e) => setDuration(e.target.value)} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"/>
-                  <span className="mt-1 block text-[10px] text-ink-soft">Select the exact exam duration (hours : minutes).</span>
-                </label>
+                <div>
+                  <label className="block text-[12px] text-ink-soft">Exam Duration</label>
+                  <div className="mt-1 flex items-center gap-2">
+                    <div className="flex-1">
+                      <div className="relative flex items-center">
+                        <input
+                          type="number"
+                          min="0"
+                          max="12"
+                          value={durationHours}
+                          onChange={(e) => setDurationHours(Math.max(0, parseInt(e.target.value) || 0))}
+                          className="block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"
+                          placeholder="0"
+                        />
+                        <span className="pointer-events-none absolute right-3 text-[11px] text-ink-soft">hrs</span>
+                      </div>
+                    </div>
+                    <span className="font-mono text-ink-soft font-bold">:</span>
+                    <div className="flex-1">
+                      <div className="relative flex items-center">
+                        <input
+                          type="number"
+                          min="0"
+                          max="59"
+                          step="5"
+                          value={durationMinutes}
+                          onChange={(e) => setDurationMinutes(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
+                          className="block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"
+                          placeholder="45"
+                        />
+                        <span className="pointer-events-none absolute right-3 text-[11px] text-ink-soft">mins</span>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Quick Select Presets */}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-mono text-ink-soft">Quick select:</span>
+                    {[
+                      { label: "30m", h: 0, m: 30 },
+                      { label: "45m", h: 0, m: 45 },
+                      { label: "1h", h: 1, m: 0 },
+                      { label: "1.5h", h: 1, m: 30 },
+                      { label: "2h", h: 2, m: 0 },
+                      { label: "3h", h: 3, m: 0 },
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          setDurationHours(preset.h);
+                          setDurationMinutes(preset.m);
+                        }}
+                        className={`px-2 py-0.5 text-[10px] font-mono border transition-colors ${
+                          durationHours === preset.h && durationMinutes === preset.m
+                            ? "border-forest bg-forest text-paper"
+                            : "border-line text-ink-soft hover:border-ink hover:text-ink bg-paper"
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="mt-1.5 block text-[11px] font-medium text-forest">
+                    Total duration: {durationHours > 0 ? `${durationHours} hr${durationHours > 1 ? "s" : ""} ` : ""}{durationMinutes} min ({totalDurationMinutes} minutes)
+                  </span>
+                </div>
               </div>
             </FormStep>
           )}
@@ -240,7 +362,7 @@ export default function ExamWizard({ notify, navigate, onCreate }: { notify: (s:
                 {[
                   ["Exam title", title || "Untitled exam"], 
                   ["Course & batch", `${course} · ${batch}`], 
-                  ["Schedule", `${date} · ${duration}`], 
+                  ["Schedule & Duration", `${date ? new Date(date).toLocaleString() : "Not scheduled"} · ${durationHours > 0 ? `${durationHours} hr${durationHours > 1 ? "s" : ""} ` : ""}${durationMinutes} mins (${totalDurationMinutes}m total)`], 
                   ["Question set", `${questionCount} questions · ${questionMode}`], 
                   ["Security", `${autoSubmitEnabled ? "Auto-submit active" : "Manual submit only"} · ${submitOnTime && submitOnViolationCount ? "Time + violation triggers" : submitOnTime ? "Time trigger" : submitOnViolationCount ? `Violation trigger (${violationLimit})` : "No auto-submit trigger"}`]
                 ].map(([label, value]) => (

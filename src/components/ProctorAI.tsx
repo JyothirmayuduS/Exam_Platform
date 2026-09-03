@@ -18,7 +18,9 @@ export type AIViolationType =
   | "multiple_faces"  // more than one person in frame
   | "gaze_away"       // head turned / eyes off screen
   | "phone_detected"  // mobile phone visible in camera
-  | "audio_detected"; // unexpected voice / ambient sound
+  | "laptop_detected" // external electronic gadgets
+  | "audio_detected"  // unexpected voice / ambient sound
+  | "partial_face";   // face is partially cut off or out of frame
 
 export interface AIViolation {
   type: AIViolationType;
@@ -55,14 +57,16 @@ const COOL: Record<AIViolationType, number> = {
   multiple_faces: 1_500,
   gaze_away:      1_000,
   phone_detected: 1_500,
+  laptop_detected: 2_000,
   audio_detected: 2_000,
+  partial_face:   2_000,
 };
 
-const GAZE_THRESH      = 0.18;  // normalised head-pose deviation to trigger flag
+const GAZE_THRESH      = 0.35;  // normalised head-pose deviation to trigger flag
 const VOICE_RMS        = 0.018; // RMS amplitude above which we flag speaking
 const FACE_MS          = 200;   // face-count detection interval
 const GAZE_MS          = 100;   // gaze estimation interval
-const PHONE_MS         = 400;   // phone detection interval (expensive model)
+const PHONE_MS         = 150;   // phone detection interval (fast model)
 const AUDIO_MS         = 100;   // audio RMS check interval
 
 // CDN base for MediaPipe WASM (pinned minor version for reproducibility)
@@ -276,7 +280,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           objDetRef.current = await ObjectDetector.createFromOptions(vision, {
             baseOptions: { modelAssetPath: MODEL_OBJ_DET, delegate: "GPU" },
             runningMode: "VIDEO",
-            scoreThreshold: 0.45,
+            scoreThreshold: 0.20,
             maxResults: 6,
           });
         }
@@ -314,7 +318,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           const { detections } = faceDetRef.current.detectForVideo(video, now) as { detections: Array<{ categories: Array<{ score: number }> }> };
           const count = detections.length;
           if (count === 0) emit("no_face", "No face visible — camera may be covered", 0.9);
-          else if (count > 1) emit("multiple_faces", `${count} people detected — only 1 student allowed`, 0.87);
+          else if (count > 1) emit("multiple_faces", `${count} people detected — only 1 person allowed`, 0.87);
           setStatus(s => ({ ...s, faceCount: count }));
         } catch { /* model busy */ }
       }
@@ -326,6 +330,19 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           const { faceLandmarks } = landmarkRef.current.detectForVideo(video, now) as { faceLandmarks: Array<Array<{ x: number; y: number; z: number }>> };
           if (faceLandmarks.length > 0) {
             const lms = faceLandmarks[0];
+            
+            // Check if face is near the edges (partially cut off)
+            let outOfBounds = false;
+            for (const p of lms) {
+              if (p.x < 0.02 || p.x > 0.98 || p.y < 0.02 || p.y > 0.98) {
+                outOfBounds = true;
+                break;
+              }
+            }
+            if (outOfBounds) {
+              emit("partial_face", "Face is partially cut off. Please center yourself in frame.", 0.9);
+            }
+
             const { yaw, pitch } = estimateGaze(lms);
             const dir   = gazeDir(yaw, pitch);
             const score = Math.max(0, 1 - (Math.abs(yaw) + Math.abs(pitch)) / (2 * GAZE_THRESH));
@@ -371,12 +388,24 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
               return n.includes("cell phone") || n.includes("mobile") || n === "phone";
             })
           );
-          const found = !!phoneHit;
-          if (found) {
-            const conf = phoneHit!.categories[0].score;
-            emit("phone_detected", `Mobile phone detected (${Math.round(conf * 100)}% confidence)`, conf);
+          if (phoneHit) {
+            const conf = phoneHit.categories[0].score;
+            emit("phone_detected", `Electronic device detected (Phone/Earbuds) (${Math.round(conf * 100)}% conf)`, conf);
+            setStatus(s => ({ ...s, phoneDetected: true }));
+          } else {
+            setStatus(s => ({ ...s, phoneDetected: false }));
           }
-          setStatus(s => ({ ...s, phoneDetected: found }));
+
+          const laptopHit = detections.find(d =>
+            d.categories.some(c => {
+              const n = c.categoryName.toLowerCase();
+              return n.includes("laptop") || n.includes("tv") || n.includes("monitor") || n.includes("tablet") || n.includes("computer") || n.includes("pad") || n.includes("headphone") || n.includes("earphone") || n.includes("buds");
+            })
+          );
+          if (laptopHit) {
+            const conf = laptopHit.categories[0].score;
+            emit("laptop_detected", `Electronic device detected: ${laptopHit.categories[0].categoryName} (${Math.round(conf * 100)}% conf)`, conf);
+          }
         } catch { /* skip */ }
       }
 
@@ -407,12 +436,8 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   useEffect(() => { onStatus?.(status); }, [status, onStatus]);
 
   return (
-    <video
-      ref={videoRef}
-      className="sr-only pointer-events-none"
-      playsInline
-      muted
-      aria-hidden="true"
-    />
+    <div className="pointer-events-none absolute h-0 w-0 opacity-0 overflow-hidden">
+      <video ref={videoRef} playsInline muted />
+    </div>
   );
 }

@@ -9,8 +9,9 @@ type ResultScore = {
 export async function sendExamPublishedEmail(examId: string, studentEmails: string[]) {
   const db = getSupabase();
   if (!db) return { ok: false, error: "offline" };
+  const appBaseUrl = typeof window !== "undefined" ? window.location.origin : undefined;
   const { data, error } = await db.functions.invoke("send-exam-email", {
-    body: { examId, studentEmails },
+    body: { examId, studentEmails, appBaseUrl },
   });
   return error ? { ok: false, error: error.message } : { ok: true, data };
 }

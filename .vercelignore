@@ -1,0 +1,10 @@
+node_modules
+src-tauri
+.git
+.vscode
+playwright-report
+test-results
+supabase
+.env.local
+.env
+dist

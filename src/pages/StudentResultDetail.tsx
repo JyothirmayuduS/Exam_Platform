@@ -210,7 +210,7 @@ export default function StudentResultDetail() {
         <div className="lg:col-span-2 space-y-6">
           <h2 className="font-serif text-xl border-b border-line pb-2">Question Review</h2>
           
-          {EXAM_DETAIL.questions.map((q, i) => {
+          {EXAM_DETAIL.questions.map((q: any, i: number) => {
             const isCorrect = q.marksAwarded === q.maxMarks;
             const isPartial = q.marksAwarded > 0 && q.marksAwarded < q.maxMarks;
             const borderCol = isCorrect ? 'border-success' : isPartial ? 'border-amber' : 'border-alert';
@@ -232,7 +232,7 @@ export default function StudentResultDetail() {
                 
                 {q.type === 'mcq' && q.options && (
                   <div className="space-y-2 mb-4">
-                    {q.options.map((opt, optIdx) => {
+                    {q.options.map((opt: any, optIdx: number) => {
                       const isStudentAns = q.studentAnswer === optIdx;
                       const isCorrectAns = q.correctAnswer === optIdx;
                       

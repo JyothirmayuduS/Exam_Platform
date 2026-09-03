@@ -52,6 +52,7 @@ function toUIAttempt(row: LiveAttempt, examName: string = "Data Structures & Alg
     network: "Stable", // Hardcoded for now 
     autoSaveAt: timeAgo(row.auto_saved_at),
     flags: [], // We'd need to query violations for this
+    score: row.score,
   };
 }
 

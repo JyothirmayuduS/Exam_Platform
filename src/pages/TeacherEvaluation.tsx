@@ -5,6 +5,8 @@ import { loadExamBundle, updateAttemptScore } from "../lib/examApi";
 import { type Attempt, type Flag } from "../data/examSession";
 import useLiveAttempts from "../hooks/useLiveAttempts";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
+import ProctorAI from "../components/ProctorAI";
+import { getTeacherNav } from "./TeacherDashboard";
 
 type QType = "MCQ" | "MSQ" | "TrueFalse" | "Numerical" | "Subjective" | "Coding";
 type RubricItem = { id: string; label: string; detail: string; marks: number };
@@ -73,10 +75,35 @@ function buildPaper(questions: any[], answers: Record<string, any>): Question[] 
   });
 }
 
+const key = (cid: string, qid: string, item?: string) => (item ? `${cid}:${qid}:${item}` : `${cid}:${qid}`);
+const isAuto = (q: Question) => q.type !== "Subjective";
+function setsEqual(a: number[] = [], b: number[] = []) {
+  const x = [...a].sort((m, n) => m - n); const y = [...b].sort((m, n) => m - n);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+function codingPassed(q: Question) { const t = q.tests ?? []; return { passed: t.filter((c) => c.passed).length, total: t.length }; }
+function autoScore(q: Question): number {
+  switch (q.type) {
+    case "MCQ":
+    case "TrueFalse": return q.chosen != null && q.chosen === q.correct ? q.marks : 0;
+    case "MSQ": return setsEqual(q.chosenSet, q.correctSet) ? q.marks : 0;
+    case "Numerical": return (q.response ?? "").trim().toLowerCase() === (q.expected ?? "").trim().toLowerCase() ? q.marks : 0;
+    case "Coding": { const { passed, total } = codingPassed(q); return total ? Math.round((passed / total) * q.marks) : 0; }
+    default: return 0;
+  }
+}
+const typeLabel = (t: QType) => (t === "TrueFalse" ? "True / False" : t === "MSQ" ? "Multi-select" : t);
+const paperMax = (p: Question[]) => p.reduce((t, q) => t + q.marks, 0);
+function fmt(s: number) { const m = Math.floor(s / 60).toString().padStart(2, "0"); const sec = (s % 60).toString().padStart(2, "0"); return `${m}:${sec}`; }
+
 export default function TeacherEvaluation({ notify }: { notify: (message: string) => void }) {
   const { profile } = useCurrentProfile();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: liveAttempts = [] } = useLiveAttempts("EXAM-2026-014");
+
+  const liveAttemptsCount = liveAttempts.filter((a) => a.state !== "Submitted").length;
+  const submittedAttemptsCount = liveAttempts.filter((a) => a.state === "Submitted").length;
+  const nav = getTeacherNav(liveAttemptsCount, submittedAttemptsCount, 0);
 
   const { data: examBundle } = useQuery({
     queryKey: ["examBundle", "EXAM-2026-014"],
@@ -114,6 +141,8 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
   const [subject, setSubject] = useState("All exams");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("Submission time");
+  const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
+  const [showBulkDelegateModal, setShowBulkDelegateModal] = useState(false);
 
   const subjects = useMemo(() => ["All exams", ...Array.from(new Set(roster.map((c) => c.exam)))], [roster]);
 
@@ -171,18 +200,73 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     setRoster((cur) => cur.map((c) => (c.id === cid ? { ...c, status: "Graded", awarded } : c)));
   };
 
-  return <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav}>
+  const [visibility, setVisibility] = useState<"OFF" | "ON">("OFF");
+  const [saving, setSaving] = useState(false);
+  const handleSave = () => {
+    setSaving(true);
+    setTimeout(() => {
+      setSaving(false);
+      notify("Evaluation saved");
+    }, 1000);
+  };
+
+  const handleBulkGrade = async () => {
+    setSaving(true);
+    for (const cid of selectedCandidates) {
+      const candidate = roster.find(c => c.id === cid);
+      if (candidate) {
+        const score = candidate.paper.reduce((s, q) => s + autoScore(q), 0);
+        await updateAttemptScore(cid, score);
+      }
+    }
+    setRoster((cur) => cur.map((c) => {
+      if (!selectedCandidates.includes(c.id)) return c;
+      const score = c.paper.reduce((s, q) => s + autoScore(q), 0);
+      return { ...c, status: "Graded", awarded: score };
+    }));
+    setSaving(false);
+    notify(`Bulk graded ${selectedCandidates.length} candidates`);
+    setSelectedCandidates([]);
+  };
+
+  const handleExportCSV = () => {
+    const header = "Candidate Name,Roll Number,Exam,Status,Score,Flags\n";
+    const rows = selectedCandidates.map(cid => {
+      const c = roster.find(x => x.id === cid);
+      if (!c) return "";
+      return `"${c.name}","${c.roll}","${c.exam}","${c.status}","${c.awarded ?? 0}","${c.flags.length}"`;
+    }).join("\n");
+    
+    const blob = new Blob([header + rows], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "candidates_export.csv";
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    
+    notify(`Exported ${selectedCandidates.length} candidates to CSV`);
+    setSelectedCandidates([]);
+  };
+
+  const [showGuide, setShowGuide] = useState(false);
+
+  return <>
     <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
       <div>
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Faculty console / Evaluate</p>
         <h1 className="mt-2 font-serif text-3xl font-semibold">Evaluate submitted papers</h1>
         <p className="mt-2 max-w-2xl text-[13px] text-ink-soft">Only submitted papers appear here — live attempts are tracked in Submissions. Objective and coding answers are scored automatically from the answer key; theory answers are reviewed by you. Every grading session is camera-monitored.</p>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <button onClick={() => notify("Bulk feedback modal opened")} className="border border-line-strong bg-paper px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Bulk feedback</button>
-        <button onClick={() => notify("Answers visibility toggled")} className="border border-line-strong bg-paper px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Student visibility: OFF</button>
-        <button onClick={() => notify("Grading guide opened")} className="border border-line-strong bg-paper px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Grading guide</button>
-        <button onClick={() => notify("Grading progress saved")} className="border border-forest bg-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save progress</button>
+      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+        <div className="flex divide-x divide-line border border-line-strong bg-paper">
+          <button onClick={() => setShowGuide(true)} className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:bg-paper-raised hover:text-ink">Grading guide</button>
+        </div>
+        <button disabled={saving} onClick={handleSave} className="border border-forest bg-forest px-6 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper transition-colors hover:bg-forest-light disabled:cursor-wait disabled:opacity-80">
+          {saving ? "Saving..." : "Save progress"}
+        </button>
       </div>
     </div>
 
@@ -209,6 +293,8 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
         {(["All", "To grade", "In review", "Graded"] as const).map((s) => <button key={s} onClick={() => setStatusFilter(s)} className={`border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${statusFilter === s ? "border-forest bg-forest text-paper" : "border-line-strong text-ink-soft hover:border-forest hover:text-ink"}`}>{s} · {counts[s]}</button>)}
         <span className="mx-1 hidden h-6 w-px bg-line sm:block" />
         <button onClick={() => setFlaggedOnly((v) => !v)} className={`flex items-center gap-2 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${flaggedOnly ? "border-alert bg-alert/5 text-alert" : "border-line-strong text-ink-soft hover:border-alert hover:text-alert"}`}><span className={`h-1.5 w-1.5 ${flaggedOnly ? "bg-alert" : "bg-ink-soft"}`} /> Flagged only</button>
+        <span className="mx-1 hidden h-6 w-px bg-line sm:block" />
+        <button onClick={() => setShowBulkDelegateModal(true)} className="border border-line-strong px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest transition-colors">Assign Delegate</button>
       </div>
       <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_190px_190px]">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search candidate name or roll number" className="border border-line-strong bg-paper px-3 py-2.5 text-[13px] outline-none focus:border-forest" />
@@ -220,16 +306,27 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     </section>
 
     <section className="mt-6 border border-line bg-paper">
-      <div className="flex items-center justify-between border-b border-line bg-paper-raised px-5 py-3">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Submitted candidates</p>
+      <div className="flex items-center justify-between border-b border-line bg-paper-raised px-5 py-3 min-h-[48px]">
+        {selectedCandidates.length > 0 ? (
+          <div className="flex items-center gap-4">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-forest font-bold">{selectedCandidates.length} candidate{selectedCandidates.length > 1 ? "s" : ""} selected</p>
+            <div className="flex gap-2">
+              <button disabled={saving} onClick={handleBulkGrade} className="border border-forest bg-forest/5 px-3 py-1 font-mono text-[9px] uppercase tracking-wider text-forest hover:bg-forest hover:text-paper transition-colors disabled:opacity-50">Bulk Grade</button>
+              <button disabled={saving} onClick={handleExportCSV} className="border border-line-strong bg-paper px-3 py-1 font-mono text-[9px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest transition-colors disabled:opacity-50">Export CSV</button>
+            </div>
+          </div>
+        ) : (
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Submitted candidates</p>
+        )}
         <span className="font-mono text-[10px] text-ink-soft">Showing {visible.length} of {total}{flaggedOnly ? " · flagged" : ""}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[820px] text-left text-[13px]">
-          <thead><tr className="border-b border-line font-mono text-[10px] uppercase tracking-wider text-ink-soft"><th className="px-5 py-3">Candidate</th><th className="px-5 py-3">Exam</th><th className="px-5 py-3">Submitted</th><th className="px-5 py-3">Paper</th><th className="px-5 py-3">Proctoring</th><th className="px-5 py-3">Status</th><th className="px-5 py-3" /></tr></thead>
+          <thead><tr className="border-b border-line font-mono text-[10px] uppercase tracking-wider text-ink-soft"><th className="px-5 py-3 w-10"><input type="checkbox" className="accent-forest w-3.5 h-3.5 cursor-pointer" checked={visible.length > 0 && selectedCandidates.length === visible.length} onChange={() => { if (visible.length > 0 && selectedCandidates.length === visible.length) { setSelectedCandidates([]); } else { setSelectedCandidates(visible.map(c => c.id)); } }} /></th><th className="px-5 py-3">Candidate</th><th className="px-5 py-3">Exam</th><th className="px-5 py-3">Submitted</th><th className="px-5 py-3">Paper</th><th className="px-5 py-3">Proctoring</th><th className="px-5 py-3">Status</th><th className="px-5 py-3" /></tr></thead>
           <tbody>
             {visible.map((c) => (
-              <tr key={c.id} className={`border-b border-line last:border-0 ${c.flags.length ? "bg-alert/[0.03]" : "hover:bg-paper-raised"}`}>
+              <tr key={c.id} className={`border-b border-line last:border-0 ${selectedCandidates.includes(c.id) ? "bg-forest/[0.03]" : c.flags.length ? "bg-alert/[0.03]" : "hover:bg-paper-raised"}`}>
+                <td className="px-5 py-4"><input type="checkbox" className="accent-forest w-3.5 h-3.5 cursor-pointer" checked={selectedCandidates.includes(c.id)} onChange={() => setSelectedCandidates(prev => prev.includes(c.id) ? prev.filter(id => id !== c.id) : [...prev, c.id])} /></td>
                 <td className="px-5 py-4"><button onClick={() => openReview(c.id)} className="text-left font-medium hover:text-forest hover:underline">{c.name}</button><p className="mt-0.5 font-mono text-[10px] text-ink-soft">{c.roll}</p></td>
                 <td className="px-5 py-4 text-[12px] text-ink-soft">{c.exam}</td>
                 <td className="px-5 py-4 text-[12px] text-ink-soft">{c.submittedAgo}</td>
@@ -245,7 +342,52 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
       {visible.length === 0 && <div className="p-10 text-center"><p className="font-serif text-lg">No candidates match these filters</p><p className="mt-1 text-[12px] text-ink-soft">Try clearing the search or switching the status tab.</p></div>}
     </section>
 
-    {active && <ReviewSession candidate={active} queue={gradeQueue} onClose={closeReview} onNavigate={navigateReview} onFinalize={finalizeGrade} notify={notify} />}
+    {active && <ReviewSession candidate={active} queue={gradeQueue} onClose={closeReview} onNavigate={navigateReview} onFinalize={finalizeGrade} notify={notify} profileName={profile?.full_name ?? "Faculty"} />}
+
+    {showBulkDelegateModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-paper/80 backdrop-blur-sm">
+        <div className="w-full max-w-md border border-line-strong bg-paper p-6 shadow-2xl animate-fade-in">
+          <h2 className="font-serif text-xl font-semibold">Assign Delegate</h2>
+          <p className="mt-2 text-[13px] text-ink-soft">Select a faculty member to cross-check the marks for the {selectedCandidates.length} selected candidates.</p>
+          <div className="mt-6 flex flex-col gap-3">
+            {["Prof. M. Reddy (HOD)", "Dr. K. Srinivas", "Prof. Anjali Sharma", "Dr. Ramesh Kumar"].map((p, i) => (
+              <label key={i} className="flex items-center gap-3 border border-line p-3 hover:bg-forest/5 cursor-pointer transition-colors">
+                <input type="radio" name="bulk_delegate" className="accent-forest w-4 h-4" />
+                <span className="font-mono text-[11px] uppercase tracking-wider text-ink">{p}</span>
+              </label>
+            ))}
+          </div>
+          <div className="mt-8 flex justify-end gap-3">
+            <button onClick={() => setShowBulkDelegateModal(false)} className="px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">Cancel</button>
+            <button onClick={() => { setShowBulkDelegateModal(false); setSelectedCandidates([]); notify(`Assigned delegate for ${selectedCandidates.length} candidates successfully`); }} className="bg-forest px-6 py-2 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest/90">Confirm Assignment</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showGuide && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm">
+        <div className="w-full max-w-md border border-line bg-paper p-6 shadow-xl">
+          <h2 className="font-serif text-2xl font-semibold">Grading Guide</h2>
+          <p className="mt-2 text-[13px] text-ink-soft">Standard rubric for subjective evaluation</p>
+          <div className="mt-5 space-y-4">
+            <div className="border border-line p-3">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Exceptional (90-100%)</p>
+              <p className="mt-1 text-[13px]">Demonstrates deep understanding, accurate terminology, and complete logical flow. No conceptual errors.</p>
+            </div>
+            <div className="border border-line p-3">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-amber">Proficient (70-89%)</p>
+              <p className="mt-1 text-[13px]">Good understanding but may miss minor edge cases. Logic is generally sound.</p>
+            </div>
+            <div className="border border-line p-3">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-alert">Needs Work (&lt;70%)</p>
+              <p className="mt-1 text-[13px]">Significant conceptual misunderstandings. Core components of the answer are missing or incorrect.</p>
+            </div>
+          </div>
+          <button onClick={() => setShowGuide(false)} className="mt-6 w-full border border-line-strong bg-paper py-2.5 font-mono text-[10px] uppercase tracking-wider hover:border-forest hover:text-forest">Close Guide</button>
+        </div>
+      </div>
+    )}
   </>;
 }
 
@@ -266,6 +408,7 @@ function useEvaluatorCamera() {
   const [state, setState] = useState<CamState>("connecting");
   const [seconds, setSeconds] = useState(0);
   const [attempt, setAttempt] = useState(0);
+  const [stream, setStream] = useState<MediaStream | null>(null);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -278,6 +421,7 @@ function useEvaluatorCamera() {
         if (cancelled) { s.getTracks().forEach((t) => t.stop()); return; }
         stream = s;
         setState("live");
+        setStream(s);
         const v = videoRef.current;
         if (v) { v.srcObject = s; v.play().catch(() => undefined); }
       })
@@ -291,19 +435,20 @@ function useEvaluatorCamera() {
     return () => window.clearInterval(id);
   }, [state]);
 
-  return { videoRef, state, seconds, retry: () => { setSeconds(0); setAttempt((x) => x + 1); } };
+  return { videoRef, state, seconds, stream, retry: () => { setSeconds(0); setAttempt((x) => x + 1); } };
 }
 
-function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, notify }: {
+function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, notify, profileName }: {
   candidate: Candidate; queue: Candidate[];
   onClose: () => void; onNavigate: (cid: string) => void;
-  onFinalize: (cid: string, awarded: number) => void; notify: (m: string) => void;
+  onFinalize: (cid: string, awarded: number) => void; notify: (m: string) => void; profileName: string
 }) {
   const cam = useEvaluatorCamera();
   const [manualScores, setManualScores] = useState<Record<string, number>>({});
   const [rubricChecks, setRubricChecks] = useState<Record<string, boolean>>({});
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [pipMin, setPipMin] = useState(false);
+  const [showDelegateModal, setShowDelegateModal] = useState(false);
 
   const cid = candidate.id;
   const paper = candidate.paper;
@@ -367,12 +512,12 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
         </main>
 
         <aside className="w-full border-t border-line bg-paper-raised xl:w-[340px] xl:shrink-0 xl:overflow-y-auto xl:border-l xl:border-t-0">
-          <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} onFinish={() => finish(false)} onFinishNext={() => finish(true)} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
+          <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} onFinish={() => finish(false)} onFinishNext={() => finish(true)} onDelegate={() => setShowDelegateModal(true)} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
           <CandidateFacts candidate={candidate} />
         </aside>
       </div>
 
-      <CameraPip cam={cam} minimized={pipMin} onToggle={() => setPipMin((v) => !v)} />
+      <CameraPip cam={cam} minimized={pipMin} onToggle={() => setPipMin((v) => !v)} profileName={profileName} notify={notify} />
     </div>
   );
 }
@@ -388,8 +533,9 @@ function RecPill({ state, seconds }: { state: CamState; seconds: number }) {
   );
 }
 
-function CameraPip({ cam, minimized, onToggle }: { cam: ReturnType<typeof useEvaluatorCamera>; minimized: boolean; onToggle: () => void }) {
-  const { videoRef, state, seconds } = cam;
+function CameraPip({ cam, minimized, onToggle, profileName, notify }: { cam: ReturnType<typeof useEvaluatorCamera>; minimized: boolean; onToggle: () => void; profileName: string; notify: (m: string) => void }) {
+  const { videoRef, state, seconds, stream } = cam;
+  const [faceWarning, setFaceWarning] = useState(false);
   const showVideo = state === "connecting" || state === "live";
   const status = state === "live" ? `Rec ${fmt(seconds)}` : state === "connecting" ? "Connecting" : state === "denied" ? "Blocked" : "Camera off";
   return (
@@ -403,7 +549,30 @@ function CameraPip({ cam, minimized, onToggle }: { cam: ReturnType<typeof useEva
       </div>
       <div className={minimized ? "hidden" : "relative aspect-video"}>
         {showVideo ? (
-          <video ref={videoRef} autoPlay playsInline muted className="h-full w-full -scale-x-100 object-cover" />
+          <>
+            <video ref={videoRef} autoPlay playsInline muted className={`h-full w-full -scale-x-100 object-cover ${faceWarning ? 'opacity-30' : ''}`} />
+            {stream && (
+              <ProctorAI
+                cameraStream={stream}
+                active={state === "live"}
+                onViolation={(v) => {
+                  if (v.type === "no_face" || v.type === "partial_face") setFaceWarning(true);
+                  if (v.type !== "gaze_away") {
+                    notify(`AI Alert: ${v.label}`);
+                  }
+                }}
+                onStatus={(s) => {
+                  if (s.faceCount > 0) setFaceWarning(false);
+                }}
+              />
+            )}
+            {faceWarning && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-alert/90 p-3 text-center text-paper">
+                <p className="font-serif text-[14px] font-medium leading-tight text-white">Face not detected</p>
+                <p className="mt-1 font-mono text-[9px] uppercase tracking-wider text-paper/80">Please stay in frame</p>
+              </div>
+            )}
+          </>
         ) : (
           <div className="flex h-full flex-col items-center justify-center px-3 text-center text-paper">
             <span className="flex h-8 w-8 items-center justify-center rounded-full border border-paper/40 font-serif text-[13px]">V</span>
@@ -412,7 +581,7 @@ function CameraPip({ cam, minimized, onToggle }: { cam: ReturnType<typeof useEva
           </div>
         )}
         {state === "connecting" && <div className="absolute inset-0 flex items-center justify-center bg-[#1f3027]/70 font-mono text-[9px] uppercase tracking-wider text-paper/80">Starting camera…</div>}
-        <span className="absolute bottom-1.5 right-1.5 bg-ink/70 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper">Evaluator · {profile?.full_name ?? "Faculty"}</span>
+        <span className="absolute bottom-1.5 right-1.5 bg-ink/70 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper">Evaluator · {profileName}</span>
       </div>
     </div>
   );
@@ -588,13 +757,15 @@ function ManualAnswer({ q, cid, score, rubricChecks, feedback, setScore, toggleI
           <button onClick={() => alert("Recording voice note...")} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Voice Comment</button>
         </div>
       </div>
+      
+
     </div>
   );
 }
 
-function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount, onFinish, onFinishNext, hasNext, nextName }: {
+function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount, onFinish, onFinishNext, onDelegate, hasNext, nextName }: {
   awarded: number; max: number; autoTotal: number; manualTotal: number; gradedManual: number; manualCount: number;
-  onFinish: () => void; onFinishNext: () => void; hasNext: boolean; nextName?: string;
+  onFinish: () => void; onFinishNext: () => void; onDelegate: () => void; hasNext: boolean; nextName?: string;
 }) {
   const done = manualCount === 0 || gradedManual === manualCount;
   return (
@@ -610,6 +781,7 @@ function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manu
       <div className="mt-4 grid gap-2">
         {hasNext && <button onClick={onFinishNext} className="border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save &amp; next → {nextName}</button>}
         <button onClick={onFinish} className="border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5">{hasNext ? "Save & close" : "Save & finish"}</button>
+        <button onClick={onDelegate} className="border border-line-strong px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Delegate for cross-check</button>
         <button onClick={() => alert("Flagged for moderation")} className="border border-alert/50 text-alert bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10">Flag for Moderation</button>
       </div>
     </div>

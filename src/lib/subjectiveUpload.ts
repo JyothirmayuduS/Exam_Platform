@@ -32,9 +32,16 @@ export async function uploadSubjectiveAnswer(opts: {
 
   try {
     onProgress?.(30);
+
+    // WORKAROUND: iOS Safari WebKit bug causes fetch() to hang indefinitely if the body is a Blob
+    // created directly from canvas.toBlob(). Converting it to an ArrayBuffer first breaks the reference
+    // and allows the Supabase fetch request to complete successfully!
+    const buffer = await blob.arrayBuffer();
+    const safeBlob = new Blob([buffer], { type: "image/jpeg" });
+
     const { data, error } = await supabase.storage
       .from(bucketName)
-      .upload(path, blob, {
+      .upload(path, safeBlob, {
         contentType: "image/jpeg",
         upsert: true,
       });
