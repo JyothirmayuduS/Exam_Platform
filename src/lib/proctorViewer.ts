@@ -59,9 +59,11 @@ export async function startProctorViewing(opts: {
   onState?: (s: ViewerState) => void;
   onFeeds?: (feeds: RemoteFeed[]) => void;
 }): Promise<ViewerHandle | null> {
-  if (!livekitConfigured) return null;
+  if (!livekitConfigured) { console.warn("[proctor-viewer] livekitConfigured=false -- set VITE_LIVEKIT_URL"); return null; }
+  console.debug("[proctor-viewer] fetching token for room:", opts.room);
   const creds = await fetchViewerToken(opts.room);
-  if (!creds) return null;
+  if (!creds) { console.error("[proctor-viewer] token fetch returned null"); return null; }
+  console.debug("[proctor-viewer] token received, identity:", creds.identity, "url:", creds.url);
 
   const room = new Room({ adaptiveStream: true, dynacast: true });
   const feeds = new Map<string, RemoteFeed>();
@@ -78,9 +80,12 @@ export async function startProctorViewing(opts: {
   room.on(RoomEvent.Reconnected, () => opts.onState?.("connected"));
   room.on(RoomEvent.Disconnected, () => opts.onState?.("disconnected"));
 
+  room.on(RoomEvent.ParticipantConnected, (p: any) => console.debug("[proctor-viewer] participant joined:", p?.identity));
+
   // A remote track became available — attach it to a fresh media element and
   // route it to the camera or screen slot depending on its source.
   room.on(RoomEvent.TrackSubscribed, (track: any, _pub: any, participant: any) => {
+    console.debug("[proctor-viewer] track subscribed:", track?.kind, "source:", track?.source, "from:", participant?.identity);
     const feed = ensure(String(participant?.identity ?? "unknown"));
     if (track?.kind === "video") {
       const el = track.attach() as HTMLVideoElement;
@@ -115,6 +120,7 @@ export async function startProctorViewing(opts: {
 
   try {
     await room.connect(creds.url, creds.token);
+    console.debug("[proctor-viewer] connected to room:", opts.room);
     opts.onState?.("connected");
   } catch (err) {
     void room.disconnect();
@@ -122,7 +128,7 @@ export async function startProctorViewing(opts: {
     return null;
   }
 
-  return { room, stop: () => { void room.disconnect(); } };
+  return { room, stop: () => { console.debug("[proctor-viewer] stopping"); void room.disconnect(); } };
 }
 
 /** Extract a display roll from a LiveKit identity like `student:<uuid>`. */
