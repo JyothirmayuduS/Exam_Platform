@@ -32,6 +32,8 @@ export default function TeacherProctoring() {
   const [students, setStudents] = useState<Student[]>([]);
   const [live, setLive] = useState(false);
   const [feeds, setFeeds] = useState<RemoteFeed[]>([]);
+  const [viewerState, setViewerState] = useState<"idle" | "connecting" | "connected" | "reconnecting" | "disconnected" | "error">("idle");
+  const [viewerError, setViewerError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Student | null>(null);
   const [view, setView] = useState<"wall" | "activity" | "chat">("wall");
   const [filter, setFilter] = useState("All candidates");
@@ -76,18 +78,34 @@ export default function TeacherProctoring() {
   useEffect(() => {
     if (!supabaseConfigured || !selectedExamId) {
       setFeeds([]);
+      setViewerState("idle");
       return;
     }
+    setViewerState("connecting");
+    setViewerError(null);
     let active = true;
     let viewer: Awaited<ReturnType<typeof startProctorViewing>> | null = null;
     (async () => {
-      viewer = await startProctorViewing({
-        room: selectedExamId,
-        onState: (state) => { /* optional: could expose connection state */ },
-        onFeeds: (feeds: RemoteFeed[]) => {
-          if (active) setFeeds(feeds);
-        },
-      });
+      try {
+        viewer = await startProctorViewing({
+          room: selectedExamId,
+          onState: (state) => {
+            if (!active) return;
+            console.debug("[proctor-viewer] state:", state);
+            setViewerState(state);
+          },
+          onFeeds: (feeds: RemoteFeed[]) => {
+            if (!active) return;
+            console.debug("[proctor-viewer] feeds:", feeds.length, feeds.map(f => ({ identity: f.identity, hasCamera: !!f.cameraTrack, hasScreen: !!f.screenTrack })));
+            setFeeds(feeds);
+          },
+        });
+        if (!viewer) {
+          if (active) { setViewerState("error"); setViewerError("LiveKit viewer could not start - check console."); }
+        }
+      } catch (err: any) {
+        if (active) { setViewerState("error"); setViewerError(err?.message ?? String(err)); }
+      }
     })();
     return () => {
       active = false;
@@ -151,7 +169,17 @@ export default function TeacherProctoring() {
         <span className="border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert">● Session live</span>
       </div>
     </div>
-    <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Active candidates" value={activeCount.toString()} sub="connected to session"/><Stat label="Clear" value={clearCount.toString()} sub="No active flags"/><Stat label="Needs attention" value={flaggedCount.toString()} sub="Active violations" alert={flaggedCount > 0} /><Stat label="Live Feeds" value={feedCount.toString()} sub="Camera / screen connected"/></div>
+    <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <Stat label="Active candidates" value={activeCount.toString()} sub="connected to session"/>
+      <Stat label="Clear" value={clearCount.toString()} sub="No active flags"/>
+      <Stat label="Needs attention" value={flaggedCount.toString()} sub="Active violations" alert={flaggedCount > 0} />
+      <Stat label="Live Feeds" value={feedCount.toString()} sub={viewerState === "connected" ? "LiveKit connected" : viewerState === "connecting" ? "Connecting to LiveKit..." : viewerState === "idle" ? "Not connected" : viewerState === "error" ? (viewerError ?? "Error") : viewerState === "disconnected" ? "Disconnected" : viewerState === "reconnecting" ? "Reconnecting..." : "Unknown"} alert={viewerState === "error" || viewerState === "disconnected"}/>
+    </div>
+    {viewerState === "error" && viewerError && (
+      <div className="mt-4 border border-alert/40 bg-alert/5 px-4 py-3 font-mono text-[11px] text-alert">
+        <strong>LiveKit Error:</strong> {viewerError}
+      </div>
+    )}
     <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat (2)</button></div><div className="flex items-center gap-3"><span className={`font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}>● {live ? `${feedCount} feed(s) · DB live` : "Demo mode"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
     {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChat />}
     <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
