@@ -1,5 +1,4 @@
 import SubjectiveQRBlock from "./SubjectiveQRBlock";
-import DirectImageUpload from "./DirectImageUpload";
 import { useState, useRef } from "react";
 import { getSupabase } from "../../lib/supabase";
 import { compressImage } from "../../lib/subjectiveUpload";
@@ -149,18 +148,6 @@ export default function QuestionDisplay({
                   />
                 </div>
               )}
-
-              {/* Direct image upload from desktop */}
-              <DirectImageUpload
-                examId={examId}
-                attemptId={attemptId}
-                studentId={studentId}
-                questionId={String(question.id)}
-                optionNumber={question.subjective_mode === "both" ? 3 : undefined}
-                onUploaded={(url) => {
-                  onSelectOption(`[Uploaded answer: ${url}]` as unknown as number);
-                }}
-              />
             </>
           )}
         </div>
