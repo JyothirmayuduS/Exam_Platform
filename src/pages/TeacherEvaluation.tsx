@@ -13,33 +13,14 @@ import { getTeacherNav } from "./TeacherDashboard";
 import { getSupabase } from "../lib/supabase";
 
 type QType = "MCQ" | "MSQ" | "TrueFalse" | "Numerical" | "Subjective" | "Coding";
-type RubricItem = { id: string; label: string; detail: string; marks: number };
-type TestCase = { name: string; passed: boolean };
 type Question = {
   id: string; no: number; type: QType; prompt: string; marks: number;
   options?: string[]; correct?: number; chosen?: number | null;
   correctSet?: number[]; chosenSet?: number[];
-  expected?: string; response?: string; language?: string;
-  tests?: TestCase[]; rubric?: RubricItem[];
+  expected?: string; response?: string;
 };
 type Status = "To grade" | "In review" | "Graded";
 type Candidate = Attempt & { order: number; status: Status; paper: Question[]; awarded?: number };
-
-const SUBJECTIVE_RUBRIC: RubricItem[] = [
-  { id: "s1", label: "Explains starvation", detail: "Identifies why a low-priority process may wait indefinitely", marks: 4 },
-  { id: "s2", label: "Explains prevention", detail: "Describes aging or an equivalent fairness mechanism", marks: 4 },
-  { id: "s3", label: "Clarity & accuracy", detail: "Uses precise scheduling terminology", marks: 2 },
-];
-const DBMS_RUBRIC: RubricItem[] = [
-  { id: "d1", label: "Defines the anomaly", detail: "Correctly explains the update / insert / delete anomaly", marks: 4 },
-  { id: "d2", label: "Applies normalization", detail: "Shows decomposition to the correct normal form", marks: 4 },
-  { id: "d3", label: "Clarity & accuracy", detail: "Uses precise relational terminology", marks: 2 },
-];
-
-const CODE_TESTS = ["Empty queue", "Single element", "FIFO ordering", "Interleaved enqueue / dequeue", "Large-input stress"];
-function codingTests(passed: number): TestCase[] {
-  return CODE_TESTS.map((name, i) => ({ name, passed: i < passed }));
-}
 
 // Build a gradeable paper for ONE attempt: its own question snapshot (falling
 // back to the full pool for legacy attempts), with student answers re-mapped
@@ -72,14 +53,10 @@ function buildPaper(questions: any[], answers: Record<string, any>, paper?: unkn
     } else if (qType === "Numerical") {
       base.expected = q.answer || "";
       base.response = typeof ans === "string" ? ans : "";
-    } else if (qType === "Subjective") {
+    } else if (qType === "Subjective" || qType === "Coding") {
+      // The student's real text / uploaded-image answer. There is no hidden
+      // test-runner or stored rubric, so grading is manual review below.
       base.response = typeof ans === "string" ? ans : "";
-      // Mock rubric for now
-      base.rubric = SUBJECTIVE_RUBRIC;
-    } else if (qType === "Coding") {
-      base.language = "python";
-      base.response = typeof ans === "string" ? ans : "";
-      base.tests = codingTests(0); // Mock tests for now
     }
     
     return base as Question;
@@ -87,19 +64,19 @@ function buildPaper(questions: any[], answers: Record<string, any>, paper?: unkn
 }
 
 const key = (cid: string, qid: string, item?: string) => (item ? `${cid}:${qid}:${item}` : `${cid}:${qid}`);
-const isAuto = (q: Question) => q.type !== "Subjective";
+// Objective questions (MCQ / MSQ / True-False / Numerical) score automatically
+// against the answer key. Subjective and Coding answers are reviewed manually.
+const isAuto = (q: Question) => q.type !== "Subjective" && q.type !== "Coding";
 function setsEqual(a: number[] = [], b: number[] = []) {
   const x = [...a].sort((m, n) => m - n); const y = [...b].sort((m, n) => m - n);
   return x.length === y.length && x.every((v, i) => v === y[i]);
 }
-function codingPassed(q: Question) { const t = q.tests ?? []; return { passed: t.filter((c) => c.passed).length, total: t.length }; }
 function autoScore(q: Question): number {
   switch (q.type) {
     case "MCQ":
     case "TrueFalse": return q.chosen != null && q.chosen === q.correct ? q.marks : 0;
     case "MSQ": return setsEqual(q.chosenSet, q.correctSet) ? q.marks : 0;
     case "Numerical": return (q.response ?? "").trim().toLowerCase() === (q.expected ?? "").trim().toLowerCase() ? q.marks : 0;
-    case "Coding": { const { passed, total } = codingPassed(q); return total ? Math.round((passed / total) * q.marks) : 0; }
     default: return 0;
   }
 }
@@ -252,20 +229,24 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
 
   const handleBulkGrade = async () => {
     setSaving(true);
-    for (const cid of selectedCandidates) {
-      const candidate = roster.find(c => c.id === cid);
-      if (candidate) {
-        const score = candidate.paper.reduce((s, q) => s + autoScore(q), 0);
-        await updateAttemptScore(cid, score);
-      }
+    const purelyObjective = selectedCandidates.filter((cid) => {
+      const c = roster.find((x) => x.id === cid);
+      return c && c.paper.every((q) => isAuto(q));
+    });
+    const skipped = selectedCandidates.length - purelyObjective.length;
+    for (const cid of purelyObjective) {
+      const candidate = roster.find((c) => c.id === cid);
+      if (!candidate) continue;
+      const score = candidate.paper.reduce((s, q) => s + autoScore(q), 0);
+      await updateAttemptScore(cid, score);
     }
     setRoster((cur) => cur.map((c) => {
-      if (!selectedCandidates.includes(c.id)) return c;
+      if (!purelyObjective.includes(c.id)) return c;
       const score = c.paper.reduce((s, q) => s + autoScore(q), 0);
       return { ...c, status: "Graded", awarded: score };
     }));
     setSaving(false);
-    notify(`Bulk graded ${selectedCandidates.length} candidates`);
+    notify(skipped > 0 ? `Bulk graded ${purelyObjective.length} objective paper(s); ${skipped} skipped — they contain theory/code answers that need your review` : `Bulk graded ${purelyObjective.length} candidates`);
     setSelectedCandidates([]);
   };
 
@@ -298,7 +279,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
       <div>
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Faculty console / Evaluate</p>
         <h1 className="mt-2 font-serif text-3xl font-semibold">Evaluate submitted papers</h1>
-        <p className="mt-2 max-w-2xl text-[13px] text-ink-soft">Only submitted papers appear here — live attempts are tracked in Submissions. Objective and coding answers are scored automatically from the answer key; theory answers are reviewed by you. Every grading session is camera-monitored.</p>
+        <p className="mt-2 max-w-2xl text-[13px] text-ink-soft">Only submitted papers appear here — live attempts are tracked in Submissions. Objective answers are scored automatically from the answer key; theory and code answers are reviewed by you. Every grading session is camera-monitored.</p>
       </div>
       <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
         <div className="flex divide-x divide-line border border-line-strong bg-paper">
@@ -487,7 +468,6 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
 }) {
   const cam = useEvaluatorCamera();
   const [manualScores, setManualScores] = useState<Record<string, number>>({});
-  const [rubricChecks, setRubricChecks] = useState<Record<string, boolean>>({});
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [pipMin, setPipMin] = useState(false);
   const [showDelegateModal, setShowDelegateModal] = useState(false);
@@ -504,12 +484,6 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
 
   const setScore = (qid: string, marks: number, maxMarks: number) =>
     setManualScores((cur) => ({ ...cur, [key(cid, qid)]: Math.max(0, Math.min(maxMarks, Number.isNaN(marks) ? 0 : marks)) }));
-  const toggleItem = (q: Question, itemId: string) => {
-    const nextChecks = { ...rubricChecks, [key(cid, q.id, itemId)]: !rubricChecks[key(cid, q.id, itemId)] };
-    setRubricChecks(nextChecks);
-    const suggested = (q.rubric ?? []).reduce((t, it) => t + (nextChecks[key(cid, q.id, it.id)] ? it.marks : 0), 0);
-    setManualScores((cur) => ({ ...cur, [key(cid, q.id)]: suggested }));
-  };
   const setFb = (qid: string, v: string) => setFeedback((cur) => ({ ...cur, [key(cid, qid)]: v }));
 
   const idx = queue.findIndex((c) => c.id === cid);
@@ -565,7 +539,7 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
             <h1 className="mt-2 font-serif text-3xl font-semibold">Answer paper</h1>
             {candidate.flags.length > 0 && <IntegrityBanner flags={candidate.flags} name={candidate.name} notify={notify} onOpenRecording={() => setReviewRec({ attemptId: candidate.id, roll: candidate.roll, name: candidate.name })} />}
             <div className="mt-7 space-y-5">
-              {paper.map((q) => <QuestionCard key={q.id} q={q} cid={cid} manualScores={manualScores} rubricChecks={rubricChecks} feedback={feedback} setScore={setScore} toggleItem={toggleItem} setFeedback={setFb} />)}
+              {paper.map((q) => <QuestionCard key={q.id} q={q} cid={cid} manualScores={manualScores} feedback={feedback} setScore={setScore} setFeedback={setFb} />)}
             </div>
           </div>
         </main>
@@ -686,9 +660,9 @@ function IntegrityBanner({ flags, name, notify, onOpenRecording }: { flags: Flag
   );
 }
 
-function QuestionCard({ q, cid, manualScores, rubricChecks, feedback, setScore, toggleItem, setFeedback }: {
-  q: Question; cid: string; manualScores: Record<string, number>; rubricChecks: Record<string, boolean>; feedback: Record<string, string>;
-  setScore: (qid: string, marks: number, maxMarks: number) => void; toggleItem: (q: Question, itemId: string) => void; setFeedback: (qid: string, v: string) => void;
+function QuestionCard({ q, cid, manualScores, feedback, setScore, setFeedback }: {
+  q: Question; cid: string; manualScores: Record<string, number>; feedback: Record<string, string>;
+  setScore: (qid: string, marks: number, maxMarks: number) => void; setFeedback: (qid: string, v: string) => void;
 }) {
   const auto = isAuto(q);
   const scored = manualScores[key(cid, q.id)] != null;
@@ -707,8 +681,7 @@ function QuestionCard({ q, cid, manualScores, rubricChecks, feedback, setScore, 
         {(q.type === "MCQ" || q.type === "TrueFalse") && <McqAnswer q={q} />}
         {q.type === "MSQ" && <MsqAnswer q={q} />}
         {q.type === "Numerical" && <NumericalAnswer q={q} />}
-        {q.type === "Coding" && <CodingAnswer q={q} />}
-        {q.type === "Subjective" && <ManualAnswer q={q} cid={cid} score={score} rubricChecks={rubricChecks} feedback={feedback} setScore={setScore} toggleItem={toggleItem} setFeedback={setFeedback} />}
+        {(q.type === "Subjective" || q.type === "Coding") && <ManualAnswer q={q} cid={cid} score={score} feedback={feedback} setScore={setScore} setFeedback={setFeedback} />}
       </div>
     </section>
   );
@@ -778,35 +751,9 @@ function NumericalAnswer({ q }: { q: Question }) {
   );
 }
 
-function CodingAnswer({ q }: { q: Question }) {
-  const { passed, total } = codingPassed(q);
-  const allPass = total > 0 && passed === total;
-  const scoreTone = allPass ? "text-success" : passed === 0 ? "text-alert" : "text-amber";
-  return (
-    <div className="mt-4">
-      <pre className="overflow-x-auto border border-[#2b332c] bg-[#202924] p-4 font-mono text-[12px] leading-relaxed text-paper/90"><code>{q.response || "// no submission"}</code></pre>
-      <div className="mt-4 border border-line">
-        <div className="flex items-center justify-between border-b border-line bg-paper-raised px-3 py-2">
-          <p className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">Hidden test cases · auto-graded</p>
-          <span className={`font-mono text-[10px] uppercase tracking-wider ${scoreTone}`}>{passed}/{total} passed</span>
-        </div>
-        <ul className="divide-y divide-line">
-          {(q.tests ?? []).map((t, i) => (
-            <li key={i} className="flex items-center justify-between px-3 py-2 text-[12px]">
-              <span className="flex items-center gap-2"><span className={`h-1.5 w-1.5 ${t.passed ? "bg-success" : "bg-alert"}`} />{t.name}</span>
-              <span className={`font-mono text-[9px] uppercase tracking-wider ${t.passed ? "text-success" : "text-alert"}`}>{t.passed ? "Pass" : "Fail"}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-      <p className="mt-3 border-l-2 border-forest bg-success/5 px-3 py-2 text-[11px] text-ink-soft">Scored automatically from the hidden test cases — {passed} of {total} passed → {autoScore(q)}/{q.marks} marks. No manual review needed.</p>
-    </div>
-  );
-}
-
-function ManualAnswer({ q, cid, score, rubricChecks, feedback, setScore, toggleItem, setFeedback }: {
-  q: Question; cid: string; score: number; rubricChecks: Record<string, boolean>; feedback: Record<string, string>;
-  setScore: (qid: string, marks: number, maxMarks: number) => void; toggleItem: (q: Question, itemId: string) => void; setFeedback: (qid: string, v: string) => void;
+function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
+  q: Question; cid: string; score: number; feedback: Record<string, string>;
+  setScore: (qid: string, marks: number, maxMarks: number) => void; setFeedback: (qid: string, v: string) => void;
 }) {
   const fb = feedback[key(cid, q.id)] ?? "";
   // Detect uploaded image: response starts with "[Uploaded answer: URL]"
@@ -924,22 +871,12 @@ function ManualAnswer({ q, cid, score, rubricChecks, feedback, setScore, toggleI
           </a>
           <p className="mt-2 font-mono text-[9px] text-ink-soft">Click image to view full size</p>
         </div>
+      ) : q.type === "Coding" ? (
+        <pre className="mt-1 overflow-x-auto border border-[#2b332c] bg-[#202924] p-4 font-mono text-[12px] leading-relaxed text-paper/90"><code>{q.response || "// no code submitted"}</code></pre>
       ) : (
         <article className="whitespace-pre-wrap border-l-2 border-forest bg-paper-raised p-4 text-[14px] leading-7">{q.response || "No answer submitted."}</article>
       )}
-      {q.rubric && (
-        <div className="mt-4 border border-line">
-          <p className="border-b border-line bg-paper-raised px-3 py-2 font-mono text-[9px] uppercase tracking-widest text-ink-soft">Rubric · tick to build the score</p>
-          <div className="divide-y divide-line">
-            {q.rubric.map((it) => (
-              <label key={it.id} className="flex cursor-pointer items-start gap-3 px-3 py-3 hover:bg-paper-raised">
-                <input type="checkbox" checked={Boolean(rubricChecks[key(cid, q.id, it.id)])} onChange={() => toggleItem(q, it.id)} className="mt-0.5 h-4 w-4 accent-forest" />
-                <span className="flex-1"><span className="text-[12px] font-medium">{it.label} <span className="font-mono text-[10px] text-forest">{it.marks} marks</span></span><span className="mt-0.5 block text-[11px] text-ink-soft">{it.detail}</span></span>
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
+      <p className="mt-4 border-l-2 border-amber bg-amber/5 px-3 py-2 text-[11px] text-ink-soft">{q.type === "Coding" ? "Review the submitted code against the question's intent and award marks — this app has no hidden test-runner, so no score is fabricated automatically." : "Award marks by judging the answer against the question's expected points — no fabricated rubric is shown."}</p>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Award</span>
@@ -998,11 +935,11 @@ function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manu
       <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Score summary</p>
       <div className="mt-3 flex items-end gap-3"><p className="font-serif text-4xl">{awarded}</p><p className="pb-1 font-serif text-lg text-ink-soft">/ {max}</p></div>
       <div className="mt-3 space-y-1.5 text-[12px]">
-        <Row label="Auto-graded (objective + coding)" value={`${autoTotal}`} />
-        <Row label="Theory (manual review)" value={`${manualTotal}`} />
-        <Row label="Theory answers scored" value={`${gradedManual} / ${manualCount}`} />
+        <Row label="Auto-graded (objective)" value={`${autoTotal}`} />
+        <Row label="Manual review (subjective + coding)" value={`${manualTotal}`} />
+        <Row label="Manual answers scored" value={`${gradedManual} / ${manualCount}`} />
       </div>
-      <div className={`mt-3 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${done ? "border-success/40 bg-success/5 text-success" : "border-amber/40 bg-amber/5 text-amber"}`}>{done ? "✓ Ready to record" : `${manualCount - gradedManual} theory answer(s) still need a score`}</div>
+      <div className={`mt-3 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${done ? "border-success/40 bg-success/5 text-success" : "border-amber/40 bg-amber/5 text-amber"}`}>{done ? "✓ Ready to record" : `${manualCount - gradedManual} answer(s) still need a score`}</div>
       <div className="mt-4 grid gap-2">
         {hasNext && <button onClick={onFinishNext} className="border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save &amp; next → {nextName}</button>}
         <button onClick={onFinish} className="border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5">{hasNext ? "Save & close" : "Save & finish"}</button>
@@ -1025,7 +962,6 @@ function CandidateFacts({ candidate }: { candidate: Candidate }) {
         <Row label="Exam" value={candidate.exam} />
         <Row label="Submitted" value={candidate.submittedAgo} />
         <Row label="Proctoring" value={candidate.flags.length ? `${candidate.flags.length} flag(s)` : "Clean"} />
-        <Row label="Plagiarism" value="Checked: 0% match" />
       </div>
     </div>
   );

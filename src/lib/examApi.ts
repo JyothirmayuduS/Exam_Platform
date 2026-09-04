@@ -619,14 +619,15 @@ export type LiveAttempt = {
 };
 
 /** All attempts for an exam, joined with the student, newest activity first. */
-export async function listLiveAttempts(examId: string): Promise<LiveAttempt[]> {
+export async function listLiveAttempts(examId?: string | null): Promise<LiveAttempt[]> {
   const db = getSupabase();
   if (!db) return [];
-  const { data, error } = await db
+  let query = db
     .from("attempts")
     .select("id,exam_id,state,answered,total,minutes_used,score,answers,paper,started_at,submitted_at,auto_saved_at,student:students(id,roll,full_name,email)")
-    .eq("exam_id", examId)
     .order("auto_saved_at", { ascending: false });
+  if (examId) query = query.eq("exam_id", examId);
+  const { data, error } = await query;
 
   const attempts: LiveAttempt[] = error
     ? []
@@ -667,6 +668,7 @@ export async function listLiveAttempts(examId: string): Promise<LiveAttempt[]> {
 
   // Also query enrolled students who haven't started an attempt yet
   try {
+    if (!examId) return attempts; // all-exams mode: enrolled-but-idle rows are not synthesized per exam
     const { data: enrolledData } = await db
       .from("enrollments")
       .select("student_id, student:students(id, roll, full_name)")

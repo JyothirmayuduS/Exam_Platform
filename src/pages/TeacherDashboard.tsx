@@ -1,12 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import QuestionEditorV4 from "./QuestionEditorV4";
 import ExaminerDashboard from "./ExaminerDashboard";
 import ExamStudio from "./ExamStudio";
 import TeacherExams from "./TeacherExams";
 import TeacherQuestionBank from "./TeacherQuestionBank";
-import TeacherQuestionSetup from "./TeacherQuestionSetup";
 import TeacherStudents from "./TeacherStudents";
 import TeacherSubmissions from "./TeacherSubmissions";
 import TeacherEvaluation from "./TeacherEvaluation";
@@ -14,6 +13,7 @@ import { needsAttention } from "../data/examSession";
 import useLiveAttempts from "../hooks/useLiveAttempts";
 import {
   listExamsForTeacher,
+  listQuestionsForExam,
   listLiveAttempts,
   setAttemptPaused,
   sendProctorMessage,
@@ -102,9 +102,7 @@ export default function TeacherDashboard() {
     {section === "exams" && subSection && subSection !== "new" && examAction === "build" && <ExamStudio notify={notify} navigate={navigate} examId={subSection} onSaved={(exam) => setCreatedExams((current) => { const rest = current.filter((e) => e.id !== exam.id); return [{ id: exam.id, name: exam.name, batch: exam.batch, state: exam.status === "draft" ? "Draft" : exam.status === "scheduled" ? "Scheduled" : "Live", count: `${exam.pool_count} questions`, tone: exam.status === "draft" ? "text-amber" : "text-success", progress: exam.status === "draft" ? 18 : 100, schedule: exam.scheduled_at, duration: exam.duration_minutes, mode: exam.mode }, ...rest]; })} />}
     {section === "exams" && subSection && subSection !== "new" && !examAction && <ExamWorkspace notify={notify} navigate={navigate} examId={subSection} examsList={createdExams} />}
     {section === "exams" && !subSection && <TeacherExams notify={notify} navigate={navigate} exams={createdExams} onCreate={(exam) => setCreatedExams((current) => [{ id: exam.id, name: exam.name, batch: exam.batch, state: exam.status === "draft" ? "Draft" : exam.status === "scheduled" ? "Scheduled" : "Live", count: `${exam.pool_count} questions`, tone: exam.status === "draft" ? "text-amber" : "text-success", progress: exam.status === "draft" ? 18 : 100, schedule: exam.scheduled_at, duration: exam.duration_minutes, mode: exam.mode }, ...current])} />}
-    {section === "exams" && !subSection && <TeacherExams notify={notify} navigate={navigate} exams={createdExams} />}
     {section === "dashboard" && <ExaminerDashboard notify={notify} navigate={navigate} />}
-    {section === "questions" && !subSection && <TeacherQuestionSetup notify={notify} navigate={navigate} exams={createdExams} />}
     {section === "questions" && subSection === "new" && <QuestionEditorV4 notify={notify} navigate={navigate} />}
     {section === "bank" && <TeacherQuestionBank notify={notify} navigate={navigate} />}
     {section === "students" && <TeacherStudents notify={notify} navigate={navigate} exams={createdExams} />}
@@ -130,7 +128,7 @@ export function Button({ children, onClick, primary = false, disabled = false }:
 function Metric({ label, value, detail, tone, onClick }: { label: string; value: string; detail: string; tone: string; onClick?: () => void }) { return <div onClick={onClick} className={`border border-line bg-paper-raised p-5 ${onClick ? "cursor-pointer hover:border-forest" : ""}`}><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">{label}</p><p className={`mt-2 font-serif text-3xl ${tone}`}>{value}</p><p className="mt-1 text-[12px] text-ink-soft">{detail}</p></div>; }
 function Overview({ notify, navigate, examsList, loading, avgScore, scoredCount, stats }: { notify: (s: string) => void; navigate: (s: string) => void; examsList: any[]; loading: boolean; avgScore: string | null; scoredCount: number; stats: { live: number, submitted: number, flagged: number } }) {
   const { profile } = useCurrentProfile();
-  return <><PageHeading eyebrow="Overview" title={`Good morning, ${profile?.full_name?.split(' ')[0] ?? 'Faculty'}.`} detail="Here is what needs your attention today." action={<Button primary onClick={() => navigate("/teacher/exams/new")}>+ New exam</Button>} /><div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Live candidates" value={String(stats.live)} detail="Currently active" tone="text-alert" onClick={() => navigate("/teacher/submissions")}/><Metric label="Needs review" value={String(stats.submitted)} detail={`${stats.flagged} flagged`} tone="text-amber" onClick={() => navigate("/teacher/evaluate")}/><Metric label="Question bank" value={String(examsList.reduce((acc, e) => acc + (parseInt(e.count) || 0), 0))} detail="Questions across exams" tone="text-forest" onClick={() => navigate("/teacher/questions")}/><Metric label="Avg. score" value={avgScore != null ? `${avgScore}%` : "—"} detail={avgScore != null ? `Across ${scoredCount} scored attempt(s)` : "No scored attempts yet"} tone="text-ink" onClick={() => navigate("/teacher/reports")}/></div><div className="mt-9 grid gap-8 xl:grid-cols-[1fr_340px]"><section><div className="flex items-center justify-between"><h2 className="font-serif text-xl font-semibold">Exam activity</h2><button onClick={() => navigate("/teacher/exams")} className="font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">Manage exams →</button></div><div className="mt-3 space-y-2">{loading ? <div className="p-5 text-center text-[12px] text-ink-soft">Loading...</div> : examsList.length === 0 ? <div className="p-5 text-center text-[12px] text-ink-soft">No exams found.</div> : examsList.slice(0, 5).map((exam) => <div key={exam.id} className="border border-line bg-paper p-5"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div><p className="font-serif text-[16px] font-medium">{exam.name}</p><p className="mt-1 text-[12px] text-ink-soft">{exam.batch}</p></div><span className={`font-mono text-[10px] uppercase tracking-wider ${exam.tone}`}>{exam.state}</span></div><div className="mt-5 flex items-center gap-4"><div className="h-1.5 flex-1 bg-line"><div className="h-full bg-forest" style={{ width: `${exam.progress}%` }}/></div><span className="min-w-[110px] text-right font-mono text-[10px] text-ink-soft">{exam.count}</span></div></div>)}</div></section><aside><div className="flex items-center justify-between"><h2 className="font-serif text-xl font-semibold">Action queue</h2><span className="rounded-full bg-ink px-2 py-0.5 font-mono text-[9px] text-paper">{stats.flagged + stats.submitted}</span></div><div className="mt-3 divide-y divide-line border border-line">{[{ label: "Review flagged submissions", count: `${stats.flagged} pending`, to: "/teacher/submissions" }, { label: "Grade subjective answers", count: `${stats.submitted} remaining`, to: "/teacher/evaluate" }, { label: "Open performance reports", count: "Analytics", to: "/teacher/reports" }].map((item) => <button key={item.label} onClick={() => navigate(item.to)} className="flex w-full items-center justify-between gap-4 bg-paper-raised p-4 text-left hover:bg-paper"><span className="text-[13px]">{item.label}</span><span className="whitespace-nowrap font-mono text-[10px] text-amber">{item.count} →</span></button>)}</div></aside></div></>;
+  return <><PageHeading eyebrow="Overview" title={`Good morning, ${profile?.full_name?.split(' ')[0] ?? 'Faculty'}.`} detail="Here is what needs your attention today." action={<Button primary onClick={() => navigate("/teacher/exams/new")}>+ New exam</Button>} /><div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Live candidates" value={String(stats.live)} detail="Currently active" tone="text-alert" onClick={() => navigate("/teacher/submissions")}/><Metric label="Needs review" value={String(stats.submitted)} detail={`${stats.flagged} flagged`} tone="text-amber" onClick={() => navigate("/teacher/evaluate")}/><Metric label="My questions" value={String(examsList.reduce((acc, e) => acc + (parseInt(e.count) || 0), 0))} detail="Questions across exams" tone="text-forest" onClick={() => navigate("/teacher/bank")}/><Metric label="Avg. score" value={avgScore != null ? `${avgScore}%` : "—"} detail={avgScore != null ? `Across ${scoredCount} scored attempt(s)` : "No scored attempts yet"} tone="text-ink" onClick={() => navigate("/teacher/reports")}/></div><div className="mt-9 grid gap-8 xl:grid-cols-[1fr_340px]"><section><div className="flex items-center justify-between"><h2 className="font-serif text-xl font-semibold">Exam activity</h2><button onClick={() => navigate("/teacher/exams")} className="font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">Manage exams →</button></div><div className="mt-3 space-y-2">{loading ? <div className="p-5 text-center text-[12px] text-ink-soft">Loading...</div> : examsList.length === 0 ? <div className="p-5 text-center text-[12px] text-ink-soft">No exams found.</div> : examsList.slice(0, 5).map((exam) => <div key={exam.id} className="border border-line bg-paper p-5"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div><p className="font-serif text-[16px] font-medium">{exam.name}</p><p className="mt-1 text-[12px] text-ink-soft">{exam.batch}</p></div><span className={`font-mono text-[10px] uppercase tracking-wider ${exam.tone}`}>{exam.state}</span></div><div className="mt-5 flex items-center gap-4"><div className="h-1.5 flex-1 bg-line"><div className="h-full bg-forest" style={{ width: `${exam.progress}%` }}/></div><span className="min-w-[110px] text-right font-mono text-[10px] text-ink-soft">{exam.count}</span></div></div>)}</div></section><aside><div className="flex items-center justify-between"><h2 className="font-serif text-xl font-semibold">Action queue</h2><span className="rounded-full bg-ink px-2 py-0.5 font-mono text-[9px] text-paper">{stats.flagged + stats.submitted}</span></div><div className="mt-3 divide-y divide-line border border-line">{[{ label: "Review flagged submissions", count: `${stats.flagged} pending`, to: "/teacher/submissions" }, { label: "Grade subjective answers", count: `${stats.submitted} remaining`, to: "/teacher/evaluate" }, { label: "Open performance reports", count: "Analytics", to: "/teacher/reports" }].map((item) => <button key={item.label} onClick={() => navigate(item.to)} className="flex w-full items-center justify-between gap-4 bg-paper-raised p-4 text-left hover:bg-paper"><span className="text-[13px]">{item.label}</span><span className="whitespace-nowrap font-mono text-[10px] text-amber">{item.count} →</span></button>)}</div></aside></div></>;
 }
 
 
@@ -163,8 +161,8 @@ function ExamWorkspacePage({ notify, navigate, exam }: { notify: (s: string) => 
   return <><PageHeading eyebrow={`Exams / ${exam.name}`} title={exam.name} detail={`Exam ID ${exam.id} · ${exam.batch}`} action={<Button onClick={() => navigate("/teacher/exams")}>← All exams</Button>} />
     <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border border-amber/30 bg-amber/5 px-5 py-4"><div><span className={`font-mono text-[10px] uppercase tracking-widest ${exam.tone}`}>{exam.state} · {exam.state === "Draft" ? "Not published" : "Ready"}</span><p className="mt-1 text-[13px]">Questions, delivery rules, difficulty and publishing are set in the paper builder for this test.</p></div><button onClick={() => navigate(`/teacher/exams/${exam.id}/build`)} className="font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Open paper builder →</button></div>
     <div className="mt-8 border-b border-line"><div className="flex gap-1 overflow-x-auto">{["Overview", "Questions", "Candidates", "Answers & results"].map((item) => <button key={item} onClick={() => setTab(item)} className={`whitespace-nowrap border-b-2 px-4 py-3 font-mono text-[10px] uppercase tracking-wider ${tab === item ? "border-forest text-forest" : "border-transparent text-ink-soft hover:text-ink"}`}>{item}</button>)}</div></div>
-    {tab === "Overview" && <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_330px]"><section className="border border-line bg-paper p-6"><div className="flex items-center justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exam setup</p><h2 className="mt-1 font-serif text-xl font-semibold">Configuration</h2></div><span className="font-mono text-[10px] text-success">✓ Ready</span></div><div className="mt-6 divide-y divide-line">{setupRows.map(([label, value, complete]) => <div key={label} className="flex items-center justify-between gap-4 py-4"><div><p className="text-[13px] font-medium">{label}</p><p className="mt-1 text-[12px] text-ink-soft">{value}</p></div><span className={`font-mono text-[10px] ${complete ? "text-success" : "text-amber"}`}>{complete ? "✓ Set" : "Review"}</span></div>)}<div className="flex items-center justify-between gap-4 py-4"><div><p className="text-[13px] font-medium">Question set & delivery</p><p className="mt-1 text-[12px] text-ink-soft">Managed in the Questions tab</p></div><button onClick={() => setTab("Questions")} className="font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Manage →</button></div></div></section><aside className="space-y-5"><section className="border border-line bg-paper-raised p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">At a glance</p><div className="mt-4 space-y-3"><InfoRow label="Questions" value={exam.count}/><InfoRow label="Duration" value={`${exam.duration}m`}/></div></section><section className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Questions & publishing</p><p className="mt-2 text-[13px] text-ink-soft">Build the pool, set how many each student gets, then publish — all in one flow.</p><button onClick={() => setTab("Questions")} className="mt-4 font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Open Questions tab →</button></section><section className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Live controls</p><p className="mt-2 text-[13px] text-ink-soft">Auto-submit, late entry and in-exam rules.</p><button onClick={() => navigate(`/teacher/exams/${exam.id}/settings`)} className="mt-4 font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Edit exam settings →</button></section></aside></div>}      {tab === "Questions" && <section className="mt-8 max-w-5xl"><InlineQuestionBuilder examId={exam.id} notify={notify} navigate={navigate} /></section>}
-    {tab === "Candidates" && <section className="mt-8 max-w-4xl"><div className="flex items-end justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Assigned candidates</p><h2 className="mt-1 font-serif text-xl font-semibold">{exam.batch}</h2></div><Button onClick={() => navigate("/teacher/students")}>Manage roster</Button></div><div className="mt-4 grid gap-4 sm:grid-cols-3"><Metric label="Enrolled" value={String(roster.length)} detail="From enrollments" tone="text-ink"/><Metric label="Email verified" value={String(emailVerified)} detail={roster.length ? `${Math.round((emailVerified / roster.length) * 100)}% verified` : "No emails yet"} tone="text-success"/><Metric label="Access" value={exam.state === "Draft" ? "Locked" : "Open"} detail={exam.state === "Draft" ? "Until published" : "Join link live"} tone="text-amber"/></div><div className="mt-6 border border-line p-5 text-[13px] text-ink-soft">Candidates receive the join link automatically when this exam is published from the Question bank. Add or remove students on the <button onClick={() => navigate("/teacher/students")} className="font-mono text-[11px] uppercase tracking-wider text-forest hover:underline">Students page →</button></div></section>}
+    {tab === "Overview" && <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_330px]"><section className="border border-line bg-paper p-6"><div className="flex items-center justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exam setup</p><h2 className="mt-1 font-serif text-xl font-semibold">Configuration</h2></div><span className="font-mono text-[10px] text-success">✓ Ready</span></div><div className="mt-6 divide-y divide-line">{setupRows.map(([label, value, complete]) => <div key={label} className="flex items-center justify-between gap-4 py-4"><div><p className="text-[13px] font-medium">{label}</p><p className="mt-1 text-[12px] text-ink-soft">{value}</p></div><span className={`font-mono text-[10px] ${complete ? "text-success" : "text-amber"}`}>{complete ? "✓ Set" : "Review"}</span></div>)}<div className="flex items-center justify-between gap-4 py-4"><div><p className="text-[13px] font-medium">Question set & delivery</p><p className="mt-1 text-[12px] text-ink-soft">Managed in the Questions tab</p></div><button onClick={() => setTab("Questions")} className="font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Manage →</button></div></div></section><aside className="space-y-5"><section className="border border-line bg-paper-raised p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">At a glance</p><div className="mt-4 space-y-3"><InfoRow label="Questions" value={exam.count}/><InfoRow label="Duration" value={`${exam.duration}m`}/></div></section><section className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Questions & publishing</p><p className="mt-2 text-[13px] text-ink-soft">Build the pool, set how many each student gets, then publish — all in one flow.</p><button onClick={() => setTab("Questions")} className="mt-4 font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Open Questions tab →</button></section><section className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Live controls</p><p className="mt-2 text-[13px] text-ink-soft">Auto-submit, late entry and in-exam rules.</p><button onClick={() => navigate(`/teacher/exams/${exam.id}/settings`)} className="mt-4 font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Edit exam settings →</button></section></aside></div>}      {tab === "Questions" && <ExamPaperHub examId={exam.id} notify={notify} navigate={navigate} />}
+    {tab === "Candidates" && <section className="mt-8 max-w-4xl"><div className="flex items-end justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Assigned candidates</p><h2 className="mt-1 font-serif text-xl font-semibold">{exam.batch}</h2></div><Button onClick={() => navigate("/teacher/students")}>Manage roster</Button></div><div className="mt-4 grid gap-4 sm:grid-cols-3"><Metric label="Enrolled" value={String(roster.length)} detail="From enrollments" tone="text-ink"/><Metric label="Email verified" value={String(emailVerified)} detail={roster.length ? `${Math.round((emailVerified / roster.length) * 100)}% verified` : "No emails yet"} tone="text-success"/><Metric label="Access" value={exam.state === "Draft" ? "Locked" : "Open"} detail={exam.state === "Draft" ? "Until published" : "Join link live"} tone="text-amber"/></div><div className="mt-6 border border-line p-5 text-[13px] text-ink-soft">Candidates receive the join link automatically when you publish from the paper builder (Publish &amp; share). Add or remove students on the <button onClick={() => navigate("/teacher/students")} className="font-mono text-[11px] uppercase tracking-wider text-forest hover:underline">Students page →</button></div></section>}
     {tab === "Answers & results" && <section className="mt-8 max-w-4xl"><AnswerReleaseControl notify={notify} examId={exam.id} /></section>}
   </>;
 }
@@ -192,160 +190,44 @@ function AnswerReleaseControl({ notify, examId }: { notify: (s: string) => void;
   </section>;
 }
 
-function InlineQuestionBuilder({ examId, notify, navigate }: { examId: string; notify: (s: string) => void; navigate: (s: string) => void }) {
-  const [questions, setQuestions] = useState<any[]>([]);
-  const [isAdding, setIsAdding] = useState(false);
-  const [title, setTitle] = useState("");
-  const [type, setType] = useState("Multiple choice");
-  const [difficulty, setDifficulty] = useState("Medium");
-  const [unit, setUnit] = useState("General");
-  const [marks, setMarks] = useState(1);
-  const [options, setOptions] = useState(["", "", "", ""]);
-  const [answer, setAnswer] = useState("0");
-  
-  const isChoice = type === "Multiple choice";
-  
+// The one way to shape a test's paper: everything routes into ExamStudio, the
+// dedicated paper builder. This tab summarizes the current pool and links out
+// (write / import / pick from My questions all happen inside the builder).
+function ExamPaperHub({ examId, notify, navigate }: { examId: string; notify: (s: string) => void; navigate: (s: string) => void }) {
+  const [pool, setPool] = useState<{ count: number; marks: number } | null>(null);
   useEffect(() => {
-    let mounted = true;
-    import("../lib/examApi").then(({ loadExamBundle }) => {
-      loadExamBundle(examId).then((bundle) => {
-        if (mounted && bundle.questions) {
-          setQuestions(bundle.questions);
-        }
-      });
-    });
-    return () => { mounted = false; };
+    let active = true;
+    void listQuestionsForExam(examId).then((qs) => { if (active) setPool({ count: qs.length, marks: qs.reduce((sum, q) => sum + (q.marks || 1), 0) }); });
+    return () => { active = false; };
   }, [examId]);
-  
-  const handleSave = async () => {
-    if (!title.trim()) return notify("Please enter a question prompt.");
-    
-    // We import saveQuestion inline to avoid top-level import conflicts temporarily
-    const { saveQuestion } = await import("../lib/examApi");
-    const payload = {
-      exam_id: examId,
-      title,
-      type: type === "Multiple choice" ? "MCQ" : type,
-      marks,
-      unit: unit.trim() || "General",
-      difficulty,
-      options: isChoice ? options.filter(o => o.trim() !== "") : null,
-      answer: isChoice ? options[parseInt(answer)] || null : null,
-    };
-    const res = await saveQuestion(payload);
-    if (res.ok && res.data) {
-      setQuestions([...questions, res.data]);
-      setIsAdding(false);
-      setTitle("");
-      setOptions(["", "", "", ""]);
-      notify("Question saved to bank and exam pool.");
-    } else {
-      notify("Failed to save: " + res.error);
-    }
-  };
-
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="font-serif text-2xl font-semibold">Exam Questions</h2>
-          <p className="mt-1 text-[13px] text-ink-soft">Build or import questions for this assessment.</p>
-        </div>
-        <div className="flex gap-2">
-          <Button primary onClick={() => setIsAdding(true)}>+ Quick Add</Button>
-          <Button onClick={() => navigate(`/teacher/exams/${examId}/build`)}>Open full paper builder →</Button>
-        </div>
-      </div>
-      
-      {isAdding && (
-        <div className="border border-forest bg-paper p-5 shadow-sm">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-serif text-lg">New Question</h3>
-            <button onClick={() => setIsAdding(false)} className="text-[12px] text-ink-soft hover:text-ink">Cancel</button>
+    <div className="mt-8 max-w-4xl space-y-6">
+      <section className="border border-line bg-paper p-6">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Paper builder</p>
+        <div className="mt-2 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div>
+            <h2 className="font-serif text-2xl font-semibold">Shaping this test's paper</h2>
+            <p className="mt-1 text-[13px] text-ink-soft">Questions, sections, difficulty, delivery rules and publishing are set in one place — the paper builder.</p>
           </div>
-          
-          <div className="space-y-4">
-            <label className="block text-[12px] text-ink-soft">Question Type
-              <select value={type} onChange={(e) => setType(e.target.value)} className="mt-1 block w-full sm:w-64 border border-line-strong bg-paper px-3 py-2 text-[13px] text-ink">
-                <option>Multiple choice</option>
-                <option>Subjective</option>
-                <option>Numerical</option>
-                <option>Coding</option>
-              </select>
-            </label>
-            
-            <label className="block text-[12px] text-ink-soft">Prompt
-              <textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={3} placeholder="Type your question here..." className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] text-ink outline-none focus:border-forest" />
-            </label>
-            
-            {isChoice && (
-              <div className="space-y-3">
-                <p className="text-[12px] text-ink-soft">Options</p>
-                {options.map((opt, i) => (
-                  <div key={i} className="flex gap-3 items-center">
-                    <input type="radio" name="correct" checked={answer === String(i)} onChange={() => setAnswer(String(i))} className="accent-forest" />
-                    <input value={opt} onChange={(e) => {
-                      const newOpts = [...options];
-                      newOpts[i] = e.target.value;
-                      setOptions(newOpts);
-                    }} placeholder={`Option ${i + 1}`} className="block w-full border border-line-strong bg-paper px-3 py-2 text-[13px]" />
-                  </div>
-                ))}
-              </div>
-            )}
-            
-            <label className="block text-[12px] text-ink-soft">Marks
-              <input type="number" min="1" value={marks} onChange={(e) => setMarks(Number(e.target.value))} className="mt-1 block w-24 border border-line-strong bg-paper px-3 py-2 text-[13px]" />
-            </label>
-            
-            <div className="flex flex-wrap gap-4">
-              <label className="block text-[12px] text-ink-soft">Difficulty
-                <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} className="mt-1 block w-36 border border-line-strong bg-paper px-3 py-2 text-[13px] text-ink">
-                  <option>Easy</option><option>Medium</option><option>Hard</option>
-                </select>
-              </label>
-              <label className="block text-[12px] text-ink-soft">Unit / topic
-                <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="e.g. Trees" className="mt-1 block w-48 border border-line-strong bg-paper px-3 py-2 text-[13px] text-ink outline-none focus:border-forest" />
-              </label>
-            </div>
-            
-            <div className="pt-2">
-              <Button primary onClick={handleSave}>Save Question</Button>
-            </div>
-          </div>
+          <Button primary onClick={() => navigate(`/teacher/exams/${examId}/build`)}>Open paper builder →</Button>
         </div>
-      )}
-      
-      <div className="border border-line bg-paper">
-        <div className="border-b border-line bg-paper-raised px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
-          Current Pool ({questions.length})
+        <div className="mt-5 grid grid-cols-3 gap-px border border-line bg-line">
+          <div className="bg-paper px-4 py-3"><p className="font-serif text-2xl">{pool ? String(pool.count) : "…"}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Questions in pool</p></div>
+          <div className="bg-paper px-4 py-3"><p className="font-serif text-2xl">{pool ? String(pool.marks) : "…"}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Total marks</p></div>
+          <div className="bg-paper px-4 py-3"><p className="font-serif text-2xl">1</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Builder page</p></div>
         </div>
-        <div className="divide-y divide-line">
-          {questions.length === 0 ? (
-            <div className="p-10 text-center">
-              <p className="font-serif text-xl">No questions yet</p>
-              <p className="mt-2 text-[12px] text-ink-soft">Click Quick Add, import from CSV, or open the full paper builder to pull questions from your bank.</p>
-            </div>
-          ) : (
-            questions.map((q, i) => (
-              <div key={q.id || i} className="p-5 flex justify-between gap-4 items-start">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-[10px] text-ink-soft">{q.id}</span>
-                    <span className="bg-paper-raised px-2 py-0.5 font-mono text-[9px] text-ink-soft">{q.type}</span>
-                    <span className="bg-paper-raised px-2 py-0.5 font-mono text-[9px] text-ink-soft">{q.marks} marks</span>
-                  </div>
-                  <p className="mt-2 text-[14px]">{q.title}</p>
-                </div>
-                <button className="text-[11px] text-ink-soft hover:text-ink">Edit</button>
-              </div>
-            ))
-          )}
+        <div className="mt-5 flex flex-wrap gap-2">
+          <Button onClick={() => navigate(`/teacher/exams/${examId}/build`)}>+ Write new question</Button>
+          <Button onClick={() => navigate(`/teacher/exams/${examId}/build`)}>↑ Import CSV</Button>
+          <Button onClick={() => navigate("/teacher/bank")}>Browse My questions</Button>
         </div>
-      </div>
+        <p className="mt-4 text-[12px] text-ink-soft">Use the old inline editor on this tab? It's retired — the paper builder is the single place to add, edit, remove and import questions.</p>
+      </section>
     </div>
   );
-}function ExamDetail({ notify, navigate, exam }: { notify: (s: string) => void; navigate: (s: string) => void; exam: any }) { 
+}
+
+function ExamDetail({ notify, navigate, exam }: { notify: (s: string) => void; navigate: (s: string) => void; exam: any }) { 
   const { data: liveAttempts = [] } = useLiveAttempts(exam.id);
   const submitted = liveAttempts.filter(a => a.state === "Submitted").length;
   const inProgress = liveAttempts.filter(a => a.state === "In progress").length;
@@ -423,9 +305,8 @@ function SelectField({ label, options, value, onChange }: { label: string; optio
 
 export const getTeacherNav = (liveAttemptsCount: number, submittedAttemptsCount: number, needsAttentionCount: number, examCount = 0) => [
   { label: "Overview", to: "/teacher", end: true },
-  { label: "Dashboard", to: "/teacher/dashboard" },
+  { label: "Examiner dashboard", to: "/teacher/dashboard" },
   { label: "Exams", to: "/teacher/exams", badge: examCount ? String(examCount) : undefined },
-  { label: "Question bank", to: "/teacher/questions" },
   { label: "My questions", to: "/teacher/bank" },
   { label: "Students", to: "/teacher/students" },
   { label: "Submissions", to: "/teacher/submissions", badge: String(liveAttemptsCount) },
@@ -606,7 +487,7 @@ function QuestionItemAnalysis({ examId }: { examId: string }) {
         <p className="mt-1 font-mono text-[10px] text-ink-soft">Real question pool for this exam — {questions.length} question(s).</p>
       </div>
       {questions.length === 0 ? (
-        <div className="p-10 text-center"><p className="font-serif text-lg">No questions in this exam's pool</p><p className="mt-2 text-[12px] text-ink-soft">Add questions from the Question bank, then come back for item stats.</p></div>
+        <div className="p-10 text-center"><p className="font-serif text-lg">No questions in this exam's pool</p><p className="mt-2 text-[12px] text-ink-soft">Add questions from My questions or the paper builder, then come back for item stats.</p></div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[700px] text-left text-[13px]">

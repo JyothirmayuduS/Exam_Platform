@@ -48,6 +48,7 @@ create table if not exists public.questions (
   marks       int not null default 1,
   options     jsonb,
   answer      text,
+  subjective_mode text,   -- 'both' | 'qr' | 'textbox' for descriptive answers
   created_at  timestamptz not null default now()
 );
 
