@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { QuestionStatus } from "../../hooks/useExamState";
 
 type Question = {
-  id: number;
+  id: string;
   text: string;
   category: string;
   options: string[];
@@ -12,7 +12,7 @@ type Question = {
 type QuestionPanelProps = {
   questions: Question[];
   currentIndex: number;
-  getStatus: (questionId: number) => QuestionStatus;
+  getStatus: (questionId: string) => QuestionStatus;
   onJump: (index: number) => void;
 };
 
@@ -62,9 +62,9 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
               key={q.id}
               onClick={() => onJump(index)}
               className={`flex h-9 items-center justify-center border font-mono text-[12px] transition-colors ${statusClassMap[status]} ${isCurrent ? "ring-2 ring-blue-500 ring-offset-1" : ""}`}
-              aria-label={`Go to question ${q.id}`}
+              aria-label={`Go to question ${index + 1}`}
             >
-              {q.id}
+              {index + 1}
             </button>
           );
         })}

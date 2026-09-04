@@ -437,7 +437,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
 
   return (
     <div className="pointer-events-none absolute h-0 w-0 opacity-0 overflow-hidden">
-      <video ref={videoRef} playsInline muted />
+      <video ref={videoRef} playsInline muted className="pointer-events-none sr-only" />
     </div>
   );
 }

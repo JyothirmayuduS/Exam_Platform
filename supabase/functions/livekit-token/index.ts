@@ -36,7 +36,7 @@ Deno.serve(async (req: Request) => {
   let body: Record<string, unknown> = {};
   try { body = await req.json(); } catch { /* empty */ }
 
-  const room = String(body.room ?? "").trim();
+  const room = String(body.room ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 120);
   if (!room) return json({ error: "room is required" }, 400);
 
   // Role resolution order:
@@ -75,10 +75,23 @@ Deno.serve(async (req: Request) => {
   if (!role) role = "student";
 
   const isProctor = role === "proctor" || role === "teacher" || role === "admin";
-  const canPublish = !isProctor;
-  const canSubscribe = isProctor;
 
-  console.log("[livekit-token] role:", { email: user.email, role, isProctor, canPublish, canSubscribe });
+  // Voice announcement rooms (voice-<exam>-<roll>) carry the proctor→student
+  // live-audio channel. Only staff may publish their microphone there; students
+  // may subscribe so they can hear a warning aimed at their own channel — they
+  // can never publish, so students can't talk over the room.
+  const isVoiceRoom = room.startsWith("voice-");
+  let canPublish: boolean;
+  let canSubscribe: boolean;
+  if (isVoiceRoom) {
+    canPublish = isProctor;
+    canSubscribe = true; // staff may listen back; students listen to their own channel
+  } else {
+    canPublish = !isProctor;
+    canSubscribe = isProctor;
+  }
+
+  console.log("[livekit-token] role:", { email: user.email, role, isProctor, room, isVoiceRoom, canPublish, canSubscribe });
 
   let identity: string;
   if (isProctor) {

@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
-import { publishExam, triggerExamEmail, type ExamRecord } from "../lib/examApi";
+import { publishExam, triggerExamEmail, listStudentsByBatch, listQuestionsForExam, linkQuestionsToExam, unlinkQuestionFromExam, type ExamRecord, type Student } from "../lib/examApi";
 import { getExamRoster, type StudentRosterRecord } from "../lib/examApi";
 
-type Exam = { id: string; name: string; batch: string; state: string; tone: string };
+type Exam = { id: string; name: string; batch: string; state: string; tone: string; count?: string };
 type Question = { id: string; title: string; unit: string; type: string; difficulty: string; marks: number };
 type ExamMode = "practice" | "lockdown";
 type Settings = {
@@ -12,22 +12,6 @@ type Settings = {
   photoId: boolean; violationLimit: number; violationAction: "warn" | "submit"; releaseDate: string; ipWhitelist: string; sections: boolean; sectionTiming: boolean; autoClose: boolean; durationLock: boolean;
 };
 type Publish = { status: "draft" | "published" | "scheduled"; link?: string; when?: string; notified?: number };
-
-const ENROLLED = 42;
-
-const MOCK_STUDENTS = [
-  { id: "21vgn0142", name: "K. Rohan Teja", email: "21vgn0142@vignan.ac.in" },
-  { id: "21vgn0158", name: "P. Meghana", email: "21vgn0158@vignan.ac.in" },
-  { id: "21vgn0163", name: "A. Deepika Reddy", email: "21vgn0163@vignan.ac.in" },
-  { id: "21vgn0171", name: "S. Vamsi Krishna", email: "21vgn0171@vignan.ac.in" },
-  { id: "21vgn0180", name: "M. Sai Charan", email: "21vgn0180@vignan.ac.in" },
-];
-const RECIPIENTS = [
-  "21vgn0142@vignan.ac.in",
-  "21vgn0158@vignan.ac.in",
-  "21vgn0163@vignan.ac.in",
-  "21vgn0171@vignan.ac.in",
-];
 
 import { getSupabase } from "../lib/supabase";
 
@@ -40,6 +24,7 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   const [pool, setPool] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
+  const [diffFilter, setDiffFilter] = useState("All");
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkFile, setBulkFile] = useState<string | null>(null);
   const [draftSaved, setDraftSaved] = useState(false);
@@ -49,6 +34,9 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   const [copied, setCopied] = useState(false);
   const [notifyStudents, setNotifyStudents] = useState(true);
   const [enrollmentMode, setEnrollmentMode] = useState<"all" | "manual">("all");
+  const [selectedManual, setSelectedManual] = useState<string[]>([]);
+  const [roster, setRoster] = useState<{ roll: string; full_name: string; email: string }[]>([]);
+  const [loadingRoster, setLoadingRoster] = useState(false);
   const [s, setS] = useState<Settings>({ perStudent: 5, randomSelect: true, shuffleOrder: true, shuffleOptions: true, autoSubmit: true, duration: 45, mode: "lockdown", attempts: 1, negative: false, calculator: false, instantFeedback: false, photoId: false, violationLimit: 3, violationAction: "submit", releaseDate: "", ipWhitelist: "", sections: false, sectionTiming: false, autoClose: false, durationLock: true });
   const set = <K extends keyof Settings,>(k: K, v: Settings[K]) => setS((cur) => ({ ...cur, [k]: v }));
 
@@ -78,32 +66,46 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
   }, []);
 
   const poolQuestions = dbQuestions.filter((q) => pool.includes(q.id));
-  const visible = dbQuestions.filter((q) => `${q.id} ${q.title} ${q.unit}`.toLowerCase().includes(search.toLowerCase()) && (filter === "All" || q.type === filter));
+  const visible = dbQuestions.filter((q) =>
+    `${q.id} ${q.title} ${q.unit}`.toLowerCase().includes(search.toLowerCase())
+    && (filter === "All" || q.type === filter)
+    && (diffFilter === "All" || (q.difficulty || "Medium") === diffFilter));
   const totalMarks = poolQuestions.reduce((sum, q) => sum + q.marks, 0);
   const perStudent = Math.min(s.perStudent, Math.max(1, pool.length));
 
   const chooseExam = (exam: Exam) => {
     setSelected(exam); setStep(0);
-    setPool(exam.id === "EXAM-2026-014" ? ["Q-1042", "Q-1044", "Q-1046"] : []);
-    // Also, load this exam's actual questions into the pool
-    const fetchExamQ = async () => {
-      const db = getSupabase();
-      if (!db) return;
-      const { data } = await db.from("questions").select("id").eq("exam_id", exam.id);
-      if (data && data.length > 0) {
-        setPool(data.map((d: any) => d.id));
-      }
-    };
-    fetchExamQ();
-    setSearch(""); setFilter("All"); setBulkOpen(false); setBulkFile(null);
+    setPool([]);
+    // Load this exam's actual questions into the pool (join-aware)
+    void listQuestionsForExam(exam.id).then((qs) => {
+      setPool(qs.map((q) => q.id));
+    });
+    setSearch(""); setFilter("All"); setDiffFilter("All"); setBulkOpen(false); setBulkFile(null);
     setPublish({ status: "draft" }); setDraftSaved(false);
   };
   const toggle = (id: string) => {
+    if (!selected) return;
     const inPool = pool.includes(id);
+    // Optimistic update; persist through the M:N pool join and revert on failure.
     setPool((cur) => inPool ? cur.filter((x) => x !== id) : [...cur, id]);
-    if (selected) notify(`${id} ${inPool ? "removed from" : "added to"} ${selected.name}`);
+    notify(`${id} ${inPool ? "removed from" : "added to"} ${selected.name}`);
+    const op: Promise<boolean> = inPool
+      ? unlinkQuestionFromExam(selected.id, id)
+      : linkQuestionsToExam(selected.id, [id]).then((r) => r.ok);
+    void op.then((ok) => {
+      if (!ok) {
+        setPool((cur) => inPool ? (cur.includes(id) ? cur : [...cur, id]) : cur.filter((x) => x !== id));
+        notify(`Could not ${inPool ? "remove" : "add"} ${id} — check the database connection`);
+      }
+    });
   };
-  const addAllShown = () => { setPool((cur) => Array.from(new Set([...cur, ...visible.map((q) => q.id)]))); notify("Visible questions added to the pool"); };
+  const addAllShown = () => {
+    if (!selected) return;
+    const shown = visible.map((q) => q.id);
+    setPool((cur) => Array.from(new Set([...cur, ...shown])));
+    notify("Visible questions added to the pool");
+    void linkQuestionsToExam(selected.id, shown).then((r) => { if (!r.ok) notify("Could not persist additions — check the database connection"); });
+  };
   const downloadTemplate = () => {
     if (!selected) return;
     const header = "exam_id,question,type,option_a,option_b,option_c,option_d,answer,unit,difficulty,marks\n";
@@ -140,17 +142,40 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
     });
   };
   const publishNow = () => {
-    const n = notifyStudents ? ENROLLED : 0;
+    const n = notifyStudents ? recipientCount : 0;
     setPublish({ status: "published", link: studentLink(selected), notified: n });
     persist(buildRecord("published", null), n ? `Exam published — join link emailed to ${n} students` : "Exam published — students can start now", notifyStudents, enrollmentMode === "all");
   };
   const schedule = () => {
     if (!schedDate || !schedTime) return;
-    const n = notifyStudents ? ENROLLED : 0;
+    const n = notifyStudents ? recipientCount : 0;
     const whenIso = new Date(`${schedDate}T${schedTime}`).toISOString();
     setPublish({ status: "scheduled", link: studentLink(selected), when: `${schedDate} · ${schedTime}`, notified: n });
     persist(buildRecord("scheduled", whenIso), n ? `Scheduled for ${schedDate} ${schedTime} — students will be emailed` : `Scheduled for ${schedDate} ${schedTime}`, notifyStudents, enrollmentMode === "all");
   };
+  // Real candidate pool for the batch: the global student directory filtered by
+  // the exam's batch, so publish/email counts reflect actual students.
+  useEffect(() => {
+    let active = true;
+    setRoster([]);
+    setLoadingRoster(true);
+    if (!selected?.batch) { setLoadingRoster(false); return; }
+    void listStudentsByBatch(selected.batch).then((rows: Student[]) => {
+      if (!active) return;
+      setRoster(rows.map((r) => ({ roll: r.roll, full_name: r.full_name, email: r.email })));
+      setLoadingRoster(false);
+    });
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
+
+  const recipientEmails = enrollmentMode === "all"
+    ? roster.map((r) => r.email).filter(Boolean)
+    : selectedManual
+        .map((roll) => roster.find((r) => r.roll === roll)?.email)
+        .filter((e): e is string => Boolean(e));
+  const recipientCount = recipientEmails.length;
+  const recipientCountLabel = enrollmentMode === "all" ? roster.length : selectedManual.length;
   const copyLink = () => { navigator.clipboard?.writeText(publish.link ?? "").catch(() => undefined); setCopied(true); notify("Student link copied"); window.setTimeout(() => setCopied(false), 2000); };
   const canContinue = step === 0 ? pool.length > 0 : true;
 
@@ -162,9 +187,9 @@ export default function TeacherQuestionSetup({ exams, navigate, notify }: { exam
       <SetupHeader selected={selected} onExit={() => setSelected(null)} onSaveDraft={() => { setDraftSaved(true); notify("Draft saved"); }} draftSaved={draftSaved} pool={pool.length} totalMarks={totalMarks} perStudent={perStudent} mode={s.mode} />
       <Stepper step={step} onJump={(i) => { if (i === 0 || pool.length > 0) setStep(i); }} poolReady={pool.length > 0} />
       <div className="mt-8">
-        {step === 0 && <StepAdd examId={selected.id} visible={visible} poolQuestions={poolQuestions} pool={pool} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} toggle={toggle} addAllShown={addAllShown} navigate={navigate} bulkOpen={bulkOpen} setBulkOpen={setBulkOpen} bulkFile={bulkFile} onBulkStage={onBulkStage} downloadTemplate={downloadTemplate} />}
+        {step === 0 && <StepAdd examId={selected.id} visible={visible} poolQuestions={poolQuestions} pool={pool} search={search} setSearch={setSearch} filter={filter} setFilter={setFilter} diffFilter={diffFilter} setDiffFilter={setDiffFilter} toggle={toggle} addAllShown={addAllShown} navigate={navigate} bulkOpen={bulkOpen} setBulkOpen={setBulkOpen} bulkFile={bulkFile} onBulkStage={onBulkStage} downloadTemplate={downloadTemplate} />}
         {step === 1 && <StepRules s={s} set={set} poolCount={pool.length} />}
-        {step === 2 && <StepPublish selected={selected} settings={s} pool={pool.length} totalMarks={totalMarks} perStudent={perStudent} schedDate={schedDate} setSchedDate={setSchedDate} schedTime={schedTime} setSchedTime={setSchedTime} onPublishNow={publishNow} onSchedule={schedule} notifyStudents={notifyStudents} setNotifyStudents={setNotifyStudents} enrollmentMode={enrollmentMode} setEnrollmentMode={setEnrollmentMode} />}
+        {step === 2 && <StepPublish selected={selected} settings={s} pool={pool.length} totalMarks={totalMarks} perStudent={perStudent} schedDate={schedDate} setSchedDate={setSchedDate} schedTime={schedTime} setSchedTime={setSchedTime} onPublishNow={publishNow} onSchedule={schedule} notifyStudents={notifyStudents} setNotifyStudents={setNotifyStudents} enrollmentMode={enrollmentMode} setEnrollmentMode={setEnrollmentMode} roster={roster} selectedManual={selectedManual} setSelectedManual={setSelectedManual} recipientEmails={recipientEmails} recipientCount={recipientCount} recipientCountLabel={recipientCountLabel} rosterLoading={loadingRoster} />}
       </div>
       <StepNav step={step} canContinue={canContinue} onBack={() => setStep((x) => Math.max(0, x - 1))} onNext={() => setStep((x) => Math.min(2, x + 1))} />
     </div>
@@ -187,26 +212,23 @@ function ExamPicker({ exams, navigate, onChoose }: { exams: Exam[]; navigate: (p
       </div>
       <p className="mt-6 font-mono text-[10px] uppercase tracking-widest text-forest">Your exams · {exams.length}</p>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        {exams.map((exam) => {
-          const seeded = exam.id === "EXAM-2026-014";
-          return (
-            <button key={exam.id} onClick={() => onChoose(exam)} className="group border border-line bg-paper p-6 text-left transition hover:-translate-y-0.5 hover:border-forest hover:shadow-md">
-              <div className="flex items-start justify-between gap-5">
-                <div>
-                  <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">{exam.id}</p>
-                  <h3 className="mt-3 font-serif text-2xl font-semibold group-hover:text-forest">{exam.name}</h3>
-                  <p className="mt-2 text-[13px] text-ink-soft">{exam.batch}</p>
-                </div>
-                <span className={`font-mono text-[10px] uppercase tracking-wider ${exam.tone}`}>{exam.state}</span>
+        {exams.map((exam) => (
+          <button key={exam.id} onClick={() => onChoose(exam)} className="group border border-line bg-paper p-6 text-left transition hover:-translate-y-0.5 hover:border-forest hover:shadow-md">
+            <div className="flex items-start justify-between gap-5">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">{exam.id}</p>
+                <h3 className="mt-3 font-serif text-2xl font-semibold group-hover:text-forest">{exam.name}</h3>
+                <p className="mt-2 text-[13px] text-ink-soft">{exam.batch}</p>
               </div>
-              <div className="mt-8 grid grid-cols-3 border-t border-line pt-4">
-                <PickStat label="Pool" value={seeded ? "3 questions" : "Not started"} />
-                <PickStat label="Mode" value={seeded ? "Lockdown" : "—"} />
-                <div className="text-right"><span className="font-mono text-[10px] uppercase tracking-wider text-forest">Open →</span></div>
-              </div>
-            </button>
-          );
-        })}
+              <span className={`font-mono text-[10px] uppercase tracking-wider ${exam.tone}`}>{exam.state}</span>
+            </div>
+            <div className="mt-8 grid grid-cols-3 border-t border-line pt-4">
+              <PickStat label="Pool" value={exam.count ? exam.count : "0 questions"} />
+              <PickStat label="Mode" value={exam.state === "Live" || exam.state === "Scheduled" ? "Lockdown" : "—"} />
+              <div className="text-right"><span className="font-mono text-[10px] uppercase tracking-wider text-forest">Open →</span></div>
+            </div>
+          </button>
+        ))}
       </div>
       {exams.length === 0 && (
         <div className="mt-4 border border-dashed border-line-strong p-12 text-center">
@@ -275,6 +297,7 @@ function StepNav({ step, canContinue, onBack, onNext }: { step: number; canConti
 type AddProps = {
   examId: string; visible: Question[]; poolQuestions: Question[]; pool: string[];
   search: string; setSearch: (v: string) => void; filter: string; setFilter: (v: string) => void;
+  diffFilter: string; setDiffFilter: (v: string) => void;
   toggle: (id: string) => void; addAllShown: () => void; navigate: (p: string) => void;
   bulkOpen: boolean; setBulkOpen: (v: boolean) => void; bulkFile: string | null;
   onBulkStage: (f: File | undefined) => void; downloadTemplate: () => void;
@@ -338,6 +361,9 @@ function BankPanel(p: AddProps) {
             <select value={p.filter} onChange={(e) => p.setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-3 text-[13px]">
               <option>All</option><option>MCQ</option><option>MSQ</option><option>Numerical</option><option>True / False</option><option>Subjective</option><option>Coding</option>
             </select>
+            <select value={p.diffFilter} onChange={(e) => p.setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="border border-line-strong bg-paper px-3 py-3 text-[13px]">
+              <option>All</option><option>Easy</option><option>Medium</option><option>Hard</option>
+            </select>
           </div>
         </div>
         <div className="divide-y divide-line">
@@ -348,7 +374,18 @@ function BankPanel(p: AddProps) {
       <aside>
         <section className="border border-forest bg-success/5 p-5">
           <div className="flex items-center justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-forest">Exam pool</p><h2 className="mt-1 font-serif text-xl font-semibold">Ready to deliver</h2></div><span className="font-mono text-[11px] text-forest">{p.poolQuestions.length} total</span></div>
-          <div className="mt-5 border-t border-forest/20 pt-4">
+          <div className="mt-4 flex flex-wrap gap-2">
+            {["Easy", "Medium", "Hard"].map((d) => {
+              const n = p.poolQuestions.filter((q) => (q.difficulty || "Medium") === d).length;
+              if (n === 0) return null;
+              return (
+                <span key={d} className={`px-2 py-1 font-mono text-[10px] ${d === "Easy" ? "text-success" : d === "Hard" ? "text-alert" : "text-amber"}`}>
+                  {d} · {n}
+                </span>
+              );
+            })}
+          </div>
+          <div className="mt-2 border-t border-forest/20 pt-4">
             {p.poolQuestions.length ? p.poolQuestions.map((q) => (
               <div key={q.id} className="flex items-start justify-between gap-3 border-b border-forest/15 py-3 last:border-0">
                 <div><span className="font-mono text-[10px] text-forest">{q.id}</span><p className="mt-1 text-[12px] leading-snug">{q.title}</p></div>
@@ -367,7 +404,7 @@ function BankRow({ q, added, onToggle }: { q: Question; added: boolean; onToggle
       <div className="flex min-w-0 gap-3">
         <span className={`mt-1 h-5 w-5 shrink-0 border text-center text-[12px] leading-5 ${added ? "border-forest bg-forest text-paper" : "border-line-strong text-transparent"}`}>✓</span>
         <div>
-          <div className="flex flex-wrap gap-2"><span className="font-mono text-[10px] text-ink-soft">{q.id}</span><span className="bg-paper-raised px-2 py-1 font-mono text-[10px] text-ink-soft">{q.unit}</span><span className="bg-paper-raised px-2 py-1 font-mono text-[10px] text-ink-soft">{q.type}</span></div>
+          <div className="flex flex-wrap gap-2"><span className="font-mono text-[10px] text-ink-soft">{q.id}</span><span className="bg-paper-raised px-2 py-1 font-mono text-[10px] text-ink-soft">{q.unit}</span><span className="bg-paper-raised px-2 py-1 font-mono text-[10px] text-ink-soft">{q.type}</span><span className={`px-2 py-1 font-mono text-[10px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>{q.difficulty}</span></div>
           <p className="mt-3 text-[14px] leading-relaxed">{q.title}</p>
           <p className="mt-2 text-[11px] text-ink-soft">{q.marks} {q.marks === 1 ? "mark" : "marks"} · {q.difficulty}</p>
         </div>
@@ -518,18 +555,13 @@ function ToggleRow({ label, detail, checked, onChange }: { label: string; detail
 }
 function PreviewRow({ label, value }: { label: string; value: string }) { return <div className="flex items-center justify-between gap-3 border-b border-line/60 pb-2 last:border-0"><dt className="text-ink-soft">{label}</dt><dd className="font-medium">{value}</dd></div>; }
 
-function StepPublish({ selected, settings, pool, totalMarks, perStudent, schedDate, setSchedDate, schedTime, setSchedTime, onPublishNow, onSchedule, notifyStudents, setNotifyStudents, enrollmentMode, setEnrollmentMode }: { selected: Exam; settings: Settings; pool: number; totalMarks: number; perStudent: number; schedDate: string; setSchedDate: (v: string) => void; schedTime: string; setSchedTime: (v: string) => void; onPublishNow: () => void; onSchedule: () => void; notifyStudents: boolean; setNotifyStudents: (v: boolean) => void; enrollmentMode: "all" | "manual"; setEnrollmentMode: (v: "all" | "manual") => void }) {
+function StepPublish({ selected, settings, pool, totalMarks, perStudent, schedDate, setSchedDate, schedTime, setSchedTime, onPublishNow, onSchedule, notifyStudents, setNotifyStudents, enrollmentMode, setEnrollmentMode, roster, selectedManual, setSelectedManual, recipientEmails, recipientCount, recipientCountLabel, rosterLoading }: { selected: Exam; settings: Settings; pool: number; totalMarks: number; perStudent: number; schedDate: string; setSchedDate: (v: string) => void; schedTime: string; setSchedTime: (v: string) => void; onPublishNow: () => void; onSchedule: () => void; notifyStudents: boolean; setNotifyStudents: (v: boolean) => void; enrollmentMode: "all" | "manual"; setEnrollmentMode: (v: "all" | "manual") => void; roster: { roll: string; full_name: string; email: string }[]; selectedManual: string[]; setSelectedManual: (v: string[] | ((c: string[]) => string[])) => void; recipientEmails: string[]; recipientCount: number; recipientCountLabel: number; rosterLoading: boolean }) {
   const ready = pool > 0;
-  const [selectedMockStudents, setSelectedMockStudents] = useState<string[]>([]);
   const [expandedRecipients, setExpandedRecipients] = useState(false);
-  const mockRecipients = enrollmentMode === "all" 
-    ? Array.from({ length: ENROLLED }).map((_, i) => `21vgn${String(142 + i).padStart(4, '0')}@vignan.ac.in`) 
-    : selectedMockStudents.map(id => MOCK_STUDENTS.find(s => s.id === id)?.email).filter(Boolean) as string[];
-  const visibleRecipients = expandedRecipients ? mockRecipients : mockRecipients.slice(0, 4);
-  const allSelected = selectedMockStudents.length === MOCK_STUDENTS.length;
-  const toggleAll = () => setSelectedMockStudents(allSelected ? [] : MOCK_STUDENTS.map(s => s.id));
-  const toggleStudent = (id: string) => setSelectedMockStudents(curr => curr.includes(id) ? curr.filter(x => x !== id) : [...curr, id]);
-  const recipientCount = enrollmentMode === "all" ? ENROLLED : selectedMockStudents.length;
+  const visibleRecipients = expandedRecipients ? recipientEmails : recipientEmails.slice(0, 4);
+  const allSelected = roster.length > 0 && selectedManual.length === roster.length;
+  const toggleAll = () => setSelectedManual(allSelected ? [] : roster.map((s) => s.roll));
+  const toggleStudent = (roll: string) => setSelectedManual((curr) => (curr.includes(roll) ? curr.filter((x) => x !== roll) : [...curr, roll]));
   const checklist: [string, boolean][] = [
     [`${pool} question${pool === 1 ? "" : "s"} in the pool`, pool > 0],
     [`${perStudent} delivered per student`, perStudent > 0],
@@ -559,7 +591,7 @@ function StepPublish({ selected, settings, pool, totalMarks, perStudent, schedDa
                 <input type="radio" name="enroll" checked={enrollmentMode === "all"} onChange={() => setEnrollmentMode("all")} className="mt-0.5 accent-forest" />
                 <div>
                   <span className="block font-medium">Enroll entire batch</span>
-                  <span className="mt-0.5 block text-[11px] text-ink-soft">Automatically enrolls all {ENROLLED} students in {selected.batch}.</span>
+                  <span className="mt-0.5 block text-[11px] text-ink-soft">Automatically enrolls all {rosterLoading ? "…" : roster.length} students in {selected.batch}.</span>
                 </div>
               </label>
               <label className="flex items-start gap-3 cursor-pointer hover:bg-paper-raised p-2 -mx-2 rounded transition">
@@ -577,11 +609,12 @@ function StepPublish({ selected, settings, pool, totalMarks, perStudent, schedDa
                       {allSelected ? "Deselect All" : "Select All"}
                     </button>
                   </div>
-                  {MOCK_STUDENTS.map(student => (
-                    <label key={student.id} className="flex items-center gap-3 py-1.5 cursor-pointer">
-                       <input type="checkbox" checked={selectedMockStudents.includes(student.id)} onChange={() => toggleStudent(student.id)} className="accent-forest" />
+                  {roster.length === 0 && !rosterLoading && <p className="py-2 text-[11px] text-ink-soft">No students in this batch yet — add candidates from the Students tab first.</p>}
+                  {roster.map((student) => (
+                    <label key={student.roll} className="flex items-center gap-3 py-1.5 cursor-pointer">
+                       <input type="checkbox" checked={selectedManual.includes(student.roll)} onChange={() => toggleStudent(student.roll)} className="accent-forest" />
                        <div>
-                         <p className="text-[12px]">{student.name} <span className="text-ink-soft">({student.id})</span></p>
+                         <p className="text-[12px]">{student.full_name} <span className="text-ink-soft">({student.roll})</span></p>
                        </div>
                     </label>
                   ))}
@@ -598,12 +631,13 @@ function StepPublish({ selected, settings, pool, totalMarks, perStudent, schedDa
           </div>
           <p className="mt-2 text-[12px] text-ink-soft">{notifyStudents ? <>An email with the join link and start time goes to all <span className="text-ink">{recipientCount} students</span> in {selected.batch}.</> : "Publishing silently — no email is sent. You can share the link yourself."}</p>
           {notifyStudents && <div className="mt-3 border border-line bg-paper-raised p-3"><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Recipients preview</p><div className="mt-1.5 space-y-0.5">{visibleRecipients.map((e) => <p key={e} className="truncate font-mono text-[11px] text-ink-soft">{e}</p>)}
-          {!expandedRecipients && mockRecipients.length > 4 && (
-            <button type="button" onClick={() => setExpandedRecipients(true)} className="font-mono text-[11px] text-ink-soft hover:text-ink hover:underline">+ {mockRecipients.length - 4} more…</button>
+          {!expandedRecipients && recipientEmails.length > 4 && (
+            <button type="button" onClick={() => setExpandedRecipients(true)} className="font-mono text-[11px] text-ink-soft hover:text-ink hover:underline">+ {recipientEmails.length - 4} more…</button>
           )}
-          {expandedRecipients && mockRecipients.length > 4 && (
+          {expandedRecipients && recipientEmails.length > 4 && (
              <button type="button" onClick={() => setExpandedRecipients(false)} className="mt-2 font-mono text-[11px] text-ink-soft hover:text-ink hover:underline">Show less</button>
-          )}</div></div>}
+          )}
+          {recipientEmails.length === 0 && <p className="text-[11px] text-ink-soft">No student emails found in this batch yet — publish without email, then share the link.</p>}</div></div>}
         </section>
         <section className="border border-forest bg-success/5 p-5">
           <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Publish now</p>

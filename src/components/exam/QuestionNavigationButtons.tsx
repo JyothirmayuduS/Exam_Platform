@@ -1,7 +1,7 @@
 type QuestionNavigationButtonsProps = {
   currentIndex: number;
   total: number;
-  lastVisited: number | null;
+  lastVisited: string | null;
   isReviewed: boolean;
   onPrev: () => void;
   onNext: () => void;

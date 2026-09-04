@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Sentry from "@sentry/react";
 import Seal from "../components/Seal";
 import ProctorCamera from "../components/ProctorCamera";
+import InvigilatorVoice from "../components/InvigilatorVoice";
 import ExamTools from "../components/ExamTools";
 import ProctorAI, { type AIStatus } from "../components/ProctorAI";
 import ExamHeader from "../components/exam/ExamHeader";
@@ -13,12 +14,16 @@ import ExamSidebar from "../components/exam/ExamSidebar";
 import SubmitDialog from "../components/exam/SubmitDialog";
 import { supabaseConfigured } from "../lib/env";
 import {
-  loadExamBundle,
+  loadPaperForStudent,
   getStudentIdByRoll,
+  getStudentProfile,
   startAttempt,
   saveAnswers,
   submitAttempt,
+  listProctorMessages,
+  subscribeToMessages,
   type DBQuestion,
+  type PaperSlot,
 } from "../lib/examApi";
 import { lockdownReady, isTauri, downloadUrl, osLabel, detectOS, probeInstaller } from "../lib/platform";
 import useExamState from "../hooks/useExamState";
@@ -28,28 +33,32 @@ import useProctoring from "../hooks/useProctoring";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useOfflineSync from "../hooks/useOfflineSync";
 import { invoke } from "@tauri-apps/api/core";
-import { uploadExamRecords, startScreenshotCapture, type ScreenshotHandle } from "../lib/examStorage";
+import { uploadExamRecords, startScreenshotCapture, type ScreenshotHandle, type ViolationSnap } from "../lib/examStorage";
 import {
   DownloadGateScreen,
   InstalledScreen,
   SystemCheckScreen,
-  RulesScreen,
   SubmittedScreen
 } from "../components/exam/ExamFlowScreens";
+import RegistrationScreen from "../components/exam/RegistrationScreen";
+import StartScreen from "../components/exam/StartScreen";
 import { useSearchParams } from "react-router-dom";
 import DeviceAccessFull from "../components/exam/DeviceAccessFull";
 
-type Question = { id: number; text: string; options: string[]; category: string; type?: "mcq" | "subjective" };
+type Question = { id: string; text: string; options: string[]; category: string; type?: "mcq" | "subjective" };
 
-// Map a DB question row → the shape the exam UI renders. MCQ options only;
-// subjective questions still render (options fall back to none) so the paper is
-// complete even if the pool mixes types.
-function toUIQuestion(row: DBQuestion, index: number): Question {
+// Map a DB question row → the shape the exam UI renders. The id is the DB
+// question id, so answers (keyed by id) survive paper slicing and match the
+// grading side. MCQ options only; subjective questions still render (options
+// fall back to none) so the paper is complete even if the pool mixes types.
+function toUIQuestion(row: DBQuestion): Question {
+  const raw = (row.type ?? "").toLowerCase();
   return {
-    id: index + 1,
+    id: row.id,
     text: row.title,
     options: row.options ?? [],
     category: row.unit ?? "General",
+    type: raw.includes("subj") || raw.includes("cod") ? "subjective" : raw.includes("mcq") ? "mcq" : (row.options?.length ?? 0) > 0 ? "mcq" : "subjective",
   };
 }
 
@@ -71,9 +80,10 @@ function runCompatChecks(): CheckResult[] {
   ];
 }
 
-// Steps: gate (browser download) → check → access (devices) → rules → exam → submitted.
-// "installed" is a transient gate sub-state shown after the student confirms they installed the app.
-type Step = "gate" | "installed" | "check" | "access" | "rules" | "exam" | "submitted";
+// Steps (mirrors the reference flow): gate (browser download) → check → access
+// (devices) → register (name/email/USN + terms) → start (pick section) → exam
+// → submitted. "installed" is a transient gate sub-state.
+type Step = "gate" | "installed" | "check" | "access" | "register" | "start" | "exam" | "submitted";
 
 export default function StudentExam() {
   const [searchParams] = useSearchParams();
@@ -82,7 +92,6 @@ export default function StudentExam() {
   const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const EXAM_ID = searchExamId ?? urlParams.get("examId") ?? urlParams.get("exam") ?? "EXAM-2026-072";
   const STUDENT_ROLL = searchRoll ?? urlParams.get("roll") ?? "21BQ1A0501";
-  const STUDENT_NAME = "Prototype Student";
   const ROOM = EXAM_ID;
   const [durationMin, setDurationMin] = useState(45);
 
@@ -94,6 +103,18 @@ export default function StudentExam() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loadError, setLoadError] = useState("");
   const [examName, setExamName] = useState("");
+  // Real student identity: preferred from the email link (?name=&email=&roll=),
+  // otherwise resolved from the students table once the session is known.
+  const urlName = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("name") : null;
+  const urlEmail = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("email") : null;
+  const [studentName, setStudentName] = useState<string>(urlName ?? "Candidate");
+  const [studentEmail, setStudentEmail] = useState<string>(urlEmail ?? "");
+  // The student's paper snapshot (DB question ids in order) — persisted with
+  // the attempt row so reloads and grading see exactly what this student saw.
+  const paperRef = useRef<PaperSlot[]>([]);
+  // Index of the first question of the section the student picked on the
+  // "Ready to start?" screen (defaults to the very first question).
+  const startIndexRef = useRef(0);
 
   // Attempt / DB
   const studentIdRef = useRef<string | null>(null);
@@ -110,12 +131,13 @@ export default function StudentExam() {
   const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
   // Screenshot capture handle (startScreenshotCapture)
   const screenshotHandleRef = useRef<ScreenshotHandle | null>(null);
-  // Real violation snapshot blobs (captured at violation moment)
-  const violationSnapshotsRef = useRef<{ label: string; blob: Blob }[]>([]);
+  // Real violation snapshot blobs (captured at violation moment), with the
+  // offset in seconds from the exam start for the PDF + seek-bar timeline.
+  const violationSnapshotsRef = useRef<ViolationSnap[]>([]);
+  const examStartedAtRef = useRef<number | null>(null);
   const accessStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
 
-  const [agreed, setAgreed] = useState(false);
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(!!document.fullscreenElement);
@@ -128,6 +150,10 @@ export default function StudentExam() {
   // "installed" deep-link state: tracks whether we tried vignan-exam:// launch
   const [deepLinkTried, setDeepLinkTried] = useState(false);
   const [deepLinkFailed, setDeepLinkFailed] = useState(false);
+  // True while the invigilator has paused this candidate (attempt.state = "paused").
+  const [proctorPaused, setProctorPaused] = useState(false);
+  // Latest exam-wide broadcast from the proctor/teacher consoles.
+  const [broadcast, setBroadcast] = useState<{ id: string; body: string; sender: string } | null>(null);
 
   // Recording state (screen recording only — no per-second screenshots, no PDF)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -144,12 +170,30 @@ export default function StudentExam() {
     goLast,
     goLastVisited,
     setAnswer,
+    clearAnswer,
     toggleReview,
     isReviewed,
     getQuestionStatus,
     counts,
     markVisited,
   } = useExamState(questions);
+
+  // Sections are real groupings of the student's own paper (mirrors the
+  // reference layout where e.g. "Descriptive" and "MCQ" are separate).
+  const sections = useMemo(() => {
+    const groups = new Map<string, { name: string; ids: string[] }>();
+    for (const q of questions) {
+      const isSub = q.type === "subjective" || q.options.length === 0;
+      const name = isSub ? "Descriptive" : "MCQ";
+      let g = groups.get(name);
+      if (!g) {
+        g = { name, ids: [] };
+        groups.set(name, g);
+      }
+      g.ids.push(q.id);
+    }
+    return Array.from(groups.values()).map((g) => ({ name: g.name, count: g.ids.length, firstIndex: questions.findIndex((q) => q.id === g.ids[0]) }));
+  }, [questions]);
 
   useOfflineSync(studentIdRef.current);
 
@@ -160,12 +204,22 @@ export default function StudentExam() {
     studentIdRef.current ?? undefined
   );
 
-  // On every new violation, capture a high-quality snapshot via the screenshot handle
+  // On every new violation, capture a high-quality snapshot via the screenshot
+  // handle and remember when (in seconds from the exam start) it happened, so
+  // the PDF report + recording seek bar can timestamp it. Captured once per
+  // flag (id).
+  const capturedViolationIdsRef = useRef<Set<number>>(new Set());
   useEffect(() => {
     if (!activeViolation || !screenshotHandleRef.current) return;
+    if (capturedViolationIdsRef.current.has(activeViolation.id)) return;
+    capturedViolationIdsRef.current.add(activeViolation.id);
+    const offsetSec = examStartedAtRef.current
+      ? Math.max(0, Math.round((Date.now() - examStartedAtRef.current) / 1000))
+      : null;
     void screenshotHandleRef.current.captureViolationSnapshot(activeViolation.kind).then((blob) => {
-      if (blob) violationSnapshotsRef.current.push({ label: `${activeViolation.kind} at ${activeViolation.at}`, blob });
+      if (blob) violationSnapshotsRef.current.push({ label: activeViolation.kind, blob, offsetSec });
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViolation]);
 
   // Start screenshot capture when exam starts (hidden video is now in DOM)
@@ -176,8 +230,8 @@ export default function StudentExam() {
       hiddenVideoRef.current.srcObject = screenStreamRef.current;
       hiddenVideoRef.current.play().catch(() => {});
       screenshotHandleRef.current = startScreenshotCapture({
-        examName: examName || EXAM_ID,
-        studentId: `${STUDENT_NAME}_${STUDENT_ROLL}`,
+        examId: EXAM_ID,
+        roll: STUDENT_ROLL,
         intervalMs: 1000,
       });
       screenshotHandleRef.current.setVideo(hiddenVideoRef.current);
@@ -249,18 +303,40 @@ export default function StudentExam() {
   const checksDone = checks.length > 0 && checkIndex >= checks.length;
   const checksPassed = checksDone && checks.every((c) => c.ok);
 
-  // Load exam + questions from the DB
+  // Load exam + this student's paper (per-student question snapshot) from the DB.
   useEffect(() => {
     if (!supabaseConfigured) return;
     let active = true;
     (async () => {
-      const { exam, questions: rows } = await loadExamBundle(EXAM_ID);
+      // Resolve the student row first — the paper snapshot is seeded from it.
+      const db = await import("../lib/supabase").then(m => m.getSupabase());
+      if (db) {
+        if (STUDENT_ROLL !== "TEST-001") {
+          studentIdRef.current = await getStudentIdByRoll(STUDENT_ROLL);
+          // Pre-fill the registration screen from the student's real record.
+          const profile = await getStudentProfile(STUDENT_ROLL);
+          if (profile) {
+            if (!urlName) setStudentName(profile.full_name || "Candidate");
+            if (!urlEmail) setStudentEmail(profile.email ?? "");
+          }
+        } else {
+          const { data: { session } } = await db.auth.getSession();
+          if (session?.user?.id) {
+            const { data: st } = await db.from("students").select("id").eq("auth_id", session.user.id).maybeSingle();
+            if (st) studentIdRef.current = st.id;
+          }
+        }
+      }
+      if (!active) return;
+
+      const seed = studentIdRef.current ?? STUDENT_ROLL;
+      const { exam, questions: rows, paper } = await loadPaperForStudent(EXAM_ID, seed);
       if (!active) return;
       if (!exam) {
         setLoadError("Exam not found or you are not enrolled.");
         return;
       }
-      
+
       // Set Sentry Context
       Sentry.setTag("exam_id", exam.id);
       Sentry.setTag("attempt_id", studentIdRef.current ?? "unknown");
@@ -274,37 +350,16 @@ export default function StudentExam() {
       }
 
       if (rows.length === 0) {
-        // Fallback: load standard pool questions so candidate is never blocked
-        const fallback = await loadExamBundle("EXAM-2026-014");
-        if (fallback.questions.length > 0) {
-          setQuestions(fallback.questions.map(toUIQuestion));
-        } else {
-          setLoadError("No questions found for this exam yet.");
-          return;
-        }
-      } else {
-        setQuestions(rows.map(toUIQuestion));
+        setLoadError("No questions found for this exam yet.");
+        return;
       }
-      
-      const db = await import("../lib/supabase").then(m => m.getSupabase());
-      if (db) {
-        // Find the student based on the auth_id in the mock session (or real session)
-        // If a real "roll" was passed in deep link, use that, else fallback to session
-        if (STUDENT_ROLL !== "TEST-001") {
-           studentIdRef.current = await getStudentIdByRoll(STUDENT_ROLL);
-        } else {
-           const { data: { session } } = await db.auth.getSession();
-           if (session?.user?.id) {
-             const { data: st } = await db.from("students").select("id").eq("auth_id", session.user.id).maybeSingle();
-             if (st) studentIdRef.current = st.id;
-           }
-        }
-        
-        if (studentIdRef.current && active) {
-          const { data: att } = await db.from("attempts").select("state").eq("exam_id", EXAM_ID).eq("student_id", studentIdRef.current).maybeSingle();
-          if (att?.state === "submitted") {
-            setStep("submitted");
-          }
+      paperRef.current = paper;
+      setQuestions(rows.map(toUIQuestion));
+
+      if (db && studentIdRef.current && active) {
+        const { data: att } = await db.from("attempts").select("state").eq("exam_id", EXAM_ID).eq("student_id", studentIdRef.current).maybeSingle();
+        if (att?.state === "submitted") {
+          setStep("submitted");
         }
       }
     })();
@@ -322,9 +377,66 @@ export default function StudentExam() {
 
   const { secondsLeft, setSecondsLeft, timeString, tone: timerTone, warning: timerWarning } = useExamTimer({
     durationMinutes: durationMin,
-    active: step === "exam",
+    // A proctor pause freezes the countdown until the attempt is resumed.
+    active: step === "exam" && !proctorPaused,
     onTimeUp: () => void doSubmit(),
   });
+
+  // Live broadcasts from the proctor/teacher console (proctor_messages,
+  // kind = broadcast) shown as a toast while the exam is running.
+  useEffect(() => {
+    if (step !== "exam" || !supabaseConfigured) return;
+    let alive = true;
+    const load = () => {
+      void listProctorMessages(EXAM_ID).then((rows) => {
+        if (!alive) return;
+        const latest = rows.filter((m) => m.kind === "broadcast").at(-1);
+        if (latest) setBroadcast({ id: latest.id, body: latest.body, sender: latest.sender });
+      });
+    };
+    load();
+    const unsub = subscribeToMessages(EXAM_ID, load);
+    return () => { alive = false; unsub(); };
+  }, [step, EXAM_ID]);
+
+  // Auto-dismiss the broadcast toast after 8 seconds.
+  useEffect(() => {
+    if (!broadcast) return;
+    const id = window.setTimeout(() => setBroadcast(null), 8000);
+    return () => window.clearTimeout(id);
+  }, [broadcast]);
+
+  // React to the invigilator pausing/resuming this attempt (realtime on the
+  // attempts row). The teacher console sets state="paused" via the DB.
+  useEffect(() => {
+    if (step !== "exam" || !supabaseConfigured || !studentIdRef.current) return;
+    let stopped = false;
+    let cleanup: (() => void) | null = null;
+    void import("../lib/supabase").then((m) => {
+      const db = m.getSupabase();
+      if (!db || !studentIdRef.current || stopped) return;
+      const channel = db
+        .channel(`attempt-pause-${studentIdRef.current}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "attempts",
+            filter: `student_id=eq.${studentIdRef.current}`,
+          },
+          (payload: { new: { state?: string } | null }) => {
+            const state = payload.new?.state;
+            setProctorPaused(state === "paused");
+            if (state === "paused") flag("Session paused by invigilator");
+          },
+        )
+        .subscribe();
+      cleanup = () => { void db.removeChannel(channel); };
+    });
+    return () => { stopped = true; cleanup?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, flag]);
 
   const studentId = studentIdRef.current;
   const screenStream = screenStreamRef.current;
@@ -520,6 +632,7 @@ export default function StudentExam() {
   const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
 
   function beginExam() {
+    examStartedAtRef.current = Date.now();
     // Grab a fresh camera+mic stream for ProctorAI before releasing the preview
     // stream (ProctorCamera will open its own stream via LiveKit).
     if (accessStreamRef.current) {
@@ -529,10 +642,14 @@ export default function StudentExam() {
     }
     // Enter full-screen lock (best-effort; Tauri kiosk is already fullscreen).
     try { void document.documentElement.requestFullscreen?.(); } catch { /* ignore */ }
+    // Start at the first question of the section the student picked.
+    if (startIndexRef.current > 0 && startIndexRef.current < questions.length) {
+      goTo(startIndexRef.current);
+    }
     // Start / resume the DB attempt.
     if (supabaseConfigured && studentIdRef.current && !attemptStartedRef.current) {
       attemptStartedRef.current = true;
-      void startAttempt({ examId: EXAM_ID, studentId: studentIdRef.current, total: questions.length }).then(id => {
+      void startAttempt({ examId: EXAM_ID, studentId: studentIdRef.current, total: questions.length, paper: paperRef.current }).then(id => {
         if (id) setAttemptId(id);
       });
     }
@@ -587,16 +704,20 @@ export default function StudentExam() {
       }
     }
 
-    // Upload all exam artifacts: recording + screenshots + violations + PDF
+    // Upload all exam artifacts: recording + violation snapshots + PDF — all to
+    // Cloudflare R2 (never Supabase).
     setTimeout(async () => {
       try {
         const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
-        await uploadExamRecords({
-          examName: examName || EXAM_ID,
-          studentId: `${STUDENT_NAME}_${STUDENT_ROLL}`,
+        const result = await uploadExamRecords({
+          examId: EXAM_ID,
+          roll: STUDENT_ROLL,
+          studentName: studentName,
           videoBlob,
           violationSnapshots: violationSnapshotsRef.current,
+          durationSec: Math.max(0, Math.round(durationMin * 60 - secondsLeft)),
         });
+        console.log("[StudentExam] artifacts stored in R2:", result);
       } catch (err) {
         console.error("Failed to upload recording:", err);
       }
@@ -733,20 +854,46 @@ export default function StudentExam() {
         devicesReady={devicesReady}
         previewRef={previewRef}
         onRequest={requestDevices}
-        onContinue={() => setStep("rules")}
+        onContinue={() => setStep("register")}
       />
     );
   }
-  // ---------- Step: rules, timer & instructions ----------
-    if (step === "rules") {
+  // ---------- Step: registration (name / email / USN / terms) ----------
+  if (step === "register") {
     return (
-      <RulesScreen
+      <RegistrationScreen
         examName={examName}
+        questionCount={questions.length}
+        sectionCount={Math.max(1, sections.length)}
         durationMin={durationMin}
-        questionsLength={questions.length}
-        agreed={agreed}
-        onAgree={setAgreed}
-        onStart={beginExam}
+        studentName={studentName}
+        initial={{ email: studentEmail, firstName: studentName === "Candidate" ? "" : studentName.split(" ")[0], lastName: studentName === "Candidate" ? "" : studentName.split(" ").slice(1).join(" "), usn: STUDENT_ROLL }}
+        onBack={() => setStep("access")}
+        onDone={(info) => {
+          if (info.firstName || info.lastName) setStudentName(`${info.firstName} ${info.lastName}`.trim());
+          if (info.email) setStudentEmail(info.email);
+          setStep("start");
+        }}
+      />
+    );
+  }
+
+  // ---------- Step: ready to start? (pick section) ----------
+  if (step === "start") {
+    return (
+      <StartScreen
+        examName={examName}
+        questionCount={questions.length}
+        sectionCount={Math.max(1, sections.length)}
+        durationMin={durationMin}
+        studentName={studentName}
+        sections={sections.map((s) => ({ name: s.name, count: s.count }))}
+        onBack={() => setStep("register")}
+        onStart={(idx) => {
+          const target = Math.max(0, Math.min(idx, Math.max(0, sections.length - 1)));
+          startIndexRef.current = sections[target]?.firstIndex ?? 0;
+          beginExam();
+        }}
       />
     );
   }
@@ -756,7 +903,7 @@ export default function StudentExam() {
       <SubmittedScreen
         answeredCount={answeredCount}
         totalQuestions={questions.length}
-        studentName={STUDENT_NAME}
+        studentName={studentName}
         studentRoll={STUDENT_ROLL}
         violationsCount={violations.length}
         examId={EXAM_ID}
@@ -767,6 +914,42 @@ export default function StudentExam() {
   // ---------- Step: exam (kiosk mode) ----------
   return (
     <div className="min-h-screen bg-paper text-ink">
+      {/* Watermark (matches the reference "<name>-<id>" backdrop) */}
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <div className="flex flex-wrap content-start opacity-[0.05]">
+          {Array.from({ length: 44 }).map((_, i) => (
+            <span key={i} className="w-1/2 shrink-0 py-2 pr-2 text-right font-mono text-[11px] uppercase tracking-widest text-ink">
+              {studentName} · {STUDENT_ROLL}
+            </span>
+          ))}
+        </div>
+      </div>
+      {proctorPaused && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-ink/95 p-6">
+          <div className="w-full max-w-md border border-amber/60 bg-paper p-8 text-center shadow-2xl">
+            <span className="mx-auto block h-3 w-3 animate-pulse rounded-full bg-amber" />
+            <p className="mt-4 font-mono text-[10px] uppercase tracking-widest text-amber">Session paused</p>
+            <h2 className="mt-2 font-serif text-2xl font-semibold">The invigilator has paused your exam</h2>
+            <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+              Your timer is frozen and your answers are safe. The exam resumes automatically the moment the
+              invigilator allows you to continue — please keep this window open.
+            </p>
+            <p className="mt-5 font-mono text-[10px] text-ink-soft/70">● Time frozen · {timeString}</p>
+          </div>
+        </div>
+      )}
+      {broadcast && (
+        <div className="fixed inset-x-0 top-0 z-[65] flex justify-center px-4 py-3">
+          <div className="flex w-full max-w-xl items-start gap-3 border border-amber bg-amber px-4 py-3 text-paper shadow-2xl">
+            <span className="mt-1 h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-paper" />
+            <div className="flex-1">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">📢 {broadcast.sender} · broadcast</p>
+              <p className="mt-0.5 text-[14px] font-medium">{broadcast.body}</p>
+            </div>
+            <button onClick={() => setBroadcast(null)} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
+          </div>
+        </div>
+      )}
       {activeViolation && (
         <div className="fixed inset-x-0 top-0 z-[60] flex justify-center px-4 py-3">
           <div className="flex w-full max-w-xl items-center gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl">
@@ -791,9 +974,10 @@ export default function StudentExam() {
         </div>
       )}
 
+      <div className="relative z-10">
       <ExamHeader
         examName={examName}
-        studentName={STUDENT_NAME}
+        studentName={studentName}
         currentQuestion={current + 1}
         totalQuestions={questions.length}
         timeString={timeString}
@@ -855,8 +1039,12 @@ export default function StudentExam() {
               if (!q) return;
               toggleReview(q.id);
             }}
+            onClear={() => {
+              if (!q) return;
+              clearAnswer(q.id);
+            }}
             examName={examName}
-            studentName={STUDENT_NAME}
+            studentName={studentName}
             questionIndex={current + 1}
           />
           <QuestionNavigationButtons
@@ -898,6 +1086,8 @@ export default function StudentExam() {
               violationActive={!!activeViolation}
               proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
             />
+            {/* Live proctor voice — the teacher/proctor can speak to this candidate. */}
+            <InvigilatorVoice examId={EXAM_ID} roll={STUDENT_ROLL} active={step === "exam"} />
           </div>
 
           {/* AI Proctor status panel */}
@@ -981,6 +1171,7 @@ export default function StudentExam() {
             <ExamTools />
           </div>
         </aside>
+      </div>
       </div>
 
       {showShortcuts && (

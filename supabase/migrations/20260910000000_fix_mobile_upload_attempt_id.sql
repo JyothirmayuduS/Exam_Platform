@@ -72,6 +72,6 @@ WHERE mobile_upload_sessions.attempt_id LIKE 'pending_%'
     WHERE mus.id = mobile_upload_sessions.id
   )
   AND a.state = 'active'
-RETURNING id, attempt_id;
+RETURNING mobile_upload_sessions.id, mobile_upload_sessions.attempt_id;
 
 COMMIT;

@@ -2,21 +2,21 @@ import { useState } from "react";
 
 type AppealFormProps = {
   examId: string;
-  questionId: number;
+  questionNo: number;
   currentMarks: number;
   maxMarks: number;
   onSubmit: (reason: string) => void;
   onCancel: () => void;
 };
 
-export default function AppealForm({ questionId, currentMarks, maxMarks, onSubmit, onCancel }: AppealFormProps) {
+export default function AppealForm({ questionNo, currentMarks, maxMarks, onSubmit, onCancel }: AppealFormProps) {
   const [reason, setReason] = useState("");
 
   return (
     <div className="border border-amber/50 bg-amber/5 p-5 mt-4 text-[13px]">
       <div className="flex items-center gap-2 mb-3">
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber/20 text-amber font-bold">!</span>
-        <h3 className="font-mono text-[11px] uppercase tracking-widest text-amber">File an Appeal for Q{questionId}</h3>
+        <h3 className="font-mono text-[11px] uppercase tracking-widest text-amber">File an Appeal for Q{questionNo}</h3>
       </div>
       
       <p className="text-ink-soft mb-4">

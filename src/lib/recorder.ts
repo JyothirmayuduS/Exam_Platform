@@ -1,68 +1,101 @@
+// WebM recording of the proctor streams (camera + screen), uploaded to
+// Cloudflare R2 on stop.
+//
+// Keys come from .env.local (VITE_S3_* — S3-compatible R2 credentials), the
+// same ones examStorage uses, so recordings land under:
+//   ${examId}/${roll}/recordings/${kind}_${timestamp}.webm
+//
+// R2 only — nothing is written to Supabase Storage for proctor artifacts.
+
+import {
+  S3Client,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
 import { getSupabase } from "./supabase";
 import { supabaseConfigured } from "./env";
 
+const r2Endpoint = import.meta.env.VITE_S3_ENDPOINT || "";
+const r2Bucket = import.meta.env.VITE_S3_BUCKET_NAME || "";
+const r2AccessKey = import.meta.env.VITE_S3_ACCESS_KEY || "";
+const r2SecretKey = import.meta.env.VITE_S3_SECRET_KEY || "";
+
+const s3Client = new S3Client({
+  region: "auto",
+  forcePathStyle: true,
+  endpoint: r2Endpoint,
+  credentials: {
+    accessKeyId: r2AccessKey,
+    secretAccessKey: r2SecretKey,
+  },
+});
+
 export type RecorderHandle = { stop: () => void };
 
-/**
- * Ask the store-artifact Edge Function for a short-lived presigned R2 PUT URL.
- * Recordings are stored under: ${examId}/${studentId}/recordings/${kind}_${timestamp}.webm
- */
-async function getR2UploadUrl(opts: {
+async function putRecording(opts: {
   examId: string;
-  studentId: string;
+  roll: string;
   kind: "camera" | "screen";
-}): Promise<{ url: string; key: string } | null> {
-  if (!supabaseConfigured) return null;
-  const db = getSupabase();
-  if (!db) return null;
+  blob: Blob;
+}): Promise<string | null> {
+  const { examId, roll, kind, blob } = opts;
+  const key = `${examId}/${roll}/recordings/${kind}_${Date.now()}.webm`;
 
-  const filename = `${opts.kind}_${Date.now()}.webm`;
-
-  try {
-    const { data, error } = await db.functions.invoke("store-artifact", {
-      body: {
-        examId: opts.examId,
-        studentId: opts.studentId,
-        kind: "recording",
-        name: filename,
-        contentType: "video/webm",
-      },
-    });
-    if (error || !data?.url) {
-      console.warn(`[recorder] store-artifact error for ${opts.kind}:`, error);
-      return null;
+  // Primary: Cloudflare R2. Backup: Supabase Storage when R2 is unavailable.
+  if (r2Endpoint && r2Bucket && r2AccessKey && r2SecretKey) {
+    try {
+      const cmd = new PutObjectCommand({
+        Bucket: r2Bucket,
+        Key: key,
+        Body: blob,
+        ContentType: "video/webm",
+      });
+      await s3Client.send(cmd);
+      console.log(`[recorder] ✅ ${kind} uploaded to R2: ${key} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+      return key;
+    } catch (err) {
+      console.error(`[recorder] ❌ ${kind} R2 upload failed — trying Supabase backup:`, err);
     }
-    return { url: data.url as string, key: (data.key as string) ?? "" };
-  } catch (err) {
-    console.warn(`[recorder] Failed to get R2 upload URL for ${opts.kind}:`, err);
-    return null;
+  } else {
+    console.warn(`[recorder] R2 not configured for ${kind} — using Supabase backup bucket`);
   }
+
+  if (supabaseConfigured) {
+    const db = getSupabase();
+    if (db) {
+      const bucket = import.meta.env.VITE_SUPABASE_BUCKET_NAME || "exam-records";
+      const { error } = await db.storage.from(bucket).upload(key, blob, {
+        contentType: "video/webm",
+        upsert: true,
+      });
+      if (!error) {
+        console.log(`[recorder] ✅ ${kind} uploaded to Supabase (backup): ${key}`);
+        return key;
+      }
+      console.error(`[recorder] ❌ ${kind} Supabase backup upload failed:`, error.message);
+    }
+  }
+  return null;
 }
 
 /**
- * Start recording a MediaStream (camera or screen) and upload it directly to
- * Cloudflare R2 via a presigned PUT URL from the store-artifact Edge Function.
- *
- * No per-second screenshots, no PDF, no Cloudflare Stream — everything goes
- * to one R2 bucket under the per-exam/per-student folder layout.
+ * Record a MediaStream (camera or screen) and PUT the finished webm to
+ * Cloudflare R2 when the recorder stops.
  */
 export function startVideoRecording(opts: {
   stream: MediaStream;
   examId: string;
-  studentId: string;
+  roll: string;
   kind: "camera" | "screen";
   chunkDurationMs?: number;
 }): RecorderHandle {
-  const { stream, examId, studentId, kind, chunkDurationMs = 1000 } = opts;
+  const { stream, examId, roll, kind, chunkDurationMs = 1000 } = opts;
 
-  // 1. Setup the MediaRecorder (collect chunks for one final upload on stop).
-  //    We always upload the complete blob on stop to ensure the recording is
-  //    a valid, self-contained webm file in R2.
-  const mimeType = [
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm',
-  ].find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
+  const mimeType =
+    [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+    ].find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm";
 
   const recorder = new MediaRecorder(stream, {
     mimeType,
@@ -72,8 +105,6 @@ export function startVideoRecording(opts: {
   const chunks: Blob[] = [];
   let started = false;
 
-  // Kick off the recording. Upload happens once on `stop` so the resulting
-  // file in R2 is a valid webm that can be played back directly.
   const start = () => {
     if (started) return;
     started = true;
@@ -91,39 +122,14 @@ export function startVideoRecording(opts: {
       console.warn(`[recorder] ${kind} recording is empty, skipping R2 upload`);
       return;
     }
-    // Request a fresh presigned URL (the one we requested at start may be
-    // for a different filename/timestamp) and PUT the complete webm.
-    void (async () => {
-      try {
-        const presigned = await getR2UploadUrl({ examId, studentId, kind });
-        if (!presigned) {
-          console.error(`[recorder] ❌ ${kind} R2 upload failed: no presigned URL`);
-          return;
-        }
-        const res = await fetch(presigned.url, {
-          method: "PUT",
-          headers: { "Content-Type": "video/webm" },
-          body: blob,
-        });
-        if (res.ok) {
-          console.log(`[recorder] ✅ ${kind} uploaded to R2: ${presigned.key} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
-        } else {
-          console.error(`[recorder] ❌ ${kind} R2 PUT failed: ${res.status} ${res.statusText}`);
-        }
-      } catch (err) {
-        console.error(`[recorder] ❌ ${kind} R2 upload error:`, err);
-      }
-    })();
+    void putRecording({ examId, roll, kind, blob });
   };
 
-  // Start immediately (no need to wait for TUS URL).
   start();
 
   return {
     stop: () => {
-      if (recorder.state !== "inactive") {
-        recorder.stop();
-      }
-    }
+      if (recorder.state !== "inactive") recorder.stop();
+    },
   };
 }

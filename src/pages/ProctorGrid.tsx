@@ -1,16 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
-import { listLiveAttempts, subscribeToAttempts, type LiveAttempt } from "../lib/examApi";
+import { listLiveAttempts, subscribeToAttempts, saveViolation, setAttemptPaused, forceSubmitAttempt, sendProctorMessage, extendAttemptTime, listAssignedExamsForAuthUser, type LiveAttempt, type ViolationEvent } from "../lib/examApi";
 import { startProctorViewing, identityLabel, type RemoteFeed, type ViewerState } from "../lib/proctorViewer";
+import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
+import RecordingReviewer from "../components/RecordingReview";
+import useCurrentProfile from "../hooks/useCurrentProfile";
+import { storeViolationSnapshot, captureFrame } from "../lib/examStorage";
+import {
+  downloadSessionReportPdf,
+  downloadSessionReportCsv,
+  type ReportRow,
+} from "../lib/sessionReport";
 
-// Proctor console — a live monitoring dashboard for one exam. It mirrors the
-// attempt roster from the DB (realtime) and subscribes to the LiveKit room so
-// every candidate's camera AND screen share appear as soon as they begin.
-// Falls back to demo candidates when no backend is configured so the prototype
-// still demonstrates the full flow end-to-end.
-const EXAM_ID = "EXAM-2026-014";
-const ROOM = EXAM_ID; // must match the student's ProctorCamera room
+// Proctor console — a live monitoring dashboard for the exam the signed-in
+// proctor is assigned to (?exam=... overrides the pick). The roster comes from
+// the DB (realtime) and the LiveKit room IS the exam id, so every candidate's
+// camera AND screen share appear as soon as they begin. No demo data.
 const TONE = "#B7791F"; // proctor accent (amber/gold)
 
 type Severity = "none" | "low" | "high";
@@ -38,17 +45,6 @@ const severityTone: Record<Severity, string> = { none: "#3F7D5B", low: "#B7791F"
 const severityRank: Record<Severity, number> = { high: 0, low: 1, none: 2 };
 const severityLabel: Record<Severity, string> = { none: "Clear", low: "Notice", high: "Critical" };
 
-const DEMO: Tile[] = [
-  { id: "c1", name: "B. Priya Nikitha", roll: "21VGN0142", severity: "none", initials: "PN", status: "Writing", progress: 68 },
-  { id: "c2", name: "K. Rohan Teja", roll: "21VGN0158", severity: "high", reason: "Second face detected in frame", time: "2m ago", initials: "RT", status: "Writing", progress: 92 },
-  { id: "c3", name: "M. Sai Charan", roll: "21VGN0163", severity: "none", initials: "SC", status: "Submitted", progress: 100 },
-  { id: "c4", name: "A. Deepika Reddy", roll: "21VGN0171", severity: "low", reason: "Gaze away from screen (8s)", time: "40s ago", initials: "DR", status: "Writing", progress: 35 },
-  { id: "c5", name: "S. Vamsi Krishna", roll: "21VGN0184", severity: "none", initials: "VK", status: "Writing", progress: 51 },
-  { id: "c6", name: "N. Harika Sree", roll: "21VGN0191", severity: "low", reason: "Tab-switch attempt blocked", time: "1m ago", initials: "HS", status: "Writing", progress: 47 },
-  { id: "c7", name: "T. Yashwanth", roll: "21VGN0203", severity: "none", initials: "TY", status: "Writing", progress: 60 },
-  { id: "c8", name: "P. Meghana", roll: "21VGN0217", severity: "high", reason: "Prohibited software: AnyDesk", time: "just now", initials: "PM", status: "Paused", progress: 54 },
-];
-
 function initialsOf(name: string): string {
   return name.split(" ").map((x) => x[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
@@ -57,7 +53,7 @@ function attemptToTile(a: LiveAttempt): Tile {
   const name = a.student?.full_name ?? "Unknown candidate";
   const roll = a.student?.roll ?? "—";
   const pct = a.total ? Math.round((a.answered / a.total) * 100) : 0;
-  const status = a.state === "submitted" ? "Submitted" : a.state === "in_progress" ? "Writing" : "Not started";
+  const status = a.state === "submitted" ? "Submitted" : a.state === "paused" ? "Paused" : a.state === "in_progress" ? "Writing" : "Not started";
   
   let severity: Severity = "none";
   let reason: string | undefined = undefined;
@@ -82,11 +78,18 @@ type FeedLookup = (t: Tile) => RemoteFeed | null;
 // PLACEHOLDER_BODY
 
 export default function ProctorGrid() {
-  const [tiles, setTiles] = useState<Tile[]>(DEMO);
+  const { profile } = useCurrentProfile();
+  const [searchParams] = useSearchParams();
+  const paramExam = searchParams.get("exam") ?? searchParams.get("examId");
+  // Real exam list: exams the signed-in proctor is assigned to (Supabase).
+  const [examOptions, setExamOptions] = useState<{ id: string; name: string; batch: string; status: string }[]>([]);
+  const [loadingExam, setLoadingExam] = useState(true);
+  const [examId, setExamId] = useState<string | null>(paramExam);
+  const [tiles, setTiles] = useState<Tile[]>([]);
   const [live, setLive] = useState(false);
   const [feeds, setFeeds] = useState<RemoteFeed[]>([]);
   const [viewerState, setViewerState] = useState<ViewerState | "off">("off");
-  const [selectedId, setSelectedId] = useState<string>(DEMO[1].id);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("split");
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
@@ -95,35 +98,90 @@ export default function ProctorGrid() {
   const [mainTab, setMainTab] = useState<"live"|"reports"|"recordings">("live");
   const [note, setNote] = useState("");
   const [log, setLog] = useState<{ time: string; text: string }[]>([]);
+  // Live voice: push-to-talk to the focused candidate's own channel.
+  const voiceRef = useRef<Awaited<ReturnType<typeof startVoiceBroadcast>> | null>(null);
+  const [speakingTo, setSpeakingTo] = useState<string | null>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const stopSpeaking = () => {
+    const h = voiceRef.current;
+    voiceRef.current = null;
+    setSpeakingTo(null);
+    if (!h) return;
+    void h.setSpeaking(false).finally(() => h.stop());
+  };
+  useEffect(() => () => stopSpeaking(), []);
+  useEffect(() => { stopSpeaking(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [examId]);
+
+  // Load the proctor's assigned exams once. ?exam= picks a specific one.
+  useEffect(() => {
+    let active = true;
+    void listAssignedExamsForAuthUser().then((rows) => {
+      if (!active) return;
+      setExamOptions(rows);
+      setLoadingExam(false);
+      if (!paramExam) {
+        if (rows.length > 0) setExamId(rows[0].id);
+        else setExamId(null);
+      }
+    });
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const examName = examOptions.find((e) => e.id === examId)?.name ?? examId ?? "";
+  const examBatch = examOptions.find((e) => e.id === examId)?.batch ?? "";
+  // Handlers below run only when an exam is selected; keep a non-null copy for the API calls.
+  const examIdSafe = examId ?? "";
 
   // DB roster (live attempts) — realtime refresh on any attempt change.
   useEffect(() => {
-    if (!supabaseConfigured) return;
+    if (!supabaseConfigured || !examId) { setTiles([]); setLive(false); return; }
     let active = true;
     const load = async () => {
-      const rows = await listLiveAttempts(EXAM_ID);
+      const rows = await listLiveAttempts(examId);
       if (!active) return;
       setLive(true);
       const mapped = rows.map(attemptToTile);
       setTiles(mapped);
-      setSelectedId((cur) => (mapped.some((t) => t.id === cur) ? cur : mapped[0]?.id ?? cur));
+      setSelectedId((cur) => (mapped.some((t) => t.id === cur) ? cur : mapped[0]?.id ?? null));
     };
     void load();
-    const unsub = subscribeToAttempts(EXAM_ID, () => void load());
+    const unsub = subscribeToAttempts(examId, () => void load());
     return () => { active = false; unsub(); };
-  }, []);
+  }, [examId]);
 
   // Live camera + screen viewer — subscribe to the room and collect remote feeds.
   useEffect(() => {
+    if (!examId) { setFeeds([]); setViewerState("off"); return; }
     let handle: Awaited<ReturnType<typeof startProctorViewing>> | null = null;
     let cancelled = false;
     (async () => {
-      handle = await startProctorViewing({ room: ROOM, onState: setViewerState, onFeeds: setFeeds });
+      handle = await startProctorViewing({ room: examId, onState: setViewerState, onFeeds: setFeeds });
       if (cancelled) { handle?.stop(); return; }
       if (handle) setViewerState((s) => (s === "off" ? "connecting" : s));
     })();
     return () => { cancelled = true; handle?.stop(); };
-  }, []);
+  }, [examId]);
+
+  // Live voice toggle for the focused candidate (speak → they hear you live).
+  const toggleSpeak = async () => {
+    if (!selected) return;
+    const roll = selected.roll;
+    if (speakingTo === roll) { stopSpeaking(); return; }
+    stopSpeaking();
+    if (!examId) return;
+    setVoiceBusy(true);
+    const handle = await startVoiceBroadcast(
+      voiceRoom(examId, roll),
+      (msg) => pushLog(`Live voice unavailable — ${msg}`),
+    );
+    setVoiceBusy(false);
+    if (!handle) return;
+    voiceRef.current = handle;
+    await handle.setSpeaking(true);
+    setSpeakingTo(roll);
+    pushLog(`Speaking live to ${selected.name} — they can hear you now.`);
+  };
 
   // Map a tile → its live feed (matched by student uuid embedded in identity).
   const feedFor: FeedLookup = useMemo(() => {
@@ -132,7 +190,7 @@ export default function ProctorGrid() {
     return (t: Tile) => (t.studentId ? byId.get(t.studentId) ?? null : null);
   }, [feeds]);
 
-  const selected = tiles.find((t) => t.id === selectedId) ?? tiles[0];
+  const selected = (selectedId ? tiles.find((t) => t.id === selectedId) : null) ?? tiles[0];
   const flaggedCount = tiles.filter((t) => t.severity !== "none").length;
   const submittedCount = tiles.filter((t) => t.status === "Submitted").length;
   const activeCount = tiles.filter((t) => t.status !== "Submitted" && t.status !== "Not started").length;
@@ -151,68 +209,201 @@ export default function ProctorGrid() {
   }, [tiles, filter, search]);
 
   const pushLog = (text: string) => setLog((l) => [{ time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), text }, ...l].slice(0, 6));
-  const sendMessage = () => { if (!note.trim() || !selected) return; pushLog(`Message to ${selected.name}: “${note.trim()}”`); setNote(""); };
-
-  const exportPDF = async () => {
-    try {
-      const { data: { session } } = await (await import("../lib/supabase")).getSupabase()!.auth.getSession();
-      const res = await fetch(`https://xdwhftrierzxsppindfj.supabase.co/functions/v1/generate-pdf-report?exam_id=${EXAM_ID}`, {
-        headers: { Authorization: `Bearer ${session?.access_token}` }
-      });
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Session_Report_${EXAM_ID}.html`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      alert("Failed to export PDF: " + e);
+  const sendMessage = () => {
+    if (!note.trim() || !selected) return;
+    pushLog(`Message to ${selected.name}: “${note.trim()}”`);
+    if (selected.studentId) {
+      void saveViolation(
+        selected.studentId.startsWith("enrolled-") ? null : selected.id,
+        examIdSafe,
+        selected.studentId,
+        "proctor_warning",
+        `Warning sent to ${selected.name}: ${note.trim()}`,
+        { severity: "warning", source: "proctor" },
+      );
     }
+    setNote("");
   };
 
-  const exportCSV = async () => {
-    try {
-      const { data: { session } } = await (await import("../lib/supabase")).getSupabase()!.auth.getSession();
-      const res = await fetch(`https://xdwhftrierzxsppindfj.supabase.co/functions/v1/export-csv-log?exam_id=${EXAM_ID}`, {
-        headers: { Authorization: `Bearer ${session?.access_token}` }
-      });
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `proctor_log_${EXAM_ID}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      alert("Failed to export CSV: " + e);
+  const pauseCandidate = () => {
+    if (!selected || !selected.studentId) return;
+    const paused = selected.status !== "Paused";
+    if (selected.studentId && !selected.studentId.startsWith("enrolled-")) {
+      void setAttemptPaused(selected.id, paused);
     }
+    if (selected.studentId) {
+      void saveViolation(
+        selected.studentId.startsWith("enrolled-") ? null : selected.id,
+        examIdSafe,
+        selected.studentId,
+        paused ? "proctor_pause" : "proctor_resume",
+        paused ? `Paused ${selected.name}'s session` : `Resumed ${selected.name}'s session`,
+        { severity: "high", source: "proctor" },
+      );
+    }
+    pushLog(paused ? `Paused ${selected.name}'s session` : `Resumed ${selected.name}'s session`);
+  };
+  const escalate = () => {
+    if (!selected || !selected.studentId) return;
+    if (selected.studentId) {
+      void saveViolation(
+        selected.studentId.startsWith("enrolled-") ? null : selected.id,
+        examIdSafe,
+        selected.studentId,
+        "proctor_escalation",
+        `Escalated ${selected.name} to teacher`,
+        { severity: "critical", source: "proctor" },
+      );
+    }
+    pushLog(`Escalated ${selected.name} to teacher`);
   };
 
-  const pauseCandidate = () => { if (selected) pushLog(`Paused ${selected.name}'s session`); };
-  const escalate = () => { if (selected) pushLog(`Escalated ${selected.name} to teacher`); };
+  const forceSubmit = () => {
+    if (!selected || !selected.studentId) return;
+    const realId = selected.studentId.startsWith("enrolled-") ? null : selected.id;
+    if (realId) void forceSubmitAttempt(realId);
+    if (selected.studentId) {
+      void saveViolation(
+        realId,
+        examIdSafe,
+        selected.studentId,
+        "proctor_force_submit",
+        `Force submitted ${selected.name}'s exam`,
+        { severity: "high", source: "proctor" },
+      );
+    }
+    pushLog(`Force submitted ${selected.name}'s exam`);
+  };
 
-  const connLabel = !live ? "Demo mode" : viewerState === "connected" ? `${cameraCount} cam · ${screenCount} screen` : "DB synced · feeds off";
+  const logViolation = (type: string, desc: string, severity?: "info" | "warning" | "high" | "critical") => {
+    if (!selected || !selected.studentId) return;
+    const realId = selected.studentId.startsWith("enrolled-") ? null : selected.id;
+    void saveViolation(realId, examIdSafe, selected.studentId, type, desc, { severity, source: "proctor" });
+    pushLog(desc);
+  };
+
+  const flagActivity = () =>
+    logViolation("proctor_manual_flag", `Flagged ${selected?.name}'s activity for suspicious behavior`, "high");
+
+
+  const extendTime = () => {
+    if (!selected || !selected.studentId) return;
+    const realId = selected.studentId.startsWith("enrolled-") ? null : selected.id;
+    if (realId) void extendAttemptTime(realId, 5);
+    logViolation("proctor_extend_time", `Extended ${selected.name}'s time by 5 minutes`, "info");
+    pushLog(`Extended ${selected.name}'s time by 5 minutes`);
+  };
+
+  const takeScreenshot = async () => {
+    if (!selected || !selected.studentId) return;
+    const camEl = feedFor(selected)?.camera;
+    const blob = camEl ? captureFrame(camEl, 0.85) : null;
+    if (!blob) {
+      pushLog(`Screenshot of ${selected.name} failed — no live feed`);
+      return;
+    }
+    const stored = await storeViolationSnapshot({
+      examId: examIdSafe,
+      roll: selected.roll,
+      label: `proctor_screenshot_${selected.name.replace(/\s+/g, "_")}`,
+      blob,
+    });
+    const realId = selected.studentId.startsWith("enrolled-") ? null : selected.id;
+    await saveViolation(
+      realId,
+      examIdSafe,
+      selected.studentId,
+      "proctor_screenshot",
+      `Screenshot taken of ${selected.name}`,
+      { severity: "info", source: "proctor", snapshotKey: stored?.key ?? null },
+    );
+    pushLog(stored ? `Screenshot of ${selected.name} stored in ${stored.provider.toUpperCase()}` : `Screenshot taken of ${selected.name} (storage unavailable)`);
+  };
+
+  const toReportRows = (rows: LiveAttempt[]): ReportRow[] =>
+    rows.map((a) => ({
+      name: a.student?.full_name ?? "Unknown",
+      roll: a.student?.roll ?? "—",
+      state: a.state === "submitted" ? "Submitted" : a.state === "paused" ? "Paused" : a.state === "in_progress" ? "Writing" : "Not started",
+      progress: a.total ? Math.round((a.answered / a.total) * 100) : 0,
+      violations: (a.violations ?? []).map((v) => ({
+        description: v.description || v.violation_type,
+        type: v.violation_type,
+        severity: v.severity,
+        offset_seconds: v.offset_seconds,
+        created_at: v.created_at,
+      })),
+    }));
+
+  const connLabel = !live ? "Not connected" : viewerState === "connected" ? `${cameraCount} cam · ${screenCount} screen` : "DB synced · feeds off";
   const connTone = live ? (viewerState === "connected" ? "text-success" : "text-amber") : "text-ink-soft";
 
+  // No assigned exams yet: real empty state instead of demo candidates.
+  if (!loadingExam && !examId) {
+    return (
+      <RoleLayout role="Proctor" name={profile?.full_name ?? "Proctor"} subtitle="Invigilator" tone={TONE} items={NAV} status="No exam assigned">
+        <div className="mx-auto mt-16 max-w-xl border border-dashed border-line-strong p-10 text-center">
+          <p className="font-serif text-2xl font-semibold">No exams assigned yet</p>
+          <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+            The exams you are assigned to monitor appear here, with live camera/screen feeds, violation flags, and
+            speak / warn / pause / escalate tools. Ask the exam teacher to add you via{" "}
+            <span className="font-mono text-[11px] text-ink">Assign Proctors</span> on their Live proctoring page — you will
+            also receive an email invite.
+          </p>
+        </div>
+      </RoleLayout>
+    );
+  }
+
   return (
-    <RoleLayout role="Proctor" name="R. Anitha Kumari" subtitle="Invigilator · Hall B" tone={TONE} items={NAV} status={live ? "Live monitoring active" : "Demo mode"}>
+    <RoleLayout role="Proctor" name={profile?.full_name ?? "Proctor"} subtitle="Invigilator" tone={TONE} items={NAV} status={live ? "Live monitoring active" : "Not connected"}>
       <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Proctor console / {mainTab === "live" ? "Live monitoring" : "Dashboard & Reports"}</p>
           <div className="mt-2 flex items-center gap-4">
             <h1 className="font-serif text-3xl font-semibold">Live proctoring</h1>
+            {examOptions.length > 1 && (
+              <select
+                value={examId ?? ""}
+                onChange={(e) => { setExamId(e.target.value); setSelectedId(null); }}
+                aria-label="Select assigned exam to monitor"
+                className="border border-line-strong bg-paper px-3 py-1 font-serif text-lg font-semibold text-maroon hover:border-maroon focus:border-maroon focus:outline-none cursor-pointer"
+              >
+                {examOptions.map((ex) => (
+                  <option key={ex.id} value={ex.id}>{ex.name} ({ex.batch || ex.id})</option>
+                ))}
+              </select>
+            )}
             <div className="flex border border-line bg-paper">
               <button onClick={() => setMainTab("live")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider ${mainTab === "live" ? "bg-forest text-paper" : "text-ink-soft hover:bg-paper-raised"}`}>Live Grid</button>
               <button onClick={() => setMainTab("reports")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider border-l border-line ${mainTab === "reports" ? "bg-forest text-paper" : "text-ink-soft hover:bg-paper-raised"}`}>Reports & Dashboard</button>
               <button onClick={() => setMainTab("recordings")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider border-l border-line ${mainTab === "recordings" ? "bg-forest text-paper" : "text-ink-soft hover:bg-paper-raised"}`}>Recordings</button>
             </div>
           </div>
-          <p className="mt-2 text-[13px] text-ink-soft">Data Structures &amp; Algorithms · {EXAM_ID} · Hall B · Slot 2</p>
+          <p className="mt-2 text-[13px] text-ink-soft">{examName || "Assigned exam"} · {examId}{examBatch ? ` · ${examBatch}` : ""}</p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-2">
-            <button onClick={() => alert("Broadcast message modal opened")} className="border border-forest text-forest px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-forest/5">Broadcast to all</button>
+            <button
+              onClick={() => {
+                const body = window.prompt("Broadcast message to all candidates:");
+                if (body?.trim()) {
+                  void sendProctorMessage({
+                    examId: examIdSafe,
+                    sender: profile?.full_name ?? "Proctor",
+                    senderRole: "proctor",
+                    body,
+                    kind: "broadcast",
+                  }).then((ok) => {
+                    if (ok) pushLog("Broadcast sent to all candidates");
+                    else pushLog("Broadcast failed — database unavailable");
+                  });
+                }
+              }}
+              className="border border-forest text-forest px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-forest/5"
+            >
+              Broadcast to all
+            </button>
             <span className="flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-alert" /> Session live</span>
           </div>
           <span className="font-mono text-[9px] text-ink-soft tracking-wider">Ping: 12ms · Proctor FPS: 24</span>
@@ -268,13 +459,33 @@ export default function ProctorGrid() {
           )}
         </section>
 
-            <DetailPanel selected={selected} feed={selected ? feedFor(selected) : null} note={note} setNote={setNote} onSend={sendMessage} onPause={pauseCandidate} onEscalate={escalate} log={log} />
+            <DetailPanel
+              selected={selected}
+              feed={selected ? feedFor(selected) : null}
+              note={note}
+              setNote={setNote}
+              onSend={sendMessage}
+              onPause={pauseCandidate}
+              onEscalate={escalate}
+              onForceSubmit={forceSubmit}
+              onFlag={flagActivity}
+              onLogViolation={() => {
+                const desc = window.prompt("Violation description:", "Manual violation logged by proctor");
+                if (desc) logViolation("proctor_manual_log", desc, "warning");
+              }}
+              onExtend={extendTime}
+              onScreenshot={() => void takeScreenshot()}
+              speaking={selected ? speakingTo === selected.roll : false}
+              voiceBusy={voiceBusy}
+              onSpeak={() => void toggleSpeak()}
+              log={log}
+            />
           </div>
         </>
       ) : mainTab === "reports" ? (
-        <ProctorReports />
+        <ProctorReports examId={examId ?? ""} examName={examName || examId || "Exam session"} onShowRecordings={() => setMainTab("recordings")} />
       ) : (
-        <ProctorRecordings />
+        <ProctorRecordings examId={examId ?? ""} tiles={tiles} />
       )}
     </RoleLayout>
   );
@@ -336,7 +547,15 @@ function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; fee
   );
 }
 
-function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalate, log }: { selected: Tile | undefined; feed: RemoteFeed | null; note: string; setNote: (v: string) => void; onSend: () => void; onPause: () => void; onEscalate: () => void; log: { time: string; text: string }[] }) {
+function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalate, onForceSubmit, onFlag, onLogViolation, onExtend, onScreenshot, speaking, voiceBusy, onSpeak, log }: {
+  selected: Tile | undefined; feed: RemoteFeed | null; note: string; setNote: (v: string) => void;
+  onSend: () => void; onPause: () => void; onEscalate: () => void; onForceSubmit: () => void;
+  onFlag: () => void; onLogViolation: () => void; onExtend: () => void; onScreenshot: () => void;
+  speaking: boolean; voiceBusy: boolean; onSpeak: () => void;
+  log: { time: string; text: string }[];
+}) {
+  const feedRef = useRef<HTMLDivElement | null>(null);
+  const [audioOn, setAudioOn] = useState(false);
   if (!selected) return <aside className="border border-line p-6 font-mono text-[11px] text-ink-soft">No candidate selected.</aside>;
   return (
     <aside className="space-y-4">
@@ -348,12 +567,34 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
             <span className="shrink-0 font-mono text-[10px] uppercase" style={{ color: severityTone[selected.severity] }}>{severityLabel[selected.severity]}</span>
           </div>
         </div>
-        <div className="space-y-px bg-line p-px relative group">
+        <div ref={feedRef} className="space-y-px bg-line p-px relative group">
           <div className="aspect-video bg-paper relative"><FeedVideo el={feed?.camera ?? null} initials={selected.initials} label="CAMERA" /></div>
           <div className="aspect-video bg-paper relative"><FeedVideo el={feed?.screen ?? null} initials="⧉ screen" label="SCREEN SHARE" /></div>
           <div className="absolute top-2 right-2 flex gap-2">
-            <button onClick={() => alert("Full screen mode activated")} className="bg-ink/80 text-paper px-2 py-1 font-mono text-[9px] hover:bg-ink transition-colors">⛶ Fullscreen</button>
-            <button onClick={() => alert("Audio toggled")} className="bg-ink/80 text-paper px-2 py-1 font-mono text-[9px] hover:bg-ink transition-colors">🔇 Unmute Audio</button>
+            <button
+              onClick={() => {
+                const el = feedRef.current;
+                if (!el) return;
+                if (document.fullscreenElement) void document.exitFullscreen();
+                else void el.requestFullscreen().catch(() => undefined);
+              }}
+              className="bg-ink/80 text-paper px-2 py-1 font-mono text-[9px] hover:bg-ink transition-colors"
+            >
+              {document.fullscreenElement ? "⛶ Exit" : "⛶ Fullscreen"}
+            </button>
+            <button
+              onClick={() => {
+                const track = feed?.audioTrack;
+                if (!track?.mediaStreamTrack) return;
+                const next = !audioOn;
+                track.mediaStreamTrack.enabled = next;
+                setAudioOn(next);
+              }}
+              disabled={!feed?.audioTrack}
+              className="bg-ink/80 text-paper px-2 py-1 font-mono text-[9px] hover:bg-ink transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {audioOn ? "🔊 Audio on" : "🔇 Unmute Audio"}
+            </button>
           </div>
         </div>
         <div className="border-t border-line px-4 py-3 text-[12px] text-ink-soft">{selected.reason ?? "No active proctoring flags. All checks passing."}</div>
@@ -366,22 +607,43 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
         <div className="mt-3 flex gap-2">
           <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onSend(); }} placeholder="Type a warning or note…" className="min-w-0 flex-1 border border-line-strong bg-paper px-3 py-2 text-[12px] outline-none focus:border-ink" />
           <button onClick={onSend} disabled={!note.trim()} className="border border-forest bg-forest px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:cursor-not-allowed disabled:border-line disabled:bg-line disabled:text-ink-soft">Send</button>
-          <button onClick={() => alert("Verbal warning activated (mic live)")} className="border border-forest text-forest px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-forest/5" title="Verbal Warning (Audio)">🎤</button>
+          <button
+            onClick={onSpeak}
+            disabled={voiceBusy}
+            className={`px-3 py-2 font-mono text-[10px] uppercase tracking-wider transition-colors disabled:opacity-50 ${
+              speaking ? "border border-alert bg-alert text-paper" : "border border-forest text-forest hover:bg-forest/5"
+            }`}
+            title="Talk to this candidate — they hear you live"
+          >
+            {speaking ? "■ Stop speaking" : voiceBusy ? "Mic…" : "🎙 Speak"}
+          </button>
         </div>
 
         {/* Action Grid */}
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <button onClick={() => alert("Flagged for suspicious activity")} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Flag Activity</button>
-          <button onClick={() => alert("Manual violation logged")} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Log Violation</button>
-          <button onClick={() => alert("Extended time by 5 minutes")} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Extend (+5m)</button>
-          <button onClick={() => alert("Screenshot taken")} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Screenshot</button>
+          <button onClick={onFlag} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Flag Activity</button>
+          <button onClick={onLogViolation} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Log Violation</button>
+          <button onClick={onExtend} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Extend (+5m)</button>
+          <button onClick={onScreenshot} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Screenshot</button>
         </div>
 
         {/* Critical Actions */}
         <div className="mt-3 grid grid-cols-3 gap-2">
-          <button onClick={onPause} className="border border-amber py-2 font-mono text-[9px] uppercase tracking-wider text-amber hover:bg-amber/[0.06]">Block / Pause</button>
-          <button onClick={onEscalate} className="border border-alert py-2 font-mono text-[9px] uppercase tracking-wider text-alert hover:bg-alert/[0.06]">Escalate</button>
-          <button onClick={() => alert("Force submitted exam")} className="border border-alert py-2 font-mono text-[9px] uppercase tracking-wider text-paper bg-alert hover:bg-alert/90">Force Submit</button>
+          <button
+            onClick={onPause}
+            disabled={selected.status === "Submitted" || selected.status === "Not started"}
+            className="border border-amber py-2 font-mono text-[9px] uppercase tracking-wider text-amber hover:bg-amber/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {selected.status === "Paused" ? "Resume" : "Block / Pause"}
+          </button>
+          <button onClick={onEscalate} disabled={selected.status === "Submitted"} className="border border-alert py-2 font-mono text-[9px] uppercase tracking-wider text-alert hover:bg-alert/[0.06] disabled:cursor-not-allowed disabled:opacity-40">Escalate</button>
+          <button
+            onClick={() => { if (window.confirm(`Force submit ${selected.name}'s exam?`)) onForceSubmit(); }}
+            disabled={selected.status === "Submitted" || selected.status === "Not started"}
+            className="border border-alert py-2 font-mono text-[9px] uppercase tracking-wider text-paper bg-alert hover:bg-alert/90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Force Submit
+          </button>
         </div>
       </div>
 
@@ -398,49 +660,134 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
   );
 }
 
-function ProctorReports() {
+function ProctorReports({ examId, examName, onShowRecordings }: { examId: string; examName: string; onShowRecordings: () => void }) {
+  const [liveRows, setLiveRows] = useState<LiveAttempt[]>([]);
+  const [exporting, setExporting] = useState<"pdf" | "csv" | null>(null);
+  const [expandedRoll, setExpandedRoll] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!supabaseConfigured) return;
+    let alive = true;
+    void listLiveAttempts(examId)
+      .then((rows) => { if (alive) setLiveRows(rows); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [examId]);
+
+  const reportRows: ReportRow[] = useMemo(
+    () =>
+      liveRows.map((a) => ({
+        name: a.student?.full_name ?? "Unknown",
+        roll: a.student?.roll ?? "—",
+        state: a.state === "submitted" ? "Submitted" : a.state === "paused" ? "Paused" : a.state === "in_progress" ? "Writing" : "Not started",
+        progress: a.total ? Math.round((a.answered / a.total) * 100) : 0,
+        violations: (a.violations ?? []).map((v) => ({
+          description: v.description || v.violation_type,
+          type: v.violation_type,
+          severity: v.severity,
+          offset_seconds: v.offset_seconds,
+          created_at: v.created_at,
+        })),
+      })),
+    [liveRows],
+  );
+
+  const flagged = reportRows.filter((r) => r.violations.length > 0);
+  const totalFlags = flagged.reduce((t, r) => t + r.violations.length, 0);
+  const submitted = reportRows.filter((r) => r.state === "Submitted").length;
+  const integrity =
+    reportRows.length === 0 ? 100 : Math.max(0, Math.round((1 - flagged.length / reportRows.length) * 100));
+
+  const runExportPdf = () => {
+    setExporting("pdf");
+    window.setTimeout(() => {
+      downloadSessionReportPdf(examName, examId, reportRows);
+      setExporting(null);
+    }, 50);
+  };
+  const runExportCsv = () => {
+    setExporting("csv");
+    window.setTimeout(() => {
+      downloadSessionReportCsv(examId, reportRows);
+      setExporting(null);
+    }, 50);
+  };
+
+  const liveByRoll = useMemo(() => new Map(liveRows.map((a) => [a.student?.roll ?? "", a])), [liveRows]);
+
   return (
     <div className="mt-8 space-y-8">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total students" value="124" sub="Enrolled in session" />
-        <StatCard label="Flags raised" value="18" sub="Across 12 candidates" />
-        <StatCard label="Session duration" value="02:15:00" sub="Started 09:00 AM" />
-        <StatCard label="Integrity Score" value="94%" sub="Session confidence" />
+        <StatCard label="Total students" value={String(reportRows.length)} sub="attempts in this session" />
+        <StatCard label="Submitted" value={String(submitted)} sub="papers received" />
+        <StatCard label="Flags raised" value={String(totalFlags)} sub={`Across ${flagged.length} candidate(s)`} alert={totalFlags > 0} />
+        <StatCard label="Integrity Score" value={`${integrity}%`} sub="session confidence" />
       </div>
 
       <div className="grid gap-8 lg:grid-cols-[1fr_320px]">
         <div className="space-y-8">
           <div className="border border-line bg-paper p-6">
             <h2 className="font-serif text-xl font-semibold">High-Risk Candidates</h2>
-            <p className="mt-1 text-[13px] text-ink-soft">Candidates with multiple critical violations.</p>
+            <p className="mt-1 text-[13px] text-ink-soft">Candidates with active violation events. Click an incident to replay the recording with red markers.</p>
             <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between border border-line p-3 hover:border-line-strong">
-                <div>
-                  <p className="text-[13px] font-medium">K. Rohan Teja (21VGN0158)</p>
-                  <p className="font-mono text-[10px] text-ink-soft">3 critical flags · 2 warnings</p>
+              {flagged.length === 0 && (
+                <p className="border border-dashed border-line-strong p-6 text-center font-mono text-[11px] text-ink-soft">No candidates are currently flagged.</p>
+              )}
+              {flagged.map((r) => (
+                <div key={r.roll} className="border border-line p-3 hover:border-line-strong">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-medium">{r.name} ({r.roll})</p>
+                      <p className="font-mono text-[10px] text-ink-soft">
+                        {r.violations.filter((v) => v.severity === "critical" || v.severity === "high").length} critical · {r.violations.length} total
+                      </p>
+                    </div>
+                    <button onClick={() => setExpandedRoll(expandedRoll === r.roll ? null : r.roll)} className="shrink-0 border border-alert/40 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/10">
+                      {expandedRoll === r.roll ? "Hide review" : "Review recording"}
+                    </button>
+                  </div>
+                  {expandedRoll === r.roll && (
+                    <div className="mt-4 border-t border-line pt-4">
+                      <RecordingReviewer
+                        examId={examId}
+                        roll={r.roll}
+                        name={r.name}
+                        violations={liveByRoll.get(r.roll)?.violations ?? []}
+                      />
+                    </div>
+                  )}
                 </div>
-                <button onClick={() => alert("Opened incident report")} className="border border-line px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">Incident Report</button>
-              </div>
-              <div className="flex items-center justify-between border border-line p-3 hover:border-line-strong">
-                <div>
-                  <p className="text-[13px] font-medium">P. Meghana (21VGN0217)</p>
-                  <p className="font-mono text-[10px] text-ink-soft">1 critical flag · 4 warnings</p>
-                </div>
-                <button onClick={() => alert("Opened incident report")} className="border border-line px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">Incident Report</button>
-              </div>
+              ))}
             </div>
           </div>
 
           <div className="border border-line bg-paper p-6">
             <h2 className="font-serif text-xl font-semibold">Violation Summary</h2>
-            <div className="mt-4 grid gap-4 sm:grid-cols-3">
-              <div className="border border-line-strong p-4"><p className="font-mono text-[10px] text-ink-soft">Second Face</p><p className="mt-1 text-xl font-semibold">4</p></div>
-              <div className="border border-line-strong p-4"><p className="font-mono text-[10px] text-ink-soft">Tab Switch</p><p className="mt-1 text-xl font-semibold">12</p></div>
-              <div className="border border-line-strong p-4"><p className="font-mono text-[10px] text-ink-soft">Audio anomaly</p><p className="mt-1 text-xl font-semibold">2</p></div>
-            </div>
-            
-            <h3 className="mt-6 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Performance Anomalies</h3>
-            <p className="mt-2 text-[13px] text-ink-soft border-l-2 border-amber pl-3">System detected unusual answering speed from 2 candidates compared to their historical baseline.</p>
+            {flagged.length === 0 ? (
+              <p className="mt-3 text-[12px] text-ink-soft">No violation events recorded for this exam.</p>
+            ) : (
+              <div className="mt-4 overflow-hidden border border-line">
+                <table className="w-full text-left text-[12px]">
+                  <thead className="border-b border-line font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+                    <tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Violation</th><th className="px-3 py-2">Severity</th><th className="px-3 py-2">Time</th></tr>
+                  </thead>
+                  <tbody>
+                    {flagged.map((r) =>
+                      r.violations.map((v, vi) => (
+                        <tr key={`${r.roll}-${vi}`} className="border-b border-line last:border-0">
+                          <td className="px-3 py-2">{r.name}</td>
+                          <td className="px-3 py-2 text-alert">{v.description || v.type}</td>
+                          <td className="px-3 py-2 font-mono text-[10px] uppercase">{v.severity}</td>
+                          <td className="px-3 py-2 font-mono text-[10px] text-ink-soft">
+                            {v.offset_seconds != null ? `@ ${v.offset_seconds}s` : new Date(v.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </td>
+                        </tr>
+                      )),
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
 
@@ -448,14 +795,14 @@ function ProctorReports() {
           <div className="border border-line bg-paper p-5">
             <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exports & Evidence</p>
             <div className="mt-4 grid gap-2">
-              <button onClick={() => alert("Exporting PDF...")} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
-                <span>Session Report (PDF)</span> <span>↓</span>
+              <button onClick={runExportPdf} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
+                <span>{exporting === "pdf" ? "Generating…" : "Session Report (PDF)"}</span> <span>↓</span>
               </button>
-              <button onClick={() => alert("Downloading evidence clips...")} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
-                <span>Export Evidence (Video)</span> <span>↓</span>
+              <button onClick={onShowRecordings} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
+                <span>Review recordings</span> <span>▶</span>
               </button>
-              <button onClick={() => alert("Exporting CSV...")} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
-                <span>Proctor Activity Log (CSV)</span> <span>↓</span>
+              <button onClick={runExportCsv} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
+                <span>{exporting === "csv" ? "Exporting…" : "Proctor Activity Log (CSV)"}</span> <span>↓</span>
               </button>
             </div>
           </div>
@@ -465,108 +812,128 @@ function ProctorReports() {
   );
 }
 
-function ProctorRecordings() {
-  const [selectedVideo, setSelectedVideo] = useState<string | null>("K. Rohan Teja (21VGN0158)");
+type RecordingRow = {
+  id: string;
+  name: string;
+  roll: string;
+  status: string;
+  violations: ViolationEvent[];
+};
+
+function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] }) {
+  const [rows, setRows] = useState<LiveAttempt[] | null>(null);
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!supabaseConfigured) return;
+    let alive = true;
+    void listLiveAttempts(examId)
+      .then((r) => {
+        if (!alive) return;
+        setRows(r);
+        setSelectedId((cur) => (cur && r.some((x) => x.id === cur) ? cur : r[0]?.id ?? null));
+      })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [examId]);
+
+  const items: RecordingRow[] = useMemo(() => {
+    if (supabaseConfigured && rows) {
+      return rows.map((a) => ({
+        id: a.id,
+        name: a.student?.full_name ?? "Unknown",
+        roll: a.student?.roll ?? "—",
+        status: a.state === "submitted" ? "Submitted" : a.state === "paused" ? "Paused" : a.state === "in_progress" ? "Writing" : "Not started",
+        violations: a.violations ?? [],
+      }));
+    }
+    // No mock data: without a live roster there is nothing to archive.
+    return [];
+  }, [rows, tiles]);
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = !q ? items : items.filter((i) => i.name.toLowerCase().includes(q) || i.roll.toLowerCase().includes(q));
+    return [...list].sort((a, b) => Number(b.violations.length > 0) - Number(a.violations.length > 0));
+  }, [items, search]);
+
+  const selected = visible.find((i) => i.id === selectedId) ?? visible[0] ?? null;
+
   return (
     <div className="mt-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4">
         <div>
           <h2 className="font-serif text-xl font-semibold">Session Recordings Archive</h2>
-          <p className="mt-1 text-[13px] text-ink-soft">Retention policy: Auto-delete after 30 days. <button className="text-forest hover:underline">Change policy</button></p>
+          <p className="mt-1 text-[13px] text-ink-soft">
+            Recordings and flagged snapshots stream from Cloudflare R2. Red markers on the timeline show each violation's timestamp — click to jump.
+          </p>
         </div>
-        <div className="text-right">
-          <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">System Load</p>
-          <p className="mt-1 text-[13px] text-ink-soft">1 / 5 concurrent streams active</p>
-        </div>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name/ID..."
+          className="w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest sm:w-64"
+        />
       </div>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[280px_1fr]">
-        <div className="space-y-4">
-          <input type="text" placeholder="Search by name/ID..." className="w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
-          <div className="space-y-2 border border-line bg-paper">
-            {["K. Rohan Teja (21VGN0158)", "P. Meghana (21VGN0217)", "A. Deepika Reddy (21VGN0171)"].map((student) => (
-              <button 
-                key={student} 
-                onClick={() => setSelectedVideo(student)}
-                className={`flex w-full items-center justify-between border-l-2 p-3 text-left hover:bg-paper-raised ${selectedVideo === student ? "border-forest bg-paper-raised" : "border-transparent"}`}
+        <div className="space-y-2 border border-line bg-paper">
+          {visible.length === 0 && (
+            <p className="p-6 text-center font-mono text-[11px] text-ink-soft">No candidates found.</p>
+          )}
+          {visible.map((item) => {
+            const isSelected = selected?.id === item.id;
+            const flaggedCount = item.violations.length;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setSelectedId(item.id)}
+                className={`flex w-full items-center justify-between border-l-2 p-3 text-left hover:bg-paper-raised ${isSelected ? "border-forest bg-paper-raised" : "border-transparent"}`}
               >
-                <div>
-                  <p className="text-[13px] font-medium text-ink">{student}</p>
-                  <p className="font-mono text-[10px] text-ink-soft">02:15:40 · 1.2GB</p>
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-medium text-ink">{item.name}</p>
+                  <p className="mt-0.5 truncate font-mono text-[10px] text-ink-soft">
+                    {item.roll} · {item.status}
+                  </p>
                 </div>
-                {student.includes("Rohan") && <span className="h-1.5 w-1.5 rounded-full bg-alert"></span>}
+                {flaggedCount > 0 && (
+                  <span className="ml-2 flex items-center gap-1 rounded-full bg-alert px-2 py-0.5 font-mono text-[9px] text-paper">
+                    <span className="h-1 w-1 rounded-full bg-paper" /> {flaggedCount}
+                  </span>
+                )}
               </button>
-            ))}
-          </div>
+            );
+          })}
         </div>
 
-        <div className="border border-line bg-paper">
+        <div className="min-w-0 border border-line bg-paper">
           <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
+            <div className="min-w-0">
               <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Currently playing</p>
-              <h3 className="font-serif text-lg font-semibold">{selectedVideo}</h3>
+              <h3 className="truncate font-serif text-lg font-semibold">
+                {selected ? `${selected.name} · ${selected.roll}` : "Select a candidate"}
+              </h3>
             </div>
-            <div className="flex gap-2">
-              <button className="border border-line-strong px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider hover:border-forest hover:text-forest">📸 Screenshot</button>
-              <button className="border border-forest bg-forest px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">↓ Export MP4</button>
-            </div>
+            {selected && selected.violations.length > 0 && (
+              <span className="shrink-0 border border-alert/40 bg-alert/5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert">
+                {selected.violations.length} violation marker(s)
+              </span>
+            )}
           </div>
-          
-          <div className="relative flex aspect-video flex-col justify-between bg-[#1F231D] p-4">
-            <div className="absolute inset-0 grid grid-cols-2 gap-px bg-black">
-              <div className="flex items-center justify-center bg-[#2a2e28] font-serif text-2xl text-paper/30">CAMERA</div>
-              <div className="flex items-center justify-center bg-[#2a2e28] font-serif text-2xl text-paper/30">SCREEN SHARE</div>
-            </div>
-
-            <div className="absolute right-4 top-4 rounded bg-ink/80 px-2 py-1 font-mono text-[10px] text-paper">REC 00:45:12</div>
-
-            <div className="absolute bottom-4 left-4 right-4 bg-ink/90 p-3 text-paper">
-              <div className="relative mb-3 h-2 w-full cursor-pointer bg-paper/20">
-                <div className="absolute left-0 top-0 h-full w-1/3 bg-forest"></div>
-                <div className="absolute left-[20%] top-0 h-full w-1 bg-alert" title="Tab switch attempt"></div>
-                <div className="absolute left-[30%] top-0 h-full w-1 bg-alert" title="Second face detected"></div>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
-                  <button className="hover:text-forest">▶ Play</button>
-                  <span className="font-mono text-[10px]">00:45:12 / 02:15:40</span>
-                  <button className="font-mono text-[10px] hover:text-forest">🔊 Audio on</button>
-                </div>
-                <div className="flex items-center gap-4">
-                  <select className="bg-transparent font-mono text-[10px] outline-none hover:text-forest">
-                    <option className="text-ink">1x Speed</option>
-                    <option className="text-ink">1.5x Speed</option>
-                    <option className="text-ink">2x Speed</option>
-                  </select>
-                  <select className="bg-transparent font-mono text-[10px] outline-none hover:text-forest">
-                    <option className="text-ink">1080p</option>
-                    <option className="text-ink">720p</option>
-                    <option className="text-ink">480p (Data Saver)</option>
-                  </select>
-                  <button className="font-mono text-[10px] hover:text-forest">⛶ Fullscreen</button>
-                </div>
-              </div>
-            </div>
-          </div>
-          
           <div className="p-5">
-            <h4 className="mb-3 font-serif text-base font-semibold">Violation Log</h4>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between border-l-2 border-alert bg-alert/5 p-3">
-                <div>
-                  <p className="text-[13px] font-medium">Second face detected</p>
-                  <p className="font-mono text-[10px] text-ink-soft">Confidence: 94%</p>
-                </div>
-                <button className="border border-alert/30 px-3 py-1 font-mono text-[10px] text-alert hover:bg-alert/10">Jump to 00:30:15</button>
-              </div>
-              <div className="flex items-center justify-between border-l-2 border-alert bg-alert/5 p-3">
-                <div>
-                  <p className="text-[13px] font-medium">Tab switch attempt</p>
-                  <p className="font-mono text-[10px] text-ink-soft">Focus lost for 12 seconds</p>
-                </div>
-                <button className="border border-alert/30 px-3 py-1 font-mono text-[10px] text-alert hover:bg-alert/10">Jump to 00:20:00</button>
-              </div>
-            </div>
+            {selected ? (
+              <RecordingReviewer
+                key={selected.id}
+                examId={examId}
+                roll={selected.roll}
+                name={selected.name}
+                violations={selected.violations}
+              />
+            ) : (
+              <p className="py-16 text-center font-mono text-[11px] text-ink-soft">Waiting for candidates to join the session…</p>
+            )}
           </div>
         </div>
       </div>

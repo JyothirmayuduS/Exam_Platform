@@ -170,7 +170,7 @@ export default function ProctorCamera({
           cameraRecordRef.current = startVideoRecording({
             stream: video.srcObject,
             examId,
-            studentId,
+            roll: studentId,
             kind: "camera",
           });
           console.debug("[ProctorCamera] camera recording started");
@@ -184,7 +184,7 @@ export default function ProctorCamera({
           screenRecordRef.current = startVideoRecording({
             stream: screenStream,
             examId,
-            studentId,
+            roll: studentId,
             kind: "screen",
           });
           console.debug("[ProctorCamera] screen recording started");

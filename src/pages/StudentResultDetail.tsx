@@ -32,8 +32,8 @@ export default function StudentResultDetail() {
   const { resultId } = useParams();
   const { user } = useAuth();
   const { profile } = useCurrentProfile();
-  const [appealingQ, setAppealingQ] = useState<number | null>(null);
-  const [submittedAppeals, setSubmittedAppeals] = useState<Record<number, string>>({});
+  const [appealingQ, setAppealingQ] = useState<string | null>(null);
+  const [submittedAppeals, setSubmittedAppeals] = useState<Record<string, string>>({});
 
   const { data, isLoading } = useQuery({
     queryKey: ['resultDetail', resultId, user?.id],
@@ -50,7 +50,7 @@ export default function StudentResultDetail() {
 
       const { data: attempt } = await db
         .from("attempts")
-        .select("score, submitted_at, answers, minutes_used")
+        .select("score, submitted_at, answers, minutes_used, paper")
         .eq("exam_id", resultId)
         .eq("student_id", student.id)
         .maybeSingle();
@@ -91,12 +91,30 @@ export default function StudentResultDetail() {
       const answersObj = attempt.answers || {};
       const totalMarks = exam?.total_marks ?? 100;
 
+      // Show THIS student's paper (their question snapshot), not the full pool.
+      const paperSlots = (Array.isArray(attempt.paper) ? attempt.paper : []) as { id: string; options?: string[] }[];
+      const slotByQid = new Map(paperSlots.map((s) => [s.id, s]));
+      const paperQuestions =
+        paperSlots.length > 0
+          ? (paperSlots
+              .map((s) => (questions || []).find((q: any) => q.id === s.id))
+              .filter(Boolean))
+          : (questions || []);
+
       // Build category breakdown from questions
       const categoryMap: Record<string, { correct: number; total: number }> = {};
-      const processedQuestions = (questions || []).map((q: any, i: number) => {
-        const studentAns = answersObj[i];
+      const processedQuestions = paperQuestions.map((q: any, i: number) => {
+        const studentAns = answersObj[q.id];
         const type = q.type === "Subjective" || q.type === "Coding" ? "subjective" : "mcq";
-        const isCorrect = type === "mcq" && String(q.answer) === String(studentAns);
+        const slot = slotByQid.get(q.id);
+        const origCorrect = type === "mcq" && q.answer !== null ? parseInt(q.answer) : -1;
+        // Correct option index in the order the student actually saw.
+        const displayedCorrect =
+          type === "mcq" && slot?.options && origCorrect >= 0
+            ? slot.options.findIndex((o: string) => o === String((q.options || [])[origCorrect]))
+            : origCorrect;
+        const studentDisplayIdx = type === "mcq" && typeof studentAns === "number" ? studentAns : -1;
+        const isCorrect = type === "mcq" && displayedCorrect >= 0 && studentDisplayIdx === displayedCorrect;
         const awarded = type === "mcq" ? (isCorrect ? q.marks : 0) : (attempt.score === null ? "..." : 0);
 
         const cat = q.category || "General";
@@ -105,13 +123,14 @@ export default function StudentResultDetail() {
         if (isCorrect) categoryMap[cat].correct += q.marks;
 
         return {
-          id: i,
+          id: q.id,
+          no: i + 1,
           type,
           text: q.title,
-          options: q.options || [],
-          studentAnswer: type === "mcq" ? (studentAns !== undefined ? parseInt(studentAns) : -1) : -1,
+          options: slot?.options ?? (q.options || []),
+          studentAnswer: studentDisplayIdx,
           studentAnswerText: type === "subjective" ? (studentAns || "") : "",
-          correctAnswer: type === "mcq" ? (q.answer !== null ? parseInt(q.answer) : -1) : -1,
+          correctAnswer: displayedCorrect,
           marksAwarded: awarded,
           maxMarks: q.marks,
           explanation: q.explanation ?? null,
@@ -288,7 +307,7 @@ export default function StudentResultDetail() {
                 {appealingQ === q.id && !submittedAppeals[q.id] && (
                   <AppealForm 
                     examId={resultId || ""} 
-                    questionId={q.id} 
+                    questionNo={q.no ?? (typeof q.id === "number" ? q.id : 0)} 
                     currentMarks={q.marksAwarded} 
                     maxMarks={q.maxMarks} 
                     onSubmit={(r) => handleAppealSubmit(q.id, r)}

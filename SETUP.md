@@ -96,13 +96,72 @@ receives a short-lived token, and publishes camera + mic to the room. If LiveKit
 is not configured, it falls back to a local-only camera preview so the UI still
 shows the proctor tile.
 
+**Live proctor voice**: the teacher/proctor consoles publish their mic into a
+per-candidate channel `voice-<exam>-<roll>` (see `src/lib/proctorVoice.ts`). The
+token function grants publish only to staff on `voice-` rooms and subscribe to
+students, so a candidate hears warnings aimed at them but can never talk back.
+The candidate's exam shows an amber **"Invigilator speaking"** chip while audio
+plays (`src/components/InvigilatorVoice.tsx`).
+
+**Proctor assignment emails**: deploy the companion function with the same Gmail
+secrets as `send-exam-email`:
+
+```bash
+supabase functions deploy send-proctor-email --no-verify-jwt
+supabase functions deploy send-evaluator-email --no-verify-jwt
+```
+
+`send-evaluator-email` powers the Examiner dashboard's **Auto-assign Test
+Reports** flow (notifies each evaluator with their report count + due date +
+grading link).
+
+Run these migrations too (in order, alongside the earlier ones):
+`20260906000000_violation_events.sql`, `20260906000001_messaging_assignments_extend.sql`,
+`20260906000002_teacher_settings.sql`, `20260906000003_grading_delegations.sql`,
+`20260906000004_proctor_assignments_contacts.sql` (assignee id/email on
+`proctor_assignments` + RLS so an assigned proctor can read the exam, attempts,
+violations and messages). Teachers pick proctors from the real faculty roster in
+**Assign Proctors** (Live proctoring page); proctors land on `/proctor` and see
+only their assigned exams.
+
+`20260906000005_paper_snapshots_allocation.sql` adds the per-student **paper
+snapshot** (`attempts.paper`) and the exam-level allocation columns on
+`grading_delegations`. After this migration the delivery settings in the exam
+builder are real: each student receives a deterministic, difficulty-balanced
+subset (`questions per student` / `random select` / `shuffle order` / `shuffle
+options`), the snapshot is persisted with the attempt, and answers are keyed by
+DB question id so Evaluate/student results grade **that student's own paper**
+(legacy attempts without a snapshot fall back to the full pool).
+
+`20260906000006_exam_pool_join.sql` adds the many-to-many **exam_questions**
+join so one bank question can belong to several tests (the Mettl-style reusable
+pool). Run it after `…0005`; existing questions are backfilled automatically.
+The paper builder at `/teacher/exams/<id>/build` uses it for add/remove pool
+membership, and question-owner rows created before it still count via
+`questions.exam_id` (so pools work with or without the join applied).
+
+## Mettl-style test creation flow
+
+The teacher console now follows the Mettl pattern end to end:
+
+1. **My tests** (`/teacher/exams`) → **+ Create new test** opens a modal
+   (test name, language, purpose, Timed vs Deadline based, assigned batch).
+2. **Proceed** drops you into the **paper builder** (`/teacher/exams/<id>/build`)
+   — search & add questions from your bank (type/difficulty filters), a live
+   composition table grouped by section, metric cards (Sections / Topics /
+   Questions / Marks), duration, **Preview**, and **Advance options** (Test
+   Options, Section Options, Candidate Registration Fields dialogs).
+3. **Publish & share** enrolls the batch (or hand-picked candidates) and emails
+   the join link, or schedules the test.
+
 ## 5. Run the web app
 
 ```bash
 npm run dev
 ```
 
-Publish an exam from the teacher console (Questions → build → Review & publish →
+Create a test from **My tests** (`/teacher/exams` → Create new test) and build
+it in the paper builder (`/teacher/exams/<id>/build` → Publish & share →
 Publish now / Schedule). Open the student dashboard in another tab to watch it
 arrive live.
 
@@ -191,9 +250,10 @@ Before selling or running a real exam, close these:
   `app_metadata.role` (`student` / `proctor` / `teacher` / `admin`). The LiveKit
   token function already derives capabilities from that role; the RLS policies
   assume it too. The demo relaxes some policies — re-tighten them.
-- **Identity binding**: `STUDENT_ROLL` / `EXAM_ID` are hardcoded constants in
-  `StudentExam.tsx` / the proctor pages for the demo. Drive them from the
-  authenticated user and the join-link route param (`/join/:examId`).
+- **Identity binding**: `STUDENT_ROLL` and the exam id are still constants in
+  `StudentExam.tsx` for the demo; the proctor pages now take the exam from the
+  proctor's real assignments (`?exam=` overrides). Drive student identity from
+  the authenticated user and the join-link route param (`/join/:examId`).
 - **Grading**: `submitAttempt` stores answers; automatic scoring for MCQ and a
   teacher evaluation flow for written answers still need wiring end to end.
 - **Proctoring signal**: violation flags are currently client-side heuristics

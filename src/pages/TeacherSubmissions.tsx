@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LIVE_EXAM, SESSION_MINUTES, evaluationPath, needsAttention, type Attempt, type AttemptState, type Network } from "../data/examSession";
 import useLiveAttempts from "../hooks/useLiveAttempts";
+import { listLiveAttempts, forceSubmitAttempt, extendAttemptTime, sendProctorMessage } from "../lib/examApi";
+import { downloadCsv } from "../lib/sessionReport";
+import { getSupabase } from "../lib/supabase";
 
 type StatusTab = "All" | AttemptState | "Needs attention";
 const TABS: StatusTab[] = ["All", "Submitted", "In progress", "Not started", "Needs attention"];
@@ -41,6 +44,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
     All: scoped.length,
     Submitted: scoped.filter((a) => a.state === "Submitted").length,
     "In progress": scoped.filter((a) => a.state === "In progress").length,
+    Paused: scoped.filter((a) => a.state === "Paused").length,
     "Not started": scoped.filter((a) => a.state === "Not started").length,
     "Needs attention": scoped.filter(needsAttention).length,
   }), [scoped]);
@@ -68,7 +72,67 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
     if (a.state !== "Submitted") { notify(`${a.name} has not submitted yet — the paper opens for evaluation after submit`); return; }
     navigate(evaluationPath(a.id));
   };
+
+  // Real DB actions: force-submit remaining, extend everyone, send reminders.
+  const openAttempts = async () => {
+    const rows = await listLiveAttempts("EXAM-2026-014");
+    return rows.filter((r) => r.state === "in_progress" || r.state === "paused");
+  };
+  const forceSubmitAll = async () => {
+    const open = await openAttempts();
+    let ok = 0;
+    for (const r of open) if (await forceSubmitAttempt(r.id)) ok += 1;
+    notify(`Force submitted ${ok} unsubmitted attempt(s)`);
+  };
+  const extendAll = async () => {
+    const open = await openAttempts();
+    for (const r of open) await extendAttemptTime(r.id, 5);
+    setRemaining((s) => s + open.length * 300);
+    notify(`Extended ${open.length} candidate(s) by 5 minutes`);
+  };
+  const remind = async (studentEmail?: string | null) => {
+    const db = getSupabase();
+    if (!db) { notify("Reminder service unavailable (offline)."); return; }
+    const { error } = await db.functions.invoke("send-reminder-email", {
+      body: { examId: "EXAM-2026-014", studentEmail: studentEmail ?? null },
+    });
+    notify(error ? `Reminder failed: ${error.message}` : studentEmail ? "Reminder sent to candidate" : `Reminder queued for ${notStarted.length} candidate(s)`);
+  };
+  const broadcast = () => {
+    const body = window.prompt("Announcement for all candidates:");
+    if (body?.trim()) {
+      void sendProctorMessage({ examId: "EXAM-2026-014", sender: "Teacher", senderRole: "teacher", body, kind: "broadcast" }).then((ok) =>
+        notify(ok ? "Announcement broadcast to all candidates" : "Announcement failed — database unavailable"),
+      );
+    }
+  };
   const watchLive = (a: Attempt) => { notify(`Opening the live feed for ${a.name}`); navigate("/teacher/proctoring"); };
+
+  // Real exports/actions for the header + selected-attempt panel.
+  const exportRosterCsv = () => {
+    downloadCsv(
+      `roster_${new Date().toISOString().slice(0, 10)}`,
+      ["Candidate", "Roll", "Exam", "State", "Answered", "Total", "Minutes used", "Flags", "Email"],
+      visible.map((a) => [a.name, a.roll, a.exam, a.state, a.answered, a.total, a.minutesUsed, a.flags.length, a.email ?? ""]),
+    );
+    notify(`Roster CSV exported · ${visible.length} rows`);
+  };
+  const grantExtraTime = async (a: Attempt) => {
+    const ok = await extendAttemptTime(a.id, 5);
+    notify(ok ? `Granted +5 minutes to ${a.name}` : `Could not extend ${a.name} — attempt unavailable`);
+  };
+  const messageCandidate = async (a: Attempt) => {
+    const body = window.prompt(`Message for ${a.name}:`);
+    if (!body?.trim()) return;
+    const ok = await sendProctorMessage({
+      examId: "EXAM-2026-014",
+      sender: "Teacher",
+      senderRole: "teacher",
+      body,
+      kind: "message",
+    });
+    notify(ok ? `Message sent to ${a.name}` : "Message failed — database unavailable");
+  };
 
   return <>
     <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
@@ -78,8 +142,8 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
         <p className="mt-2 max-w-2xl text-[13px] text-ink-soft">This page follows the attempt itself — progress, time used, connection, and integrity. Answer papers are graded from <button onClick={() => navigate("/teacher/evaluate")} className="text-forest underline">Evaluate</button>.</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <button onClick={() => notify("Broadcast composer opened")} className="border border-line-strong bg-paper px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Send announcement</button>
-        <button onClick={() => notify(`Roster CSV exported · ${visible.length} rows`)} className="border border-forest bg-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Export roster</button>
+        <button onClick={broadcast} className="border border-line-strong bg-paper px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Send announcement</button>
+        <button onClick={exportRosterCsv} className="border border-forest bg-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Export roster</button>
       </div>
     </div>
     {liveScope && <section className="mt-8 border border-alert/30 bg-alert/5 p-5">
@@ -94,8 +158,8 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
             <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Time left</p>
             <p className="tabular font-mono text-[15px] text-alert">● {hms(remaining)}</p>
           </div>
-          <button onClick={() => { setExtended((m) => m + 5); setRemaining((s) => s + 300); notify("Exam window extended by 5 minutes for all candidates"); }} className="border border-line-strong bg-paper px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">+5 min for all</button>
-          <button onClick={() => notify(`Force submit requested for ${stillWriting} unsubmitted attempts`)} className="border border-alert px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/10">Force submit remaining</button>
+          <button onClick={() => void extendAll()} className="border border-line-strong bg-paper px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">+5 min for all</button>
+          <button onClick={() => void forceSubmitAll()} className="border border-alert px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/10">Force submit remaining</button>
         </div>
       </div>
     </section>}
@@ -144,7 +208,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
                     ? <button onClick={(e) => { e.stopPropagation(); openEvaluation(a); }} className="whitespace-nowrap font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Evaluate →</button>
                     : a.state === "In progress"
                       ? <button onClick={(e) => { e.stopPropagation(); watchLive(a); }} className="whitespace-nowrap font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink hover:underline">Watch live →</button>
-                      : <button onClick={(e) => { e.stopPropagation(); notify(`Start reminder sent to ${a.name}`); }} className="whitespace-nowrap font-mono text-[10px] uppercase tracking-wider text-amber hover:underline">Remind</button>}
+                      : <button onClick={(e) => { e.stopPropagation(); void remind(a.email); }} className="whitespace-nowrap font-mono text-[10px] uppercase tracking-wider text-amber hover:underline">Remind</button>}
                 </td>
               </tr>)}
             </tbody>
@@ -178,8 +242,8 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
               ? <button onClick={() => openEvaluation(selected)} className="border border-forest bg-forest px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Open in evaluation →</button>
               : <button disabled className="cursor-not-allowed border border-line-strong bg-line/30 px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft">Evaluation opens after submit</button>}
             {selected.state !== "Not started" && <button onClick={() => watchLive(selected)} className="border border-line-strong px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Watch proctoring feed</button>}
-            {selected.state === "In progress" && <button onClick={() => notify(`5 extra minutes granted to ${selected.name}`)} className="border border-line-strong px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Grant +5 minutes</button>}
-            <button onClick={() => notify(`Message composer opened for ${selected.name}`)} className="border border-line-strong px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Message candidate</button>
+            {selected.state === "In progress" && <button onClick={() => void grantExtraTime(selected)} className="border border-line-strong px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Grant +5 minutes</button>}
+            <button onClick={() => void messageCandidate(selected)} className="border border-line-strong px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Message candidate</button>
           </div>
         </section>}
 
@@ -198,9 +262,9 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
         {notStarted.length > 0 && <section className="border border-amber/40 bg-amber/5 p-5">
           <div className="flex items-center justify-between"><p className="font-mono text-[10px] uppercase tracking-widest text-amber">Not started</p><span className="rounded-full bg-amber px-2 py-1 font-mono text-[9px] text-paper">{notStarted.length}</span></div>
           <div className="mt-3 space-y-2">
-            {notStarted.map((a) => <div key={a.id} className="flex items-center justify-between gap-3 text-[12px]"><span>{a.name}<span className="mt-0.5 block font-mono text-[10px] text-ink-soft">{a.lastActivity}</span></span><button onClick={() => notify(`Start reminder sent to ${a.name}`)} className="font-mono text-[10px] uppercase tracking-wider text-amber hover:underline">Remind</button></div>)}
+            {notStarted.map((a) => <div key={a.id} className="flex items-center justify-between gap-3 text-[12px]"><span>{a.name}<span className="mt-0.5 block font-mono text-[10px] text-ink-soft">{a.lastActivity}</span></span><button onClick={() => void remind(a.email)} className="font-mono text-[10px] uppercase tracking-wider text-amber hover:underline">Remind</button></div>)}
           </div>
-          <button onClick={() => notify(`Reminder sent to ${notStarted.length} candidate(s) who have not started`)} className="mt-4 w-full border border-amber px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-amber hover:bg-amber/10">Remind everyone</button>
+          <button onClick={() => void remind()} className="mt-4 w-full border border-amber px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-amber hover:bg-amber/10">Remind everyone</button>
         </section>}
       </aside>
     </div>

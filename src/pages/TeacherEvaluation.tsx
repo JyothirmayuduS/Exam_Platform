@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { loadExamBundle, updateAttemptScore } from "../lib/examApi";
+import { loadExamBundle, updateAttemptScore, listAttemptViolations, getAttemptExamId, saveViolation, addGradingComment, listGradingComments, listFaculty, assignGradingDelegates, type ViolationEvent, type GradingComment } from "../lib/examApi";
 import { type Attempt, type Flag } from "../data/examSession";
+import { questionsForPaper, remapAnswer, type PaperSlot } from "../lib/paperBuilder";
 import useLiveAttempts from "../hooks/useLiveAttempts";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import ProctorAI from "../components/ProctorAI";
+import { RecordingReviewModal } from "../components/RecordingReview";
+import { uploadArtifactBlob, getArtifactObjectUrl } from "../lib/examStorage";
 import { getTeacherNav } from "./TeacherDashboard";
 import { getSupabase } from "../lib/supabase";
 
@@ -38,10 +41,17 @@ function codingTests(passed: number): TestCase[] {
   return CODE_TESTS.map((name, i) => ({ name, passed: i < passed }));
 }
 
-function buildPaper(questions: any[], answers: Record<string, any>): Question[] {
+// Build a gradeable paper for ONE attempt: its own question snapshot (falling
+// back to the full pool for legacy attempts), with student answers re-mapped
+// from the displayed option order back to the original order for grading.
+function buildPaper(questions: any[], answers: Record<string, any>, paper?: unknown): Question[] {
+  const slots: PaperSlot[] = Array.isArray(paper) ? (paper as PaperSlot[]) : [];
+  const slotByQid = new Map(slots.map((s) => [s.id, s]));
   return questions.map((q, i) => {
     const qType: QType = q.type as QType;
-    const ans = answers[q.id];
+    const slot = slotByQid.get(q.id);
+    const raw = answers[q.id];
+    const ans = remapAnswer(slot, q.options, raw);
     
     // Map DB question to UI question
     const base: any = {
@@ -100,15 +110,29 @@ function fmt(s: number) { const m = Math.floor(s / 60).toString().padStart(2, "0
 export default function TeacherEvaluation({ notify }: { notify: (message: string) => void }) {
   const { profile } = useCurrentProfile();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { data: liveAttempts = [] } = useLiveAttempts("EXAM-2026-014");
+  // The exam whose submitted papers are graded. When a candidate is opened from
+  // Submissions (?review=<attemptId>) the attempt's own exam is resolved, so a
+  // linked paper always grades against the right pool and snapshot.
+  const [examId, setExamId] = useState("EXAM-2026-014");
+  useEffect(() => {
+    const reviewId = searchParams.get("review");
+    if (!reviewId) return;
+    let alive = true;
+    void getAttemptExamId(reviewId).then((resolved) => {
+      if (alive && resolved) setExamId(resolved);
+    });
+    return () => { alive = false; };
+  }, [searchParams]);
+
+  const { data: liveAttempts = [] } = useLiveAttempts(examId);
 
   const liveAttemptsCount = liveAttempts.filter((a) => a.state !== "Submitted").length;
   const submittedAttemptsCount = liveAttempts.filter((a) => a.state === "Submitted").length;
   const nav = getTeacherNav(liveAttemptsCount, submittedAttemptsCount, 0);
 
   const { data: examBundle } = useQuery({
-    queryKey: ["examBundle", "EXAM-2026-014"],
-    queryFn: () => loadExamBundle("EXAM-2026-014"),
+    queryKey: ["examBundle", examId],
+    queryFn: () => loadExamBundle(examId),
   });
 
   const [roster, setRoster] = useState<Candidate[]>([]);
@@ -121,7 +145,8 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     const mapped: Candidate[] = liveAttempts
       .filter((a) => a.state === "Submitted") // We only grade submitted
       .map((a, i) => {
-        const paper = buildPaper(questions, a.answers || {});
+        // Grade the student's OWN paper: filter the pool to their snapshot.
+        const paper = buildPaper(questionsForPaper(a.paper, questions), a.answers || {}, a.paper);
         return {
           ...a,
           order: i + 1,
@@ -144,6 +169,20 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
   const [sort, setSort] = useState("Submission time");
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
   const [showBulkDelegateModal, setShowBulkDelegateModal] = useState(false);
+  const [faculty, setFaculty] = useState<{ name: string; department: string | null; email: string | null }[]>([]);
+  const [delegateName, setDelegateName] = useState("");
+  useEffect(() => {
+    let active = true;
+    void listFaculty().then((rows) => { if (active) setFaculty(rows); });
+    return () => { active = false; };
+  }, []);
+  const confirmDelegate = async () => {
+    const n = await assignGradingDelegates(selectedCandidates, delegateName);
+    setShowBulkDelegateModal(false);
+    setSelectedCandidates([]);
+    setDelegateName("");
+    notify(n > 0 ? `Assigned ${delegateName} to ${n} candidate(s)` : "Could not assign — no valid attempts selected");
+  };
 
   const subjects = useMemo(() => ["All exams", ...Array.from(new Set(roster.map((c) => c.exam)))], [roster]);
 
@@ -351,16 +390,18 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
           <h2 className="font-serif text-xl font-semibold">Assign Delegate</h2>
           <p className="mt-2 text-[13px] text-ink-soft">Select a faculty member to cross-check the marks for the {selectedCandidates.length} selected candidates.</p>
           <div className="mt-6 flex flex-col gap-3">
-            {["Prof. M. Reddy (HOD)", "Dr. K. Srinivas", "Prof. Anjali Sharma", "Dr. Ramesh Kumar"].map((p, i) => (
-              <label key={i} className="flex items-center gap-3 border border-line p-3 hover:bg-forest/5 cursor-pointer transition-colors">
-                <input type="radio" name="bulk_delegate" className="accent-forest w-4 h-4" />
-                <span className="font-mono text-[11px] uppercase tracking-wider text-ink">{p}</span>
+            {faculty.map((p) => (
+              <label key={p.name} className="flex items-center gap-3 border border-line p-3 hover:bg-forest/5 cursor-pointer transition-colors">
+                <input type="radio" name="bulk_delegate" checked={delegateName === p.name} onChange={() => setDelegateName(p.name)} className="accent-forest w-4 h-4" />
+                <span className="font-mono text-[11px] uppercase tracking-wider text-ink">{p.name}</span>
+                {p.department && <span className="text-[10px] text-ink-soft">{p.department}</span>}
               </label>
             ))}
+            {faculty.length === 0 && <p className="text-[12px] text-ink-soft">No other faculty found — add teachers to the platform first.</p>}
           </div>
           <div className="mt-8 flex justify-end gap-3">
             <button onClick={() => setShowBulkDelegateModal(false)} className="px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">Cancel</button>
-            <button onClick={() => { setShowBulkDelegateModal(false); setSelectedCandidates([]); notify(`Assigned delegate for ${selectedCandidates.length} candidates successfully`); }} className="bg-forest px-6 py-2 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest/90">Confirm Assignment</button>
+            <button onClick={() => void confirmDelegate()} disabled={!delegateName} className="bg-forest px-6 py-2 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest/90 disabled:cursor-not-allowed disabled:bg-line/50 disabled:text-ink-soft">Confirm Assignment</button>
           </div>
         </div>
       </div>
@@ -450,6 +491,7 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [pipMin, setPipMin] = useState(false);
   const [showDelegateModal, setShowDelegateModal] = useState(false);
+  const [reviewRec, setReviewRec] = useState<{ attemptId: string; roll: string; name: string } | null>(null);
 
   const cid = candidate.id;
   const paper = candidate.paper;
@@ -482,6 +524,22 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
     else onClose();
   };
 
+  const flagModeration = () => {
+    if (!candidate.studentId) {
+      notify("No student record linked to this attempt — cannot flag for moderation.");
+      return;
+    }
+    void saveViolation(
+      candidate.id,
+      candidate.examId ?? "EXAM-2026-014",
+      candidate.studentId,
+      "grading_moderation",
+      `Answer paper of ${candidate.name} (${candidate.roll}) flagged for moderation by ${profileName}`,
+      { severity: "critical", source: "teacher" },
+    );
+    notify("Flagged for moderation — logged in the violation report.");
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-paper">
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line bg-paper-raised px-5 py-3 lg:px-8">
@@ -505,7 +563,7 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
           <div className="mx-auto max-w-3xl">
             <div className="flex items-center justify-between"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">{candidate.exam}</p><p className="font-mono text-[10px] text-ink-soft">Submitted {candidate.submittedAgo}</p></div>
             <h1 className="mt-2 font-serif text-3xl font-semibold">Answer paper</h1>
-            {candidate.flags.length > 0 && <IntegrityBanner flags={candidate.flags} name={candidate.name} notify={notify} />}
+            {candidate.flags.length > 0 && <IntegrityBanner flags={candidate.flags} name={candidate.name} notify={notify} onOpenRecording={() => setReviewRec({ attemptId: candidate.id, roll: candidate.roll, name: candidate.name })} />}
             <div className="mt-7 space-y-5">
               {paper.map((q) => <QuestionCard key={q.id} q={q} cid={cid} manualScores={manualScores} rubricChecks={rubricChecks} feedback={feedback} setScore={setScore} toggleItem={toggleItem} setFeedback={setFb} />)}
             </div>
@@ -513,14 +571,40 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
         </main>
 
         <aside className="w-full border-t border-line bg-paper-raised xl:w-[340px] xl:shrink-0 xl:overflow-y-auto xl:border-l xl:border-t-0">
-          <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} onFinish={() => finish(false)} onFinishNext={() => finish(true)} onDelegate={() => setShowDelegateModal(true)} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
+          <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} onFinish={() => finish(false)} onFinishNext={() => finish(true)} onDelegate={() => setShowDelegateModal(true)} onFlagModeration={flagModeration} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
           <CandidateFacts candidate={candidate} />
         </aside>
       </div>
 
       <CameraPip cam={cam} minimized={pipMin} onToggle={() => setPipMin((v) => !v)} profileName={profileName} notify={notify} />
+      {reviewRec && (
+        <RecordingReviewBridge
+          attemptId={reviewRec.attemptId}
+          roll={reviewRec.roll}
+          name={reviewRec.name}
+          onClose={() => setReviewRec(null)}
+        />
+      )}
     </div>
   );
+}
+
+/** Fetches the real violation events for one attempt, then opens the review. */
+function RecordingReviewBridge({ attemptId, roll, name, onClose }: {
+  attemptId: string; roll: string; name: string; onClose: () => void;
+}) {
+  const [violations, setViolations] = useState<ViolationEvent[]>([]);
+  const [examId, setExamId] = useState("EXAM-2026-014");
+  useEffect(() => {
+    let alive = true;
+    void listAttemptViolations(attemptId).then((vs) => {
+      if (!alive) return;
+      if (vs.length > 0) setExamId(vs[0].exam_id);
+      setViolations(vs);
+    });
+    return () => { alive = false; };
+  }, [attemptId]);
+  return <RecordingReviewModal examId={examId} roll={roll} name={name} violations={violations} onClose={onClose} />;
 }
 
 function RecPill({ state, seconds }: { state: CamState; seconds: number }) {
@@ -588,12 +672,12 @@ function CameraPip({ cam, minimized, onToggle, profileName, notify }: { cam: Ret
   );
 }
 
-function IntegrityBanner({ flags, name, notify }: { flags: Flag[]; name: string; notify: (m: string) => void }) {
+function IntegrityBanner({ flags, name, notify, onOpenRecording }: { flags: Flag[]; name: string; notify: (m: string) => void; onOpenRecording: () => void }) {
   return (
     <div className="mt-5 border border-alert/30 bg-alert/5 p-4">
       <div className="flex items-start justify-between gap-3">
         <div><p className="font-mono text-[10px] uppercase tracking-widest text-alert">Proctoring · review before finalizing</p><p className="mt-1 text-[13px]">This candidate's exam raised {flags.length} flag{flags.length > 1 ? "s" : ""}. Review the recording before confirming marks.</p></div>
-        <button onClick={() => notify(`Opening ${name}'s exam recording`)} className="shrink-0 border border-alert px-3 py-2 font-mono text-[9px] uppercase tracking-wider text-alert hover:bg-alert/10">Open recording</button>
+        <button onClick={onOpenRecording} className="shrink-0 border border-alert px-3 py-2 font-mono text-[9px] uppercase tracking-wider text-alert hover:bg-alert/10">Open recording</button>
       </div>
       <ul className="mt-3 space-y-1.5">
         {flags.map((f, i) => <li key={i} className="flex items-center gap-2 text-[12px]"><span className={`h-1.5 w-1.5 ${f.severity === "critical" ? "bg-alert" : "bg-amber"}`} /><span className="font-medium">{f.label}</span><span className="font-mono text-[10px] text-ink-soft">{f.at}</span></li>)}
@@ -731,6 +815,58 @@ function ManualAnswer({ q, cid, score, rubricChecks, feedback, setScore, toggleI
     : null;
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(uploadedMatch ? uploadedMatch[1] : null);
 
+  // Grading comments (inline text + voice notes) — persisted in grading_comments.
+  const [comments, setComments] = useState<GradingComment[]>([]);
+  const [recording, setRecording] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+
+  const loadComments = () => {
+    void listGradingComments(cid).then((rows) =>
+      setComments(rows.filter((c) => String(c.question_id) === String(q.id))),
+    );
+  };
+  useEffect(loadComments, [cid, q.id]);
+
+  const addInlineComment = async () => {
+    const text = window.prompt("Inline comment for this answer:", "");
+    if (!text?.trim()) return;
+    const ok = await addGradingComment({ attemptId: cid, questionId: String(q.id), comment: text });
+    if (ok) loadComments();
+  };
+
+  const toggleVoice = async () => {
+    if (recording) {
+      recorderRef.current?.stop();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const key = `grading/voice/${cid}_${q.id}_${Date.now()}.webm`;
+        const stored = await uploadArtifactBlob(key, blob, "audio/webm");
+        await addGradingComment({
+          attemptId: cid,
+          questionId: String(q.id),
+          comment: "Voice note",
+          voiceKey: stored?.key ?? key,
+        });
+        setRecording(false);
+        loadComments();
+      };
+      rec.start();
+      recorderRef.current = rec;
+      setRecording(true);
+    } catch {
+      window.alert("Microphone permission was denied.");
+    }
+  };
+
   // Also fetch the upload directly from question_submissions AND student_answers
   useEffect(() => {
     if (uploadedMatch) return;
@@ -817,19 +953,44 @@ function ManualAnswer({ q, cid, score, rubricChecks, feedback, setScore, toggleI
       <div className="mt-3 relative">
         <textarea value={fb} onChange={(e) => setFeedback(q.id, e.target.value)} rows={3} placeholder="Feedback for this answer (optional)…" className="block w-full resize-y border border-line-strong bg-paper px-3 py-2 pb-10 text-[13px] outline-none focus:border-forest" />
         <div className="absolute bottom-2 left-2 flex gap-2">
-          <button onClick={() => alert("Highlight text to add inline comment")} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Inline Text Comment</button>
-          <button onClick={() => alert("Recording voice note...")} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Voice Comment</button>
+          <button onClick={() => void addInlineComment()} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Inline Text Comment</button>
+          <button onClick={() => void toggleVoice()} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">
+            {recording ? "■ Stop recording" : "Voice Comment"}
+          </button>
         </div>
       </div>
-      
+      {comments.length > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {comments.map((c) => (
+            <div key={c.id} className="flex flex-wrap items-center gap-2 border-l-2 border-forest bg-forest/5 px-3 py-2 text-[12px]">
+              <span className="min-w-0 flex-1 text-ink">{c.comment || "Voice note"}</span>
+              {c.voice_key && <VoicePlayButton voiceKey={c.voice_key} />}
+              <span className="font-mono text-[9px] text-ink-soft">
+                {new Date(c.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
     </div>
   );
 }
 
-function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount, onFinish, onFinishNext, onDelegate, hasNext, nextName }: {
+function VoicePlayButton({ voiceKey }: { voiceKey: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void getArtifactObjectUrl(voiceKey).then((u) => { if (alive && u) setUrl(u); });
+    return () => { alive = false; };
+  }, [voiceKey]);
+  if (!url) return <span className="font-mono text-[9px] text-ink-soft">loading voice…</span>;
+  return <audio controls src={url} className="h-8 w-44" />;
+}
+
+function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount, onFinish, onFinishNext, onDelegate, onFlagModeration, hasNext, nextName }: {
   awarded: number; max: number; autoTotal: number; manualTotal: number; gradedManual: number; manualCount: number;
-  onFinish: () => void; onFinishNext: () => void; onDelegate: () => void; hasNext: boolean; nextName?: string;
+  onFinish: () => void; onFinishNext: () => void; onDelegate: () => void; onFlagModeration: () => void; hasNext: boolean; nextName?: string;
 }) {
   const done = manualCount === 0 || gradedManual === manualCount;
   return (
@@ -846,7 +1007,7 @@ function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manu
         {hasNext && <button onClick={onFinishNext} className="border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save &amp; next → {nextName}</button>}
         <button onClick={onFinish} className="border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5">{hasNext ? "Save & close" : "Save & finish"}</button>
         <button onClick={onDelegate} className="border border-line-strong px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Delegate for cross-check</button>
-        <button onClick={() => alert("Flagged for moderation")} className="border border-alert/50 text-alert bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10">Flag for Moderation</button>
+        <button onClick={onFlagModeration} className="border border-alert/50 text-alert bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10">Flag for Moderation</button>
       </div>
     </div>
   );

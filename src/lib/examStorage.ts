@@ -1,71 +1,286 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+// Proctoring artifact storage — Cloudflare R2 ONLY.
+//
+// Recordings, per-second screenshots, violation snapshots and the PDF report
+// all live in Cloudflare R2 (S3-compatible). Supabase is never used for these
+// artifacts — it only holds the small metadata rows (attempts, violation_events).
+//
+// Credentials come from the VITE_S3_* keys in .env.local (S3-compatible access
+// key / secret / endpoint / bucket for R2). Nothing is hard-coded here.
+//
+// Folder layout (kept identical between the exam side and the review side):
+//   ${examId}/${roll}/recordings/${name}.webm
+//   ${examId}/${roll}/screenshots/snap_${epochMs}.jpg
+//   ${examId}/${roll}/violations/${epochMs}_${type}.jpg
+//   ${examId}/${roll}/report/report_${epochMs}.pdf
+
+import {
+  S3Client,
+  PutObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { jsPDF } from "jspdf";
 import { getSupabase } from "./supabase";
 import { supabaseConfigured } from "./env";
 
+// Storage policy: Cloudflare R2 is PRIMARY, Supabase Storage is the BACKUP.
+// Every artifact is written to R2 first; only when the R2 write fails (bad
+// credentials, bucket CORS, network) does the same object fall back to the
+// Supabase bucket, so a Cloudflare outage never loses a recording or snapshot.
+export type StorageProvider = "r2" | "supabase";
+
+export type StoredArtifact = {
+  key: string;
+  provider: StorageProvider;
+};
+
+function supabaseBucketName(): string {
+  return import.meta.env.VITE_SUPABASE_BUCKET_NAME || "exam-records";
+}
+
+const r2Endpoint = import.meta.env.VITE_S3_ENDPOINT || "";
+const r2Bucket = import.meta.env.VITE_S3_BUCKET_NAME || "";
+const r2AccessKey = import.meta.env.VITE_S3_ACCESS_KEY || "";
+const r2SecretKey = import.meta.env.VITE_S3_SECRET_KEY || "";
+
+/** True only when real R2 (Cloudflare) credentials are configured. */
+export const r2Configured = !!(r2Endpoint && r2Bucket && r2AccessKey && r2SecretKey);
+
 const s3Client = new S3Client({
   region: "auto",
-  endpoint: import.meta.env.VITE_S3_ENDPOINT || "",
+  // R2 requires path-style addressing (endpoint/bucket/key, no bucket subdomain).
+  forcePathStyle: true,
+  endpoint: r2Endpoint,
   credentials: {
-    accessKeyId: import.meta.env.VITE_S3_ACCESS_KEY || "",
-    secretAccessKey: import.meta.env.VITE_S3_SECRET_KEY || "",
+    accessKeyId: r2AccessKey,
+    secretAccessKey: r2SecretKey,
   },
 });
 
-// Folder structure:
-//   ${examName}/${studentId}/recordings/recording_${timestamp}.webm
-//   ${examName}/${studentId}/screenshots/snap_${timestamp}.jpg
-//   ${examName}/${studentId}/violations/${timestamp}_${type}.jpg
-//   ${examName}/${studentId}/report/report_${timestamp}.pdf
+export type ArtifactKind = "recordings" | "screenshots" | "violations" | "report";
+
+export type R2Artifact = {
+  key: string;
+  kind: ArtifactKind;
+  name: string;
+  size: number;
+  lastModified: string | null;
+};
 
 function buildR2Path(
-  examName: string,
-  studentId: string,
-  kind: "recordings" | "screenshots" | "violations" | "report",
+  examId: string,
+  roll: string,
+  kind: ArtifactKind,
   filename: string,
 ): string {
-  return `${examName}/${studentId}/${kind}/${filename}`;
+  return `${examId}/${roll}/${kind}/${filename}`;
 }
 
-async function uploadToR2(path: string, blob: Blob, contentType: string): Promise<boolean> {
-  const s3Bucket = import.meta.env.VITE_S3_BUCKET_NAME;
-  if (!s3Bucket || !import.meta.env.VITE_S3_ENDPOINT) return false;
+/** List the objects under one prefix (e.g. `EXAM-2026-014/21VGN0158/`). */
+export async function listR2Artifacts(prefix: string): Promise<R2Artifact[] | null> {
+  if (!r2Configured) return null;
   try {
-    const cmd = new PutObjectCommand({ Bucket: s3Bucket, Key: path, Body: blob, ContentType: contentType });
-    await s3Client.send(cmd);
-    console.log(`[examStorage] R2: ${path}`);
-    return true;
+    const cmd = new ListObjectsV2Command({ Bucket: r2Bucket, Prefix: prefix });
+    const out = await s3Client.send(cmd);
+    return (out.Contents ?? []).map((o) => {
+      const key = o.Key ?? "";
+      const parts = key.split("/");
+      const kind = (parts[2] as ArtifactKind | undefined) ?? "screenshots";
+      return {
+        key,
+        kind,
+        name: parts[parts.length - 1] ?? key,
+        size: o.Size ?? 0,
+        lastModified: o.LastModified?.toISOString() ?? null,
+      };
+    });
   } catch (err) {
-    console.warn(`[examStorage] R2 failed (${path}):`, err);
-    return false;
+    console.warn(`[examStorage] R2 list failed (${prefix}):`, err);
+    return null;
   }
 }
 
-async function uploadToSupabase(path: string, blob: Blob, contentType: string): Promise<boolean> {
-  if (!supabaseConfigured) return false;
-  const db = getSupabase();
-  if (!db) return false;
-  const bucket = import.meta.env.VITE_SUPABASE_BUCKET_NAME || "exam-records";
-  const { error } = await db.storage.from(bucket).upload(path, blob, { contentType, upsert: true });
-  if (error) { console.warn(`[examStorage] Supabase failed (${path}):`, error.message); return false; }
-  console.log(`[examStorage] Supabase: ${path}`);
-  return true;
+/** List all artifacts for one exam + roll: `${examId}/${roll}/`. */
+export async function listStudentArtifacts(
+  examId: string,
+  roll: string,
+): Promise<R2Artifact[] | null> {
+  const prefix = `${examId}/${roll}/`;
+  // Primary: Cloudflare R2. When R2 isn't configured / errors, fall back to the
+  // Supabase backup bucket so artifacts are still reviewable.
+  if (r2Configured) {
+    const r2 = await listR2Artifacts(prefix);
+    if (r2) return r2;
+  }
+  return listSupabaseArtifacts(prefix);
 }
 
-async function dualWrite(path: string, blob: Blob, contentType: string): Promise<void> {
-  const r2ok = await uploadToR2(path, blob, contentType);
-  if (!r2ok) await uploadToSupabase(path, blob, contentType);
+/** Backup tier listing: objects stored in Supabase Storage for a prefix. */
+async function listSupabaseArtifacts(prefix: string): Promise<R2Artifact[] | null> {
+  if (!supabaseConfigured) return null;
+  const db = getSupabase();
+  if (!db) return null;
+  try {
+    const { data, error } = await db.storage
+      .from(supabaseBucketName())
+      .list(prefix.replace(/\/+$/, "") + "/", { limit: 1000, offset: 0 });
+    if (error || !data) {
+      console.warn(`[examStorage] Supabase backup list failed (${prefix}):`, error?.message ?? "no data");
+      return null;
+    }
+    return data
+      .filter((o: { id?: string | null; name?: string }) => Boolean(o.id && o.name)) // only real objects, skip folder markers
+      .map((o: { id?: string | null; name?: string; metadata?: { size?: number }; created_at?: string | null }) => {
+        const key = `${prefix}${o.name}`;
+        const parts = key.split("/");
+        return {
+          key,
+          kind: (parts[2] as ArtifactKind | undefined) ?? "screenshots",
+          name: o.name,
+          size: o.metadata?.size ?? 0,
+          lastModified: o.created_at ?? null,
+        };
+      });
+  } catch (err) {
+    console.warn(`[examStorage] Supabase backup list error (${prefix}):`, err);
+    return null;
+  }
+}
+
+/**
+ * Playable/embeddable URL for an artifact, from whichever provider holds it:
+ * R2 presigned GET first, then the Supabase public URL.
+ */
+export async function getArtifactObjectUrl(key: string, expiresIn = 3600): Promise<string | null> {
+  const r2 = await getR2ObjectUrl(key, expiresIn);
+  if (r2) return r2;
+  if (supabaseConfigured) {
+    const db = getSupabase();
+    if (db) {
+      const { data } = db.storage.from(supabaseBucketName()).getPublicUrl(key);
+      if (data?.publicUrl) return data.publicUrl;
+    }
+  }
+  return null;
+}
+
+/**
+ * A playable/embeddable URL for an R2 object. Uses a short-lived presigned GET
+ * so private buckets work; returns null when R2 isn't configured.
+ */
+export async function getR2ObjectUrl(key: string, expiresIn = 3600): Promise<string | null> {
+  if (!r2Configured) return null;
+  try {
+    const cmd = new GetObjectCommand({ Bucket: r2Bucket, Key: key });
+    return await getSignedUrl(s3Client, cmd, { expiresIn });
+  } catch (err) {
+    console.warn(`[examStorage] R2 presign failed (${key}):`, err);
+    return null;
+  }
+}
+
+/** Upload one blob to R2 (primary). Returns the object key, or null on failure. */
+async function uploadToR2(path: string, blob: Blob, contentType: string): Promise<string | null> {
+  if (!r2Configured) {
+    console.warn(`[examStorage] R2 not configured — ${path} will go to the Supabase backup bucket`);
+    return null;
+  }
+  try {
+    const cmd = new PutObjectCommand({
+      Bucket: r2Bucket,
+      Key: path,
+      Body: blob,
+      ContentType: contentType,
+    });
+    await s3Client.send(cmd);
+    console.log(`[examStorage] R2 ✓ ${path} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+    return path;
+  } catch (err) {
+    console.warn(`[examStorage] R2 upload failed (${path}):`, err);
+    return null;
+  }
+}
+
+/** Backup tier: Supabase Storage (only used when the R2 write fails). */
+async function uploadToSupabase(path: string, blob: Blob, contentType: string): Promise<string | null> {
+  if (!supabaseConfigured) {
+    console.warn(`[examStorage] Supabase backup not configured — ${path} could not be stored`);
+    return null;
+  }
+  const db = getSupabase();
+  if (!db) return null;
+  try {
+    const { error } = await db.storage.from(supabaseBucketName()).upload(path, blob, {
+      contentType,
+      upsert: true,
+    });
+    if (error) {
+      console.warn(`[examStorage] Supabase backup failed (${path}):`, error.message);
+      return null;
+    }
+    console.log(`[examStorage] Supabase ✓ (backup) ${path}`);
+    return path;
+  } catch (err) {
+    console.warn(`[examStorage] Supabase backup error (${path}):`, err);
+    return null;
+  }
+}
+
+/** Write R2 first, fall back to Supabase. Returns where the object landed. */
+async function storeArtifact(path: string, blob: Blob, contentType: string): Promise<StoredArtifact | null> {
+  const r2key = await uploadToR2(path, blob, contentType);
+  if (r2key) return { key: r2key, provider: "r2" };
+  const sbKey = await uploadToSupabase(path, blob, contentType);
+  return sbKey ? { key: sbKey, provider: "supabase" } : null;
+}
+
+/** Store an arbitrary blob (R2 primary → Supabase backup). */
+export async function uploadArtifactBlob(
+  key: string,
+  blob: Blob,
+  contentType: string,
+): Promise<StoredArtifact | null> {
+  return storeArtifact(key, blob, contentType);
+}
+
+/** Store a flagged frame as a violation snapshot (used by the proctor console). */
+export async function storeViolationSnapshot(opts: {
+  examId: string;
+  roll: string;
+  label: string;
+  blob: Blob;
+}): Promise<StoredArtifact | null> {
+  const safeLabel = opts.label.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
+  return storeArtifact(
+    buildR2Path(opts.examId, opts.roll, "violations", `${Date.now()}_${safeLabel}.jpg`),
+    opts.blob,
+    "image/jpeg",
+  );
 }
 
 export function captureFrame(video: HTMLVideoElement, quality = 0.6): Blob | null {
-  const w = video.videoWidth; const h = video.videoHeight;
+  const w = video.videoWidth;
+  const h = video.videoHeight;
   if (!w || !h) return null;
-  const c = document.createElement("canvas"); c.width = w; c.height = h;
-  const ctx = c.getContext("2d"); if (!ctx) return null;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d");
+  if (!ctx) return null;
   ctx.drawImage(video, 0, 0, w, h);
-  let b: Blob | null = null;
-  c.toBlob((r) => { b = r; }, "image/jpeg", quality);
-  return b;
+  let out: Blob | null = null;
+  c.toBlob((r) => { out = r; }, "image/jpeg", quality);
+  return out;
 }
+
+/** One violation snapshot captured at the moment of the flag. */
+export type ViolationSnap = {
+  label: string;
+  blob: Blob;
+  /** Seconds from the exam start — also drawn on the recording seek bar. */
+  offsetSec?: number | null;
+};
 
 export type ScreenshotHandle = {
   setVideo: (video: HTMLVideoElement | null) => void;
@@ -73,21 +288,25 @@ export type ScreenshotHandle = {
   captureViolationSnapshot: (violationType: string) => Promise<Blob | null>;
 };
 
+/** Capture a JPEG frame every second + a high-quality frame per violation. */
 export function startScreenshotCapture(opts: {
-  examName: string;
-  studentId: string;
+  examId: string;
+  roll: string;
   intervalMs?: number;
 }): ScreenshotHandle {
-  const { examName, studentId, intervalMs = 1000 } = opts;
+  const { examId, roll, intervalMs = 1000 } = opts;
   let video: HTMLVideoElement | null = null;
   let stopped = false;
 
   const tick = async () => {
-    if (stopped) return;
-    if (!video) return;
-    const blob = captureFrame(video); if (!blob) return;
-    const path = buildR2Path(examName, studentId, "screenshots", `snap_${Date.now()}.jpg`);
-    await dualWrite(path, blob, "image/jpeg");
+    if (stopped || !video) return;
+    const blob = captureFrame(video);
+    if (!blob) return;
+    await storeArtifact(
+      buildR2Path(examId, roll, "screenshots", `snap_${Date.now()}.jpg`),
+      blob,
+      "image/jpeg",
+    );
   };
 
   void tick();
@@ -95,213 +314,254 @@ export function startScreenshotCapture(opts: {
 
   return {
     setVideo: (v) => { video = v; },
-    stop: () => { stopped = true; window.clearInterval(id); video = null; },
+    stop: () => {
+      stopped = true;
+      window.clearInterval(id);
+      video = null;
+    },
     captureViolationSnapshot: async (violationType: string) => {
       if (!video) return null;
-      const blob = captureFrame(video, 0.9); if (!blob) return null;
-      const path = buildR2Path(examName, studentId, "violations", `${Date.now()}_${encodeURIComponent(violationType)}.jpg`);
-      await dualWrite(path, blob, "image/jpeg");
+      const blob = captureFrame(video, 0.9);
+      if (!blob) return null;
+      const safeType = violationType.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
+      await storeArtifact(
+        buildR2Path(examId, roll, "violations", `${Date.now()}_${safeType}.jpg`),
+        blob,
+        "image/jpeg",
+      );
       return blob;
     },
   };
 }
 
+/**
+ * Upload everything recorded during the exam (recording + violation snapshots +
+ * a PDF report) to Cloudflare R2.
+ */
 export async function uploadExamRecords(opts: {
-  examName: string;
-  studentId: string;
+  examId: string;
+  roll: string;
+  studentName: string;
   videoBlob: Blob;
-  violationSnapshots?: { label: string; blob: Blob }[];
-}): Promise<void> {
-  const { examName, studentId, videoBlob, violationSnapshots = [] } = opts;
+  violationSnapshots?: ViolationSnap[];
+  durationSec?: number;
+}): Promise<{ recordingKey: string | null; pdfKey: string | null; snapshotKeys: string[] }> {
+  const { examId, roll, studentName, videoBlob, violationSnapshots = [], durationSec } = opts;
+  const uploaded = { recordingKey: null as string | null, pdfKey: null as string | null, snapshotKeys: [] as string[] };
+
+  // 1. Recording → Cloudflare R2 (primary), Supabase Storage (backup).
   const recFilename = `recording_${Date.now()}.webm`;
-  const recPath = buildR2Path(examName, studentId, "recordings", recFilename);
-  if (!await uploadToR2(recPath, videoBlob, "video/webm"))
-    await uploadToSupabase(recPath, videoBlob, "video/webm");
+  const rec = await storeArtifact(
+    buildR2Path(examId, roll, "recordings", recFilename),
+    videoBlob,
+    "video/webm",
+  );
+  uploaded.recordingKey = rec?.key ?? null;
+
+  // 2. Violation snapshots (frames captured at the flagged moments).
   for (const snap of violationSnapshots) {
-    const path = buildR2Path(examName, studentId, "violations", `${Date.now()}_${encodeURIComponent(snap.label)}.jpg`);
-    if (!await uploadToR2(path, snap.blob, "image/jpeg"))
-      await uploadToSupabase(path, snap.blob, "image/jpeg");
+    const safeLabel = snap.label.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
+    const stored = await storeArtifact(
+      buildR2Path(examId, roll, "violations", `${Date.now()}_${safeLabel}.jpg`),
+      snap.blob,
+      "image/jpeg",
+    );
+    if (stored) uploaded.snapshotKeys.push(stored.key);
   }
-  const pdfBlob = await generateProctorReport({ examName, studentId, violationSnapshots, recordingPath: recPath });
-  const pdfPath = buildR2Path(examName, studentId, "report", `report_${Date.now()}.pdf`);
-  if (!await uploadToR2(pdfPath, pdfBlob, "application/pdf"))
-    await uploadToSupabase(pdfPath, pdfBlob, "application/pdf");
+
+  // 3. PDF report (generated locally with jsPDF).
+  try {
+    const pdfBlob = await generateProctorReport({
+      examId,
+      roll,
+      studentName,
+      violationSnapshots,
+      durationSec,
+      recordingKey: uploaded.recordingKey,
+    });
+    const pdf = await storeArtifact(
+      buildR2Path(examId, roll, "report", `report_${Date.now()}.pdf`),
+      pdfBlob,
+      "application/pdf",
+    );
+    uploaded.pdfKey = pdf?.key ?? null;
+  } catch (err) {
+    console.error("[examStorage] PDF generation failed:", err);
+  }
+
+  return uploaded;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PDF report — generated in the browser with jsPDF (deterministic, no server).
+// Each page is a real PDF page with the violation frames embedded.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function fmtClock(sec: number | null | undefined): string {
+  if (sec == null || !Number.isFinite(sec)) return "—";
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(r).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
 
 async function generateProctorReport(opts: {
-  examName: string;
-  studentId: string;
-  violationSnapshots?: { label: string; blob: Blob }[];
-  recordingPath: string;
+  examId: string;
+  roll: string;
+  studentName: string;
+  violationSnapshots?: ViolationSnap[];
+  durationSec?: number;
+  recordingKey?: string | null;
 }): Promise<Blob> {
-  const { examName, studentId, violationSnapshots = [], recordingPath } = opts;
-  const W = 595; const H = 842; const M = 40; const CW = W - M * 2;
-  const pages: HTMLCanvasElement[] = [];
+  const { examId, roll, studentName, violationSnapshots = [], durationSec, recordingKey } = opts;
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
+  const W = doc.internal.pageSize.getWidth(); // ~595
+  const M = 40;
+  const CW = W - M * 2;
 
-  const c1 = makeCanvas(W, H);
-  const ctx1 = c1.getContext("2d")!;
-  let y = M;
+  const header = (title: string, subtitle: string) => {
+    doc.setFillColor(26, 58, 42);
+    doc.rect(0, 0, W, 74, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("VIGNAN'S INSTITUTE OF INFORMATION TECHNOLOGY", M, 30);
+    doc.setFont("courier", "bold");
+    doc.setFontSize(11);
+    doc.text(title, M, 50);
+    doc.setFontSize(8);
+    doc.text(subtitle, M, 64);
+  };
 
-  ctx1.fillStyle = "#1a3a2a";
-  ctx1.fillRect(M, y, CW, 52);
-  ctx1.fillStyle = "#ffffff";
-  ctx1.font = "bold 15px serif";
-  ctx1.fillText("VIGNAN'S INSTITUTE OF INFORMATION TECHNOLOGY", M + 12, y + 22);
-  ctx1.font = "11px monospace";
-  ctx1.fillText("  PROCTORING EXAMINATION REPORT", M + 12, y + 40);
-
-  ctx1.fillStyle = "#f0ebe0";
-  ctx1.fillRect(W - M - 170, M, 170, 52);
-  ctx1.fillStyle = "#1a1a1a";
-  ctx1.font = "10px monospace";
   const now = new Date();
-  ctx1.fillText(`Exam: ${examName}`, W - M - 160, M + 18);
-  ctx1.fillText(`Date: ${now.toLocaleDateString()}`, W - M - 160, M + 32);
-  ctx1.fillText(`Time: ${now.toLocaleTimeString()}`, W - M - 160, M + 46);
+  header("PROCTORING EXAMINATION REPORT", `${now.toLocaleDateString()} · ${now.toLocaleTimeString()}`);
 
-  y += 70;
-  ctx1.fillStyle = "#1a3a2a"; ctx1.fillRect(M, y, CW, 2); y += 16;
+  // Student / session details
+  let y = 96;
+  doc.setDrawColor(26, 58, 42);
+  doc.setLineWidth(1.5);
+  doc.line(M, y, W - M, y);
+  y += 22;
+  doc.setTextColor(20, 20, 20);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("STUDENT DETAILS", M, y);
+  y += 18;
 
-  ctx1.fillStyle = "#1a1a1a"; ctx1.font = "bold 13px serif";
-  ctx1.fillText("STUDENT DETAILS", M, y); y += 20;
   const details: [string, string][] = [
-    ["Student Name:", studentId.split("_")[0] || studentId],
-    ["Roll / ID:", studentId],
-    ["Exam:", examName],
-    ["Violations:", violationSnapshots.length > 0 ? `${violationSnapshots.length} flag(s) detected` : "None"],
+    ["Student", studentName],
+    ["Roll / ID", roll],
+    ["Exam", examId],
+    ["Recording", recordingKey ?? "not uploaded"],
+    ["Flags", violationSnapshots.length > 0 ? `${violationSnapshots.length} flagged moment(s)` : "None"],
   ];
-  details.forEach(([label, value]) => {
-    ctx1.fillStyle = "#555"; ctx1.font = "bold 11px monospace"; ctx1.fillText(label, M, y);
-    ctx1.fillStyle = "#1a1a1a"; ctx1.font = "11px sans-serif"; ctx1.fillText(value, M + 140, y);
-    y += 18;
-  });
-
-  y += 12; ctx1.fillStyle = "#1a3a2a"; ctx1.fillRect(M, y, CW, 2); y += 18;
-  ctx1.fillStyle = "#1a1a1a"; ctx1.font = "bold 13px serif";
-  ctx1.fillText("SCREEN SNAPSHOT TIMELINE", M, y); y += 18;
-  ctx1.fillStyle = "#666"; ctx1.font = "10px monospace";
-  ctx1.fillText("Periodic screen captures taken every second during the exam.", M, y); y += 22;
-
-  const snapW = (CW - 20) / 3; const snapH = snapW * 0.62;
-  for (let r = 0; r < 3; r++) {
-    for (let c = 0; c < 3; c++) {
-      const sx = M + c * (snapW + 10); const sy = y + r * (snapH + 30);
-      ctx1.strokeStyle = "#cccccc"; ctx1.lineWidth = 1; ctx1.fillStyle = "#e8e4dc";
-      ctx1.fillRect(sx, sy, snapW, snapH); ctx1.strokeRect(sx, sy, snapW, snapH);
-      ctx1.fillStyle = "#888"; ctx1.font = "8px monospace";
-      ctx1.fillText(`Snap #${r * 3 + c + 1}`, sx + 4, sy + snapH / 2);
-      ctx1.fillText(`~${r * 3 + c + 1}s`, sx + 4, sy + snapH / 2 + 12);
-    }
+  doc.setFontSize(10);
+  for (const [label, value] of details) {
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(110, 110, 110);
+    doc.text(label.toUpperCase(), M, y);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(20, 20, 20);
+    doc.text(String(value).slice(0, 90), M + 110, y);
+    y += 15;
   }
-  y += 3 * (snapH + 30);
+  y += 8;
 
-  y += 10; ctx1.fillStyle = "#1a3a2a"; ctx1.fillRect(M, y, CW, 2); y += 18;
-  ctx1.fillStyle = "#1a1a1a"; ctx1.font = "bold 13px serif";
-  ctx1.fillText("VIOLATION SUMMARY", M, y); y += 20;
+  // Violation summary
+  doc.setDrawColor(26, 58, 42);
+  doc.setLineWidth(1.5);
+  doc.line(M, y, W - M, y);
+  y += 22;
+  doc.setTextColor(20, 20, 20);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text("VIOLATION SUMMARY", M, y);
+  y += 18;
+
   if (violationSnapshots.length === 0) {
-    ctx1.fillStyle = "#2a7a2a"; ctx1.font = "11px monospace";
-    ctx1.fillText("No violations detected during this exam session.", M, y);
+    doc.setFont("courier", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(42, 122, 42);
+    doc.text("No violations detected during this exam session.", M, y);
+    y += 20;
   } else {
-    violationSnapshots.forEach((v, i) => {
-      ctx1.fillStyle = "#cc0000"; ctx1.font = "bold 10px monospace";
-      ctx1.fillText(`WARNING: ${v.label}`, M, y);
-      ctx1.fillStyle = "#666"; ctx1.font = "10px monospace";
-      ctx1.fillText(`  (see page ${Math.floor(i / 4) + 2} for details)`, M + 200, y); y += 16;
+    doc.setFontSize(9.5);
+    violationSnapshots.slice(0, 14).forEach((v, i) => {
+      const over = y > 760;
+      if (over) { doc.addPage(); y = 60; }
+      doc.setTextColor(200, 0, 0);
+      doc.setFont("helvetica", "bold");
+      const stamp = v.offsetSec != null ? `@ ${fmtClock(v.offsetSec)}` : "";
+      doc.text(`${i + 1}. ${v.label} ${stamp}`, M, y);
+      y += 14;
     });
-    ctx1.fillStyle = "#555"; ctx1.font = "9px monospace";
-    ctx1.fillText("Violation moments are highlighted in RED in the recording.", M, y);
+    doc.setFont("courier", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(120, 120, 120);
+    doc.text("Flagged moments are marked in RED on the recording timeline.", M, y + 4);
   }
 
-  pages.push(c1);
+  // Duration + signature footer on page 1
+  doc.setFontSize(9);
+  doc.setTextColor(130, 130, 130);
+  doc.text(
+    `Duration: ${durationSec != null ? fmtClock(durationSec) : "—"}   ·   Generated ${now.toLocaleString()}`,
+    M,
+    800,
+  );
 
+  // One page per violation frame (2 per page) — real images, not placeholders.
   if (violationSnapshots.length > 0) {
-    for (let vi = 0; vi < violationSnapshots.length; vi += 4) {
-      const c = makeCanvas(W, H);
-      const ctx = c.getContext("2d")!;
-      let py = M;
+    for (let i = 0; i < violationSnapshots.length; i += 2) {
+      doc.addPage();
+      const slice = violationSnapshots.slice(i, i + 2);
+      doc.setFillColor(200, 0, 0);
+      doc.rect(0, 0, W, 56, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text(`VIOLATION EVIDENCE — ${examId} · ${roll}`, M, 26);
+      doc.setFontSize(9);
+      doc.text(`Frames ${i + 1}–${i + slice.length} of ${violationSnapshots.length}`, M, 42);
 
-      ctx.fillStyle = "#cc0000"; ctx.fillRect(M, py, CW, 38);
-      ctx.fillStyle = "#ffffff"; ctx.font = "bold 16px serif";
-      ctx.fillText(`VIOLATION REPORT - Page ${Math.floor(vi / 4) + 1}`, M + 10, py + 25); py += 55;
-
-      const pageSnaps = violationSnapshots.slice(vi, vi + 4);
-      pageSnaps.forEach((snap, i) => {
-        ctx.fillStyle = "#fff0f0"; ctx.strokeStyle = "#cc0000"; ctx.lineWidth = 1.5;
-        ctx.fillRect(M, py, CW, 100); ctx.strokeRect(M, py, CW, 100);
-        ctx.fillStyle = "#cc0000"; ctx.font = "bold 11px monospace";
-        ctx.fillText(`Violation #${vi + i + 1}`, M + 8, py + 18);
-        ctx.fillStyle = "#1a1a1a"; ctx.font = "12px sans-serif";
-        ctx.fillText(`Type: ${snap.label}`, M + 8, py + 36);
-        ctx.fillStyle = "#555"; ctx.font = "10px monospace";
-        ctx.fillText("Highlighted in RED in the recording timeline.", M + 8, py + 54);
-        ctx.fillStyle = "#e8e4dc"; ctx.fillRect(M + 220, py + 14, 120, 72); ctx.strokeRect(M + 220, py + 14, 120, 72);
-        ctx.fillStyle = "#888"; ctx.font = "9px monospace"; ctx.fillText("Snapshot", M + 255, py + 55);
-        py += 112; ctx.fillStyle = "#ddd"; ctx.fillRect(M, py, CW, 1); py += 10;
-      });
-
-      ctx.fillStyle = "#1a3a2a"; ctx.fillRect(M, H - 30, CW, 1);
-      ctx.fillStyle = "#888"; ctx.font = "9px monospace";
-      ctx.fillText("Vignan's Institute of Information Technology - Proctoring Report", M, H - 12);
-      pages.push(c);
+      let frameY = 92;
+      for (const snap of slice) {
+        doc.setDrawColor(200, 0, 0);
+        doc.setLineWidth(1);
+        doc.rect(M, frameY, CW, 300, "S");
+        doc.setTextColor(200, 0, 0);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        const stamp = snap.offsetSec != null ? ` @ ${fmtClock(snap.offsetSec)}` : "";
+        doc.text(`Violation: ${snap.label}${stamp}`, M + 8, frameY + 20);
+        try {
+          const dataUrl = await blobToDataUrl(snap.blob);
+          const imgW = CW - 16;
+          const imgH = 240;
+          doc.addImage(dataUrl, "JPEG", M + 8, frameY + 30, imgW, imgH, undefined, "FAST");
+        } catch (err) {
+          console.warn("[examStorage] could not embed violation frame in PDF:", err);
+          doc.setTextColor(150, 150, 150);
+          doc.setFont("courier", "normal");
+          doc.setFontSize(9);
+          doc.text("(frame unavailable)", M + 8, frameY + 160);
+        }
+        frameY += 330;
+      }
     }
   }
 
-  return buildPDFBlob(pages);
-}
-
-function makeCanvas(w: number, h: number): HTMLCanvasElement {
-  const c = document.createElement("canvas"); c.width = w; c.height = h; return c;
-}
-
-
-function buildPDFBlob(pages: HTMLCanvasElement[]): Blob {
-  const objects: string[] = [];
-  let objNo = 1;
-  const addObj = (content: string) => { objects.push(content); return objNo++; };
-
-  pages.forEach((canvas, i) => {
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
-    const streamData = dataUrl.replace("data:image/jpeg;base64,", "");
-    const imgObjNo = addObj(
-      `${objNo} 0 obj
-<< /Type /XObject /Subtype /Image /Width ${canvas.width} /Height ${canvas.height} /Filter /DCTDecode /ColorSpace /DeviceRGB /BitsPerComponent 8 >>\nstream
-${atob(streamData)}
-endstream
-endobj\n`,
-    );
-    const pageObjNo = addObj(
-      `${objNo} 0 obj
-<< /Type /Page /Parent 1 0 R /MediaBox [0 0 ${canvas.width} ${canvas.height}] /Contents ${objNo + 1} 0 R /Resources << /XObject << /Img${i + 1} ${imgObjNo} 0 R >> >> >>
-endobj\n`,
-    );
-    const drawCmd = `q ${canvas.width} 0 0 ${canvas.height} 0 0 cm /Img${i + 1} Do Q`;
-    addObj(`${objNo} 0 obj
-<< /Length ${drawCmd.length} >>\nstream
-${drawCmd}
-endstream
-endobj\n`);
-  });
-
-  const catalogNo = addObj(`${objNo} 0 obj
-<< /Type /Catalog /Pages 1 0 R >>\nendobj\n`);
-
-  let pdf = "%PDF-1.4\n";
-  const xref: number[] = [];
-  objects.forEach((obj) => { xref.push(pdf.length); pdf += obj + "\n"; });
-  const xrefOffset = pdf.length;
-  xref.push(xrefOffset);
-  pdf += `xref
-0 ${objects.length + 2}
-0000000000 65535 f 
-`;
-  xref.forEach((off) => { pdf += `${String(off).padStart(10, "0")} 00000 n 
-`; });
-  pdf += `trailer
-<< /Size ${objects.length + 2} /Root ${catalogNo - 1} 0 R >>\nstartxref\n${xrefOffset}
-%%EOF\n`;
-
-  const bytes = new Uint8Array(pdf.length);
-  for (let i = 0; i < pdf.length; i++) bytes[i] = pdf.charCodeAt(i);
-  return new Blob([bytes], { type: "application/pdf" });
+  return doc.output("blob");
 }

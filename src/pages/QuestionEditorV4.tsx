@@ -1,115 +1,464 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { saveQuestion, type DBQuestion } from "../lib/examApi";
 
 type Props = { notify: (message: string) => void; navigate: (path: string) => void };
-type CaseKind = "sample" | "hidden";
-type TestCase = { id: number; kind: CaseKind; name: string; input: string; output: string };
-const inputClass = "mt-2 block w-full border border-line-strong bg-paper px-3 py-3 text-[13px] outline-none focus:border-forest";
-const types = ["MCQ", "MSQ", "True / False", "Numerical", "Subjective", "Coding"];
 
-export default function QuestionEditorV4({ notify, navigate }: Props) {
-  const params = new URLSearchParams(window.location.search); const editId = params.get("edit"); const bulkRequested = params.get("bulk") === "1"; const examId = params.get("exam");
-  const [type, setType] = useState(editId ? "MCQ" : "Coding"); const [prompt, setPrompt] = useState(editId ? `Question from ${editId} — update the prompt for this assessment.` : ""); const [saved, setSaved] = useState(false); const [previewOpen, setPreviewOpen] = useState(false); const [bulkOpen, setBulkOpen] = useState(bulkRequested); const [bulkFile, setBulkFile] = useState(""); const [bulkReady, setBulkReady] = useState(false);
-  const [subjectiveMode, setSubjectiveMode] = useState<"both" | "qr" | "textbox">("both");
-  const handleBulkUpload = (file: File | undefined) => { if (!file) return; setBulkFile(file.name); setBulkReady(true); notify(`${file.name} uploaded. Questions are ready to review.`); };
-  const downloadTemplate = () => { const header = "exam_id,question,type,option_a,option_b,option_c,option_d,answer,unit,difficulty,marks\n"; const eid = examId || ""; const sample = `${eid},Which traversal visits the root between the left and right subtrees?,MCQ,Inorder,Preorder,Postorder,Level order,Inorder,Trees & Graphs,Medium,1\n`; const blank = `${eid},,MCQ,,,,,,,,\n`; const url = URL.createObjectURL(new Blob([header + sample + blank], { type: "text/csv;charset=utf-8" })); const link = document.createElement("a"); link.href = url; link.download = examId ? `${examId}-questions-template.csv` : "question-bank-template.csv"; link.click(); URL.revokeObjectURL(url); notify(examId ? `Template for ${examId} downloaded` : "Question template downloaded"); };
-  return <div><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question bank / {editId ? `Edit ${editId}` : "New question"}</p><h1 className="mt-2 font-serif text-3xl font-semibold">{editId ? "Edit question" : "Create a question"}</h1><p className="mt-2 text-[13px] text-ink-soft">{editId ? "Update the question and keep its exam usage intact." : "Create one question manually or upload many from an Excel file."}</p></div><div className="flex flex-wrap items-center gap-3"><button onClick={() => setBulkOpen((open) => !open)} className="border border-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest">↑ Bulk upload Excel</button><button onClick={() => setPreviewOpen((open) => !open)} className="border border-line-strong px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft">{previewOpen ? "Close preview" : "Preview"}</button><button onClick={() => navigate("/teacher/questions")} className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">← Back</button></div></div>
-  {bulkOpen && <section className="mt-6 border border-forest bg-success/5 p-5 sm:p-6"><div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start"><div><p className="font-mono text-[10px] uppercase tracking-widest text-forest">Bulk question upload</p><h2 className="mt-1 font-serif text-2xl font-semibold">Add questions from Excel</h2><p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-ink-soft">Upload an Excel workbook to add many questions at once. You will review the rows before they become available in the question bank.</p></div><button onClick={() => setBulkOpen(false)} className="self-start font-mono text-[10px] uppercase tracking-wider text-ink-soft">Close ×</button></div><div className="mt-6 grid gap-4 lg:grid-cols-[1fr_250px]"><label className="flex cursor-pointer flex-col items-center justify-center border border-dashed border-forest bg-paper px-6 py-8 text-center transition hover:bg-paper-raised"><span className="text-2xl text-forest">↑</span><span className="mt-2 text-[13px] font-medium">Choose Excel file</span><span className="mt-1 text-[12px] text-ink-soft">.xlsx, .xls, or .csv · up to 500 questions</span><input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(event) => handleBulkUpload(event.target.files?.[0])}/></label><div className="border border-line bg-paper p-4"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Required columns</p><p className="mt-3 text-[12px] leading-relaxed text-ink-soft">exam_id, question, type, option_a, option_b, option_c, option_d, answer, unit, difficulty, marks</p>{examId && <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-forest">Linked to {examId} · pre-filled in the template</p>}<button onClick={downloadTemplate} className="mt-4 font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">↓ Download Excel template</button></div></div>{bulkReady && <div className="mt-4 flex flex-col justify-between gap-3 border-t border-forest/20 pt-4 sm:flex-row sm:items-center"><div><p className="text-[13px] font-medium text-success">✓ {bulkFile} ready for review</p><p className="mt-1 text-[11px] text-ink-soft">24 questions detected · 22 valid · 2 need attention</p></div><button onClick={() => notify("Bulk questions opened for review")} className="border border-forest bg-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper">Review uploaded questions →</button></div>}</section>}
-  {previewOpen && <div className="fixed inset-0 z-50 overflow-y-auto bg-ink/40 p-4 sm:p-8"><section className="mx-auto min-h-[calc(100vh-2rem)] max-w-5xl bg-paper shadow-2xl sm:min-h-0"><div className="flex items-center justify-between border-b border-line px-6 py-5 sm:px-10"><div><p className="font-mono text-[10px] uppercase tracking-widest text-forest">Student view</p><h2 className="mt-1 font-serif text-xl font-semibold">Question preview</h2></div><button onClick={() => setPreviewOpen(false)} className="border border-line-strong px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">Close preview</button></div><div className="mx-auto max-w-3xl px-6 py-10 sm:px-10 sm:py-14"><div className="flex items-center justify-between gap-4"><span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question 01</span><span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">{type} {type === "Subjective" && `(${subjectiveMode === "qr" ? "QR Upload Only" : subjectiveMode === "textbox" ? "Answer Box Only" : "QR + Answer Box"})`}</span></div><div className="mt-8"><p className="whitespace-pre-wrap text-lg leading-relaxed text-ink sm:text-xl">{prompt || "Your question will appear here."}</p>{type === "Coding" && <div className="mt-10 overflow-hidden border border-line"><div className="flex items-center justify-between border-b border-line bg-paper-raised px-4 py-3"><span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Your solution</span><span className="font-mono text-[10px] text-ink-soft">Code editor</span></div><div className="min-h-[300px] bg-[#202924] p-5 font-mono text-[12px] text-paper/60">// Write your code here</div></div>}{type === "MCQ" && <div className="mt-10 space-y-3">{["Option A", "Option B", "Option C", "Option D"].map((option) => <label key={option} className="flex items-center gap-3 border border-line p-4 text-[13px]"><input type="radio" name="preview-answer" />{option}</label>)}</div>}{type === "MSQ" && <div className="mt-10 space-y-3">{["Option A", "Option B", "Option C", "Option D"].map((option) => <label key={option} className="flex items-center gap-3 border border-line p-4 text-[13px]"><input type="checkbox" />{option}</label>)}</div>}{type === "True / False" && <div className="mt-10 grid gap-3 sm:grid-cols-2"><label className="flex items-center gap-3 border border-line p-4 text-[13px]"><input type="radio" name="preview-boolean" />True</label><label className="flex items-center gap-3 border border-line p-4 text-[13px]"><input type="radio" name="preview-boolean" />False</label></div>}{type === "Numerical" && <input type="text" placeholder="Enter your answer" className="mt-10 block w-full border border-line-strong bg-paper px-4 py-4 text-[14px]" />}{type === "Subjective" && (
-    <div className="mt-8 space-y-4">
-      {(subjectiveMode === "both" || subjectiveMode === "textbox") && (
-        <div>
-          <p className="font-mono text-[10px] uppercase text-ink-soft mb-1">{subjectiveMode === "both" ? "Option 1: Type Answer" : "Student Answer Box"}</p>
-          <textarea rows={5} placeholder="Student writes answer here…" className="block w-full border border-line-strong bg-paper p-3 text-[14px]" />
-        </div>
-      )}
-      {(subjectiveMode === "both" || subjectiveMode === "qr") && (
-        <div className="border border-dashed border-forest/60 bg-forest/5 p-4 text-center">
-          <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-semibold">{subjectiveMode === "both" ? "Option 2: QR Code Upload" : "Mandatory QR Code Upload"}</p>
-          <p className="text-[12px] text-ink-soft mt-1">Interactive QR scanner will be displayed for student to take a phone photo of handwritten sheet.</p>
-        </div>
-      )}
-    </div>
-  )}</div></div></section></div>}
-  <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_330px]"><div className="space-y-6"><section className="border border-line bg-paper p-6"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">1 · Question format</p><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">{types.map((item) => <button key={item} onClick={() => setType(item)} className={`border px-3 py-3 text-left text-[12px] ${type === item ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft"}`}><span className="block font-medium">{item}</span><span className="mt-1 block text-[10px]">{hint(item)}</span></button>)}</div></section><section className="border border-line bg-paper p-6 sm:p-8"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">2 · Student content</p><label className="mt-4 block text-[12px] text-ink-soft">Question title / prompt <span className="text-alert">*</span><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} placeholder={type === "Coding" ? "Write the problem students need to solve…" : "Write the complete question…"} className={`${inputClass} resize-y text-[14px]`}/></label>{type === "Coding" ? <CodingFields /> : <GenericFields type={type} subjectiveMode={subjectiveMode} setSubjectiveMode={setSubjectiveMode} />}</section>{type === "Coding" && <CodingTestWorkspace />}<section className="border border-line bg-paper p-6 sm:p-8"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">3 · Scoring and organization</p><div className="mt-5 grid gap-5 sm:grid-cols-2"><Select label="Unit" options={["Trees & Graphs", "Normalization", "Sorting", "OS Scheduling", "Networking", "Custom / Other"]}/><Select label="Difficulty" options={["Easy", "Medium", "Hard"]}/><label className="block text-[12px] text-ink-soft">Marks<input type="number" defaultValue="1" min="0" step="0.5" className={inputClass}/></label><label className="block text-[12px] text-ink-soft">Negative marking<input placeholder="Enter value or leave blank" className={inputClass}/></label></div><label className="mt-5 block text-[12px] text-ink-soft">Explanation / solution<textarea rows={3} placeholder="Optional teacher explanation…" className={`${inputClass} resize-y`}/></label><label className="mt-5 block text-[12px] text-ink-soft">Tags<input placeholder="trees, traversal, midterm" className={inputClass}/></label><AnswerRelease notify={notify} /></section></div>
-  <aside><section className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Save question</p><p className="mt-2 text-[12px] text-ink-soft">Save this question to the bank for use in any exam.</p><button onClick={() => { if (prompt.trim()) { setSaved(true); notify(`Question saved with ${type === "Subjective" ? (subjectiveMode === "qr" ? "QR Based upload" : subjectiveMode === "textbox" ? "Answer box" : "Both QR & Answer box") : type} format`); } }} className="mt-4 w-full border border-forest bg-forest py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper">Save to question bank</button>{saved && <p className="mt-4 text-[12px] text-success">Question saved successfully.</p>}</section></aside></div></div>;
-}
+const inputClass = "mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest";
+const TYPES = ["MCQ", "MSQ", "True / False", "Numerical", "Subjective"];
+const DIFFICULTIES = ["Easy", "Medium", "Hard"];
+const UNITS = ["Trees & Graphs", "Normalization", "Sorting", "OS Scheduling", "Networking", "Databases", "Custom / Other"];
 
-function CodingFields() { return <div className="mt-6 space-y-6"><div className="border-l-2 border-forest bg-success/5 px-4 py-3 text-[12px] text-ink-soft"><p className="font-medium text-forest">Coding problem</p><p className="mt-1">Describe the task first. The test workspace below is where you define exactly how submissions are judged.</p></div><Field label="Problem statement" placeholder="Describe the task, expected behavior, and what students must implement…" rows={6}/><div className="grid gap-5 lg:grid-cols-2"><Field label="Input format" placeholder="Describe each input value and its order…" rows={5}/><Field label="Output format" placeholder="Describe exactly what the program must print…" rows={5}/><Field label="Constraints" placeholder="Example: 1 ≤ n ≤ 10⁵\nValues are integers." rows={5}/><Field label="Notes for students" placeholder="Add assumptions or helpful hints…" rows={5}/></div><div className="grid gap-5 sm:grid-cols-3"><Select label="Allowed language" options={["Any language", "C", "C++", "Java", "Python"]}/><Select label="Time limit" options={["1 second", "2 seconds", "5 seconds"]}/><Select label="Memory limit" options={["128 MB", "256 MB", "512 MB"]}/></div></div>; }
-
-function CodingTestWorkspace() { const [kind, setKind] = useState<CaseKind>("sample"); const [active, setActive] = useState(1); const [nextId, setNextId] = useState(3); const [cases, setCases] = useState<TestCase[]>([{ id: 1, kind: "sample", name: "Basic example", input: "5\n1 2 3 4 5", output: "15" }, { id: 2, kind: "hidden", name: "Boundary case", input: "", output: "" }]); const visible = cases.filter((item) => item.kind === kind); const selected = cases.find((item) => item.id === active) || visible[0] || cases[0]; const selectKind = (next: CaseKind) => { setKind(next); const first = cases.find((item) => item.kind === next); if (first) setActive(first.id); }; const addCase = () => { const item: TestCase = { id: nextId, kind, name: kind === "sample" ? `Example ${visible.length + 1}` : `Hidden test ${visible.length + 1}`, input: "", output: "" }; setCases((items) => [...items, item]); setActive(nextId); setNextId((id) => id + 1); }; const update = (key: "name" | "input" | "output", value: string) => setCases((items) => items.map((item) => item.id === selected.id ? { ...item, [key]: value } : item)); const remove = () => { if (cases.length <= 1) return; const remaining = cases.filter((item) => item.id !== selected.id); setCases(remaining); setActive((remaining.find((item) => item.kind === kind) || remaining[0]).id); }; return <section className="border border-line bg-paper shadow-sm"><div className="border-b border-line bg-paper-raised px-6 py-7 sm:px-8"><div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start"><div><p className="font-mono text-[10px] uppercase tracking-widest text-forest">Coding evaluator</p><h2 className="mt-2 font-serif text-3xl font-semibold">Test case workspace</h2><p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-ink-soft">Show students a few examples. Add private checks for edge cases and use them to grade every submission automatically.</p></div><div className="grid grid-cols-2 gap-px border border-line bg-line"><div className="bg-paper px-5 py-3 text-center"><p className="font-serif text-2xl">{cases.filter((item) => item.kind === "sample").length}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Examples</p></div><div className="bg-paper px-5 py-3 text-center"><p className="font-serif text-2xl text-forest">{cases.filter((item) => item.kind === "hidden").length}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Private</p></div></div></div><div className="mt-7 flex flex-col gap-2 sm:flex-row"><button onClick={() => selectKind("sample")} className={`flex-1 border px-5 py-4 text-left ${kind === "sample" ? "border-forest bg-forest text-paper" : "border-line-strong"}`}><span className="block text-[13px] font-medium">Student examples</span><span className={`mt-1 block text-[11px] ${kind === "sample" ? "text-paper/70" : "text-ink-soft"}`}>Visible in the problem statement</span></button><button onClick={() => selectKind("hidden")} className={`flex-1 border px-5 py-4 text-left ${kind === "hidden" ? "border-forest bg-forest text-paper" : "border-line-strong"}`}><span className="block text-[13px] font-medium">Private test cases</span><span className={`mt-1 block text-[11px] ${kind === "hidden" ? "text-paper/70" : "text-ink-soft"}`}>Never shown to students</span></button></div></div><div className="grid lg:grid-cols-[240px_minmax(0,1fr)]"><nav className="border-b border-line p-5 lg:border-b-0 lg:border-r lg:p-6"><div className="flex items-center justify-between"><p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">{kind === "sample" ? "Examples" : "Private checks"}</p><span className="text-[11px] text-ink-soft">{visible.length} total</span></div><div className="mt-4 space-y-2">{visible.map((item, index) => <button key={item.id} onClick={() => setActive(item.id)} className={`w-full border px-4 py-3 text-left ${item.id === selected.id ? "border-forest bg-success/5" : "border-line hover:bg-paper-raised"}`}><span className="block font-mono text-[10px] uppercase tracking-wider text-ink-soft">Case {String(index + 1).padStart(2, "0")}</span><span className="mt-1 block truncate text-[12px] font-medium">{item.name || "Untitled case"}</span></button>)}</div><button onClick={addCase} className="mt-4 w-full border border-dashed border-forest px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-forest">+ Add {kind === "sample" ? "example" : "private test"}</button></nav><div className="min-w-0 p-6 sm:p-8"><div className="flex flex-col justify-between gap-4 border-b border-line pb-5 sm:flex-row sm:items-start"><div><p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">{kind === "sample" ? "Student-visible example" : "Private evaluator check"}</p><input aria-label="Test case name" value={selected.name} onChange={(e) => update("name", e.target.value)} placeholder="Name this test case" className="mt-2 w-full border-0 border-b border-line-strong bg-transparent pb-2 font-serif text-2xl outline-none focus:border-forest"/></div><button onClick={remove} className="font-mono text-[10px] uppercase tracking-wider text-alert">Delete case</button></div><div className="mt-7 grid gap-6 xl:grid-cols-2"><label className="block text-[12px] text-ink-soft"><span className="font-medium text-ink">Input</span><span className="mt-1 block text-[11px]">Exact data sent to the program.</span><textarea value={selected.input} onChange={(e) => update("input", e.target.value)} rows={16} placeholder="Paste input here…" className={`${inputClass} min-h-[300px] resize-y font-mono text-[13px]`}/></label><label className="block text-[12px] text-ink-soft"><span className="font-medium text-ink">Expected output</span><span className="mt-1 block text-[11px]">Exact output the solution must produce.</span><textarea value={selected.output} onChange={(e) => update("output", e.target.value)} rows={16} placeholder="Paste expected output here…" className={`${inputClass} min-h-[300px] resize-y font-mono text-[13px]`}/></label></div><div className="mt-7 flex flex-col justify-between gap-3 border-t border-line pt-5 sm:flex-row sm:items-center"><p className="text-[12px] text-ink-soft">{kind === "sample" ? "Students can see this case and use it to understand the format." : "This case is never revealed. It runs during automatic grading."}</p><button onClick={() => undefined} className="border border-line-strong px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-ink">Run test case</button></div></div></div><div className="flex flex-col justify-between gap-2 border-t border-line bg-paper-raised px-6 py-4 text-[11px] sm:flex-row sm:px-8"><span className="text-ink-soft">Recommended: 1–2 examples and at least 3 private edge cases.</span><span className={cases.filter((item) => item.kind === "hidden").length >= 3 ? "text-success" : "text-amber"}>{cases.filter((item) => item.kind === "hidden").length >= 3 ? "✓ Ready for coverage" : "○ Add private edge cases"}</span></div></section>; }
-
-function GenericFields({
-  type,
-  subjectiveMode = "both",
-  setSubjectiveMode,
-}: {
+type ParsedRow = {
+  rowNo: number;
+  title: string;
   type: string;
-  subjectiveMode?: "both" | "qr" | "textbox";
-  setSubjectiveMode?: (mode: "both" | "qr" | "textbox") => void;
-}) {
-  const [correct, setCorrect] = useState<number | null>(type === "True / False" ? 0 : null);
-  const [correctSet, setCorrectSet] = useState<number[]>([]);
-  const toggle = (i: number) => setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
-  if (type === "MCQ" || type === "MSQ") {
-    const multi = type === "MSQ";
-    return <div className="mt-6"><div className="grid gap-3 sm:grid-cols-2">{["A", "B", "C", "D"].map((option, i) => { const picked = multi ? correctSet.includes(i) : correct === i; return <div key={option} className={`border px-3 py-3 ${picked ? "border-forest bg-success/5" : "border-line-strong"}`}><div className="flex items-center justify-between"><span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Option {option}</span><button type="button" onClick={() => (multi ? toggle(i) : setCorrect(i))} className={`flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider ${picked ? "text-forest" : "text-ink-soft hover:text-forest"}`}><span className={`flex h-4 w-4 items-center justify-center border text-[9px] ${multi ? "" : "rounded-full"} ${picked ? "border-forest bg-forest text-paper" : "border-line-strong"}`}>{picked ? "✓" : ""}</span>{picked ? "Correct" : "Mark correct"}</button></div><input placeholder={`Enter option ${option}`} className={inputClass}/></div>; })}</div><p className="mt-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft">{multi ? `Correct: ${correctSet.length ? correctSet.map((i) => "ABCD"[i]).join(", ") : "none selected"} · auto-graded` : correct == null ? "Select the correct option · it will be auto-graded" : `Correct answer: ${"ABCD"[correct]} · auto-graded`}</p></div>;
-  }
-  if (type === "True / False") return <div className="mt-6"><div className="grid grid-cols-2 gap-3">{["True", "False"].map((label, i) => <button key={label} type="button" onClick={() => setCorrect(i)} className={`border p-4 text-left text-[13px] ${correct === i ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft"}`}>{correct === i ? "● " : "○ "}{label}</button>)}</div><p className="mt-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft">Correct answer: {correct === 0 ? "True" : "False"} · auto-graded</p></div>;
-  if (type === "Numerical") return <div className="mt-6"><Field label="Correct numerical answer" placeholder="e.g. 42 or 3.14" rows={1}/><p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">Matched against the student's response · auto-graded</p></div>;
-  return (
-    <div className="mt-6 space-y-5">
-      <div className="border-l-2 border-forest bg-success/5 px-4 py-3 text-[12px] text-ink-soft">
-        <p className="font-medium text-forest">Subjective answer configuration</p>
-        <p className="mt-1">Choose how students will submit their answer. Theory papers are evaluated manually by the teacher.</p>
-      </div>
+  options: string[];
+  answer: string;
+  unit: string;
+  difficulty: string;
+  marks: number;
+  valid: boolean;
+  reason?: string;
+};
 
-      <div>
-        <label className="block text-[12px] font-medium text-ink mb-2">
-          Submission Format for Students <span className="text-alert">*</span>
-        </label>
-        <div className="grid gap-3 sm:grid-cols-3">
-          {[
-            { id: "both", label: "Both (Student Choice)", desc: "Students can type in browser OR scan QR to upload handwritten sheet" },
-            { id: "qr", label: "QR Scan Only", desc: "Mandatory handwritten sheet upload via mobile camera QR code" },
-            { id: "textbox", label: "Answer Box Only", desc: "Mandatory typed text response in the online exam editor" },
-          ].map((opt) => {
-            const active = subjectiveMode === opt.id;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => setSubjectiveMode?.(opt.id as "both" | "qr" | "textbox")}
-                className={`border p-3.5 text-left transition-all ${
-                  active
-                    ? "border-forest bg-forest text-paper shadow-sm"
-                    : "border-line-strong bg-paper text-ink hover:border-forest/60"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-[13px]">{opt.label}</span>
-                  <span className="font-mono text-[11px]">{active ? "●" : "○"}</span>
-                </div>
-                <p className={`mt-1.5 text-[11px] leading-snug ${active ? "text-paper/85" : "text-ink-soft"}`}>
-                  {opt.desc}
-                </p>
-              </button>
-            );
-          })}
+/**
+ * Real question editor: every field (type, title, options + correct answer,
+ * unit, difficulty, marks) is captured and saved to the `questions` table via
+ * saveQuestion. Bulk import parses the CSV client-side, shows the true number
+ * of valid rows, and inserts them one by one with real per-row results.
+ */
+export default function QuestionEditorV4({ notify, navigate }: Props) {
+  const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
+  const examId = params.get("exam") ?? undefined;
+  const bulkRequested = params.get("bulk") === "1";
+  const editId = params.get("edit");
+  const backParam = params.get("back");
+  const exitPath = backParam && backParam.startsWith("/teacher/") ? backParam : "/teacher/questions";
+
+  // ── Single question fields (controlled + persisted) ────────────────────────
+  const [type, setType] = useState("MCQ");
+  const [title, setTitle] = useState("");
+  const [unit, setUnit] = useState("Custom / Other");
+  const [difficulty, setDifficulty] = useState("Medium");
+  const [marks, setMarks] = useState(1);
+  const [options, setOptions] = useState<string[]>(["", "", "", ""]);
+  const [correct, setCorrect] = useState<number | null>(0);          // MCQ / T-F
+  const [correctSet, setCorrectSet] = useState<number[]>([]);        // MSQ
+  const [expected, setExpected] = useState("");                      // Numerical
+  const [subjectiveMode, setSubjectiveMode] = useState<"both" | "qr" | "textbox">("both");
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  // ── Bulk import (real parse + real insert) ────────────────────────────────
+  const [bulkOpen, setBulkOpen] = useState(bulkRequested);
+  const [bulkFile, setBulkFile] = useState("");
+  const [rows, setRows] = useState<ParsedRow[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ ok: number; failed: number; sample?: string } | null>(null);
+
+  // Editing an existing question: prefill from the DB.
+  useEffect(() => {
+    if (!editId || loaded) return;
+    let active = true;
+    void import("../lib/supabase").then(async (m) => {
+      const db = m.getSupabase();
+      if (!db) return;
+      const { data } = await db.from("questions").select("*").eq("id", editId).maybeSingle();
+      if (!active || !data) return;
+      const q = data as unknown as DBQuestion;
+      setType(q.type || "MCQ");
+      setTitle(q.title || "");
+      setUnit(q.unit || "Custom / Other");
+      setDifficulty(q.difficulty || "Medium");
+      setMarks(q.marks || 1);
+      const opts = Array.isArray(q.options) && q.options.length >= 2 ? q.options.slice(0, 4).map(String) : ["", "", "", ""];
+      setOptions([...opts, ...Array(4 - opts.length).fill("")].slice(0, 4));
+      const ans = q.answer;
+      if (q.type === "MSQ") {
+        try {
+          const arr = Array.isArray(JSON.parse(ans || "[]")) ? JSON.parse(ans || "[]") : [];
+          setCorrectSet(arr.map(Number).filter((n: number) => Number.isFinite(n)));
+        } catch { setCorrectSet([]); }
+        setCorrect(null);
+      } else if (q.type === "True / False") {
+        setCorrect(ans === "1" ? 1 : 0);
+      } else if (q.type === "Numerical") {
+        setExpected(ans || "");
+        setCorrect(null);
+      } else {
+        const idx = Number(ans);
+        setCorrect(Number.isFinite(idx) ? idx : 0);
+      }
+      setLoaded(true);
+    });
+    return () => { active = false; };
+  }, [editId, loaded]);
+
+  // ── Single-question save ───────────────────────────────────────────────────
+  const buildPayload = (): { payload: Omit<DBQuestion, "id">; error?: string } | null => {
+    const t = title.trim();
+    if (!t) return { payload: undefined as never, error: "Question prompt is required." };
+    let optionsArr: string[] | null = null;
+    let answer: string | null = null;
+    if (type === "MCQ") {
+      optionsArr = options.map((o) => o.trim());
+      const filled = optionsArr.filter(Boolean);
+      if (filled.length < 2) return { payload: undefined as never, error: "MCQ needs at least two options." };
+      if (correct == null) return { payload: undefined as never, error: "Pick the correct option." };
+      answer = String(correct);
+    } else if (type === "True / False") {
+      optionsArr = ["True", "False"];
+      answer = correct === 1 ? "1" : "0";
+    } else if (type === "MSQ") {
+      optionsArr = options.map((o) => o.trim());
+      if (optionsArr.filter(Boolean).length < 2) return { payload: undefined as never, error: "MSQ needs at least two options." };
+      answer = JSON.stringify([...correctSet].sort((a, b) => a - b));
+    } else if (type === "Numerical") {
+      answer = expected.trim();
+      if (!answer) return { payload: undefined as never, error: "Enter the expected numerical answer." };
+    }
+    return {
+      payload: {
+        exam_id: examId ?? null,
+        title: t.slice(0, 2000),
+        type,
+        unit,
+        difficulty,
+        marks: Math.max(0, marks),
+        options: optionsArr,
+        answer,
+        subjective_mode: type === "Subjective" ? subjectiveMode : null,
+      },
+    };
+  };
+
+  const saveOne = async (): Promise<void> => {
+    const built = buildPayload();
+    if (!built?.payload) { notify(built?.error ?? "Cannot save yet — review the highlighted fields."); return; }
+    setSaving(true);
+    const res = await saveQuestion({ ...built.payload, id: editId ?? undefined });
+    setSaving(false);
+    if (res.ok) {
+      notify(editId ? `Question ${editId} updated.` : `${type} question saved to the bank.`);
+      window.setTimeout(() => navigate(exitPath), 400);
+    } else {
+      notify(`Could not save: ${res.error}. Run supabase/demo-policies.sql if RLS blocks the anon flow.`);
+    }
+  };
+
+  // ── Bulk CSV: parse → validate → insert ────────────────────────────────────
+  const handleBulkFile = async (file: File | undefined) => {
+    if (!file) return;
+    setBulkFile(file.name);
+    setImportResult(null);
+    const text = await file.text();
+    const parsed = parseCsv(text);
+    const header = parsed[0]?.map((h) => h.trim().toLowerCase()) ?? [];
+    const data = parsed.slice(1).filter((r) => r.some((cell) => cell.trim() !== ""));
+    const idx = (name: string) => Math.max(0, header.indexOf(name));
+    const prepared = data.map((r, i) => {
+      const titleRaw = String(r[idx("question")] ?? "").trim();
+      const typeRaw = String(r[idx("type")] ?? "").trim();
+      const difficultyRaw = String(r[idx("difficulty")] ?? "Medium").trim();
+      const unitRaw = String(r[idx("unit")] ?? "Custom / Other").trim();
+      const marksRaw = Number(r[idx("marks")] ?? "1");
+      const optionsRaw = [
+        String(r[idx("option_a")] ?? "").trim(),
+        String(r[idx("option_b")] ?? "").trim(),
+        String(r[idx("option_c")] ?? "").trim(),
+        String(r[idx("option_d")] ?? "").trim(),
+      ];
+      const isMcqLike = typeRaw === "MCQ" || typeRaw === "MSQ" || !typeRaw;
+      const row: ParsedRow = {
+        rowNo: i + 2,
+        title: titleRaw,
+        type: typeRaw || "MCQ",
+        options: optionsRaw,
+        answer: String(r[idx("answer")] ?? "").trim(),
+        unit: unitRaw,
+        difficulty: DIFFICULTIES.includes(difficultyRaw) ? difficultyRaw : "Medium",
+        marks: Number.isFinite(marksRaw) ? marksRaw : 1,
+        valid: false,
+      };
+      const reasons: string[] = [];
+      if (!row.title) reasons.push("no question text");
+      if (isMcqLike && optionsRaw.filter(Boolean).length < 2) reasons.push("needs ≥2 options");
+      row.valid = reasons.length === 0;
+      row.reason = reasons.join("; ");
+      return row;
+    });
+    setRows(prepared);
+    if (data.length === 0) {
+      notify("No data rows found in that file — check the header matches the template.");
+    } else {
+      notify(`Parsed ${prepared.length} rows — ${prepared.filter((r) => r.valid).length} valid, ${prepared.filter((r) => !r.valid).length} need attention.`);
+    }
+  };
+
+  const importRows = async () => {
+    const valid = rows.filter((r) => r.valid);
+    if (valid.length === 0) return;
+    setImporting(true);
+    let ok = 0;
+    let failed = 0;
+    let sampleErr = "";
+    for (const r of valid) {
+      const res = await saveQuestion({
+        exam_id: examId ?? null,
+        title: r.title,
+        type: r.type,
+        unit: r.unit,
+        difficulty: r.difficulty,
+        marks: r.marks,
+        options: r.options,
+        answer: r.type === "MSQ" ? JSON.stringify([]) : r.answer || null,
+      });
+      if (res.ok) ok += 1;
+      else { failed += 1; if (!sampleErr) sampleErr = res.error ?? "unknown error"; }
+    }
+    setImporting(false);
+    setImportResult({ ok, failed, sample: sampleErr || undefined });
+    notify(`Imported ${ok} question${ok === 1 ? "" : "s"}${failed ? ` — ${failed} failed${sampleErr ? ` (${sampleErr})` : ""}` : " successfully"}.`);
+    if (ok > 0) window.setTimeout(() => navigate(exitPath), 500);
+  };
+
+  const exportTemplate = () => {
+    const header = "exam_id,question,type,option_a,option_b,option_c,option_d,answer,unit,difficulty,marks\n";
+    const sample = `${examId ?? ""},Which traversal visits the root between the left and right subtrees?,MCQ,Inorder,Preorder,Postorder,Level order,Inorder,Trees & Graphs,Medium,1\n`;
+    const url = URL.createObjectURL(new Blob([header + sample], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = examId ? `${examId}-questions-template.csv` : "question-bank-template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+    notify("Template downloaded");
+  };
+
+  const isTf = type === "True / False";
+  const isMcq = type === "MCQ";
+  const isMsq = type === "MSQ";
+  const isNum = type === "Numerical";
+  const isSubj = type === "Subjective";
+
+  return (
+    <div>
+      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question bank / {editId ? `Edit ${editId}` : "New question"}{examId ? ` · ${examId}` : ""}</p>
+          <h1 className="mt-2 font-serif text-3xl font-semibold">{editId ? "Edit question" : "Create a question"}</h1>
+          <p className="mt-2 text-[13px] text-ink-soft">Saved straight to the database — difficulty, unit and marks are part of the question, so they show up in the pool and the paper.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button onClick={() => setBulkOpen((o) => !o)} className="border border-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest">↑ Bulk upload CSV/Excel</button>
+          <button onClick={() => navigate(exitPath)} className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">← Back</button>
         </div>
       </div>
 
-      <Field
-        label="Evaluation rubric / Guidelines (Optional)"
-        placeholder="Add model answer points or grading rubrics to help the evaluator..."
-        rows={3}
-      />
+      {bulkOpen && (
+        <section className="mt-6 border border-forest bg-success/5 p-5 sm:p-6">
+          <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
+            <div>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Bulk question upload</p>
+              <h2 className="mt-1 font-serif text-2xl font-semibold">Add many questions at once</h2>
+              <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-ink-soft">
+                Upload a CSV (the template matches the import format). Rows are validated here and inserted into the database in one pass.
+              </p>
+            </div>
+            <button onClick={() => setBulkOpen(false)} className="self-start font-mono text-[10px] uppercase tracking-wider text-ink-soft">Close ×</button>
+          </div>
+          <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_250px]">
+            <label className="flex cursor-pointer flex-col items-center justify-center border border-dashed border-forest bg-paper px-6 py-8 text-center transition hover:bg-paper-raised">
+              <span className="text-2xl text-forest">↑</span>
+              <span className="mt-2 text-[13px] font-medium">{bulkFile || "Choose CSV file"}</span>
+              <span className="mt-1 text-[12px] text-ink-soft">.csv · up to 500 questions · difficulty &amp; marks columns supported</span>
+              <input type="file" accept=".csv,text/csv" className="sr-only" onChange={(e) => void handleBulkFile(e.target.files?.[0])} />
+            </label>
+            <div className="border border-line bg-paper p-4">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Template · {examId || "general bank"}</p>
+              <p className="mt-3 text-[12px] leading-relaxed text-ink-soft">exam_id, question, type, option_a, option_b, option_c, option_d, answer, unit, difficulty, marks</p>
+              <button onClick={exportTemplate} className="mt-4 font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">↓ Download CSV template</button>
+            </div>
+          </div>
+
+          {rows.length > 0 && (
+            <div className="mt-4 border-t border-forest/20 pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[13px] font-medium text-success">
+                  ✓ {rows.length} rows parsed — {rows.filter((r) => r.valid).length} valid, {rows.filter((r) => !r.valid).length} need attention
+                </p>
+                <button
+                  onClick={() => void importRows()}
+                  disabled={importing || rows.filter((r) => r.valid).length === 0}
+                  className="border border-forest bg-forest px-5 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {importing ? "Importing…" : `Import ${rows.filter((r) => r.valid).length} valid question${rows.filter((r) => r.valid).length === 1 ? "" : "s"}`}
+                </button>
+              </div>
+              {importResult && (
+                <p className="mt-2 font-mono text-[11px] text-ink-soft">
+                  Result: {importResult.ok} inserted · {importResult.failed} failed{importResult.sample ? ` · e.g. ${importResult.sample}` : ""}
+                </p>
+              )}
+              <div className="mt-3 max-h-56 overflow-y-auto border border-line bg-paper">
+                <table className="w-full text-left text-[12px]">
+                  <thead className="bg-paper-raised font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                    <tr><th className="px-3 py-2">Row</th><th className="px-3 py-2">Question</th><th className="px-3 py-2">Type</th><th className="px-3 py-2">Difficulty</th><th className="px-3 py-2">Status</th></tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={r.rowNo} className="border-t border-line">
+                        <td className="px-3 py-2 font-mono text-ink-soft">{r.rowNo}</td>
+                        <td className="px-3 py-2">{r.title || "—"}</td>
+                        <td className="px-3 py-2">{r.type}</td>
+                        <td className="px-3 py-2">{r.difficulty}</td>
+                        <td className={`px-3 py-2 font-mono text-[10px] ${r.valid ? "text-success" : "text-alert"}`}>{r.valid ? "✓ valid" : r.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-6">
+          <section className="border border-line bg-paper p-6">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">1 · Question format</p>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {TYPES.map((item) => (
+                <button key={item} onClick={() => setType(item)} className={`border px-3 py-3 text-left text-[12px] ${type === item ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft hover:border-forest"}`}>
+                  <span className="block font-medium">{item}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="border border-line bg-paper p-6 sm:p-8">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">2 · Student content</p>
+            <label className="mt-4 block text-[12px] text-ink-soft">
+              Question title / prompt <span className="text-alert">*</span>
+              <textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={4} placeholder="Write the complete question…" className={`${inputClass} resize-y text-[14px]`} />
+            </label>
+
+            {(isMcq || isMsq) && (
+              <div className="mt-6">
+                <p className="text-[12px] font-medium">{isMsq ? "Options (pick every correct one)" : "Options"}</p>
+                {options.map((opt, i) => {
+                  const picked = isMsq ? correctSet.includes(i) : correct === i;
+                  return (
+                    <div key={i} className={`mt-3 border px-3 py-2.5 ${picked ? "border-forest bg-success/5" : "border-line-strong"}`}>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Option {String.fromCharCode(65 + i)}</span>
+                        <button
+                          type="button"
+                          onClick={() => (isMsq
+                            ? setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]))
+                            : setCorrect(i))}
+                          className={`font-mono text-[9px] uppercase tracking-wider ${picked ? "text-forest" : "text-ink-soft hover:text-forest"}`}
+                        >
+                          {picked ? "✓ correct" : "mark correct"}
+                        </button>
+                      </div>
+                      <input value={opt} onChange={(e) => setOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))} placeholder={`Enter option ${String.fromCharCode(65 + i)}`} className={inputClass} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {isTf && (
+              <div className="mt-6 grid grid-cols-2 gap-3">
+                {["True", "False"].map((label, i) => (
+                  <button key={label} type="button" onClick={() => setCorrect(i)} className={`border p-4 text-left text-[13px] ${correct === i ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft"}`}>
+                    {correct === i ? "● " : "○ "}{label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {isNum && (
+              <div className="mt-6">
+                <label className="block text-[12px] text-ink-soft">
+                  Expected numerical answer
+                  <input value={expected} onChange={(e) => setExpected(e.target.value)} placeholder="e.g. 42 or 3.14" className={inputClass} />
+                </label>
+              </div>
+            )}
+
+            {isSubj && (
+              <div className="mt-6 grid gap-2 sm:grid-cols-3">
+                {([["both", "QR + Answer box"], ["qr", "QR upload only"], ["textbox", "Answer box only"]] as const).map(([mode, label]) => (
+                  <button key={mode} type="button" onClick={() => setSubjectiveMode(mode)} className={`border px-3 py-3 text-[12px] ${subjectiveMode === mode ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft"}`}>
+                    {subjectiveMode === mode ? "● " : "○ "}{label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="border border-line bg-paper p-6 sm:p-8">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">3 · Scoring and organization</p>
+            <div className="mt-5 grid gap-5 sm:grid-cols-2">
+              <label className="block text-[12px] text-ink-soft">
+                Unit
+                <select value={unit} onChange={(e) => setUnit(e.target.value)} className={inputClass}>
+                  {UNITS.map((u) => <option key={u}>{u}</option>)}
+                </select>
+              </label>
+              <label className="block text-[12px] text-ink-soft">
+                Difficulty
+                <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} className={inputClass}>
+                  {DIFFICULTIES.map((d) => <option key={d}>{d}</option>)}
+                </select>
+              </label>
+              <label className="block text-[12px] text-ink-soft">
+                Marks
+                <input type="number" min={0} step={0.5} value={marks} onChange={(e) => setMarks(Number(e.target.value) || 0)} className={inputClass} />
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <aside>
+          <section className="border border-line p-5">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Save question</p>
+            <div className="mt-3 space-y-1.5 text-[12px] text-ink-soft">
+              <p><span className="text-ink">Type:</span> {type}{examId ? ` · exam ${examId}` : " · general bank"}</p>
+              <p><span className="text-ink">Difficulty:</span> {difficulty}</p>
+              <p><span className="text-ink">Marks:</span> {marks}</p>
+              <p className="text-[11px]">Saved questions appear in the pool picker on the exam setup page.</p>
+            </div>
+            <button onClick={() => void saveOne()} disabled={saving || !title.trim()} className="mt-4 w-full border border-forest bg-forest py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:cursor-not-allowed disabled:opacity-50">
+              {saving ? "Saving…" : editId ? "Update question" : "Save to question bank"}
+            </button>
+          </section>
+        </aside>
+      </div>
     </div>
   );
 }
-function AnswerRelease({ notify }: { notify: (message: string) => void }) {
-  const [mode, setMode] = useState<"auto" | "manual">("manual");
-  return <div className="mt-6 border border-line bg-paper-raised p-4"><p className="font-mono text-[10px] uppercase tracking-widest text-forest">Answer release</p><p className="mt-1 text-[12px] text-ink-soft">Choose when students can see the correct answer and their score for this question.</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => { setMode("auto"); notify("Students will see answers automatically after submitting"); }} className={`border p-3 text-left ${mode === "auto" ? "border-forest bg-success/5" : "border-line-strong"}`}><span className="flex items-center gap-2 text-[12px] font-medium">{mode === "auto" ? "●" : "○"} Show automatically</span><span className="mt-1 block text-[11px] text-ink-soft">Revealed as soon as the student submits.</span></button><button type="button" onClick={() => { setMode("manual"); notify("Answers stay hidden until you reveal them"); }} className={`border p-3 text-left ${mode === "manual" ? "border-forest bg-success/5" : "border-line-strong"}`}><span className="flex items-center gap-2 text-[12px] font-medium">{mode === "manual" ? "●" : "○"} Teacher reveals manually</span><span className="mt-1 block text-[11px] text-ink-soft">Hidden until you release results to the class.</span></button></div></div>;
+
+/** Tiny CSV parser: quotes, commas inside quotes, CRLF — good enough for the template. */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  const src = text.replace(/\r\n/g, "\n");
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') { cell += '"'; i += 1; }
+        else inQuotes = false;
+      } else cell += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  if (cell !== "" || row.length > 0) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim() !== "") || rows.indexOf(r) === 0);
 }
-function Field({ label, placeholder, rows }: { label: string; placeholder: string; rows: number }) { return <label className="block text-[12px] text-ink-soft">{label}<textarea rows={rows} placeholder={placeholder} className={`${inputClass} resize-y`}/></label>; }
-function Select({ label, options }: { label: string; options: string[] }) { return <label className="block text-[12px] text-ink-soft">{label}<select className={inputClass}>{options.map((option) => <option key={option}>{option}</option>)}</select></label>; }
-function hint(type: string) { return type === "MCQ" ? "One correct answer" : type === "MSQ" ? "Many correct answers" : type === "Coding" ? "Code editor + tests" : type === "Numerical" ? "Number answer" : type === "Subjective" ? "Written response" : "Binary answer"; }

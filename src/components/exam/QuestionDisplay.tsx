@@ -4,7 +4,7 @@ import { getSupabase } from "../../lib/supabase";
 import { compressImage } from "../../lib/subjectiveUpload";
 
 type Question = {
-  id: number;
+  id: string;
   text: string;
   options: string[];
   category: string;
@@ -24,6 +24,7 @@ type QuestionDisplayProps = {
   questionIndex: number;
   onSelectOption: (optionIndex: number) => void;
   onToggleReview: () => void;
+  onClear?: () => void;
 };
 
 export default function QuestionDisplay({
@@ -38,6 +39,7 @@ export default function QuestionDisplay({
   questionIndex,
   onSelectOption,
   onToggleReview,
+  onClear,
 }: QuestionDisplayProps) {
   if (!question) return null;
 
@@ -153,16 +155,31 @@ export default function QuestionDisplay({
         </div>
       )}
 
-      {/* Mark for review */}
-      <label className="mt-5 inline-flex cursor-pointer items-center gap-2 text-[13px] select-none">
-        <input
-          type="checkbox"
-          checked={isReviewed}
-          onChange={onToggleReview}
-          className="h-4 w-4 accent-amber"
-        />
-        Mark for review
-      </label>
+      {/* Revisit later / clear response */}
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] select-none">
+          <input
+            type="checkbox"
+            checked={isReviewed}
+            onChange={onToggleReview}
+            className="h-4 w-4 accent-amber"
+          />
+          Revisit later
+        </label>
+        {onClear && (
+          <button
+            onClick={onClear}
+            disabled={answer === undefined}
+            className={`flex items-center gap-1.5 border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition ${
+              answer === undefined
+                ? "cursor-not-allowed border-line text-ink-soft/40"
+                : "border-line-strong text-ink-soft hover:border-alert hover:text-alert"
+            }`}
+          >
+            ⌫ Clear response
+          </button>
+        )}
+      </div>
     </section>
   );
 }

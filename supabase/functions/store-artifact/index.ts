@@ -52,9 +52,12 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
-  const accessKeyId = Deno.env.get("R2_ACCESS_KEY_ID") ?? "de1433337ca9c122528c93f4afaf29aa";
-  const secretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY") ?? "df31b61741af41108f7606bc1b4f955d73da1e856fe1c17a30e2558f0aeb7dab";
-  const endpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "https://d38354d90a42650d218ad43200d1acfe.r2.cloudflarestorage.com").replace(/\/+$/, "");
+  // Credentials come ONLY from Edge Function secrets — never hard-code them.
+  //   supabase secrets set R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... \
+  //     R2_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com R2_BUCKET=exam-records
+  const accessKeyId = Deno.env.get("R2_ACCESS_KEY_ID");
+  const secretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY");
+  const endpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "").replace(/\/+$/, "");
   const bucket = Deno.env.get("R2_BUCKET") ?? "exam-records";
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");

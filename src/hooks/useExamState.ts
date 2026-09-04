@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from "react";
 export type QuestionStatus = "unvisited" | "visited" | "answered" | "marked";
 
 export type ExamQuestionLike = {
-  id: number;
+  id: string;
 };
 
 function hasAnswer(value: unknown): boolean {
@@ -14,14 +14,14 @@ function hasAnswer(value: unknown): boolean {
 
 export default function useExamState(questions: ExamQuestionLike[]) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<number, unknown>>({});
-  const [markedForReview, setMarkedForReview] = useState<Set<number>>(new Set());
-  const [visited, setVisited] = useState<Set<number>>(new Set());
-  const [lastVisited, setLastVisited] = useState<number | null>(null);
+  const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [markedForReview, setMarkedForReview] = useState<Set<string>>(new Set());
+  const [visited, setVisited] = useState<Set<string>>(new Set());
+  const [lastVisited, setLastVisited] = useState<string | null>(null);
 
   const total = questions.length;
 
-  const markVisited = useCallback((questionId: number) => {
+  const markVisited = useCallback((questionId: string) => {
     setVisited((prev) => {
       if (prev.has(questionId)) return prev;
       const next = new Set(prev);
@@ -64,12 +64,12 @@ export default function useExamState(questions: ExamQuestionLike[]) {
     if (idx >= 0) goTo(idx);
   }, [goTo, lastVisited, questions]);
 
-  const setAnswer = useCallback((questionId: number, answer: unknown) => {
+  const setAnswer = useCallback((questionId: string, answer: unknown) => {
     setAnswers((prev) => ({ ...prev, [questionId]: answer }));
     markVisited(questionId);
   }, [markVisited]);
 
-  const clearAnswer = useCallback((questionId: number) => {
+  const clearAnswer = useCallback((questionId: string) => {
     setAnswers((prev) => {
       if (!(questionId in prev)) return prev;
       const next = { ...prev };
@@ -78,7 +78,7 @@ export default function useExamState(questions: ExamQuestionLike[]) {
     });
   }, []);
 
-  const toggleReview = useCallback((questionId: number) => {
+  const toggleReview = useCallback((questionId: string) => {
     setMarkedForReview((prev) => {
       const next = new Set(prev);
       if (next.has(questionId)) next.delete(questionId);
@@ -88,9 +88,9 @@ export default function useExamState(questions: ExamQuestionLike[]) {
     markVisited(questionId);
   }, [markVisited]);
 
-  const isReviewed = useCallback((questionId: number) => markedForReview.has(questionId), [markedForReview]);
+  const isReviewed = useCallback((questionId: string) => markedForReview.has(questionId), [markedForReview]);
 
-  const getQuestionStatus = useCallback((questionId: number): QuestionStatus => {
+  const getQuestionStatus = useCallback((questionId: string): QuestionStatus => {
     if (markedForReview.has(questionId)) return "marked";
     if (hasAnswer(answers[questionId])) return "answered";
     if (visited.has(questionId)) return "visited";

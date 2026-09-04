@@ -5,6 +5,7 @@ type Recipient = {
   student_id: string;
   email: string;
   full_name: string;
+  roll?: string;
 };
 
 const CORS = {
@@ -44,20 +45,21 @@ Deno.serve(async (req) => {
   } else {
     const { data } = await db
       .from("enrollments")
-      .select("student_id,student:students(email,full_name,unsubscribed_emails)")
+      .select("student_id,student:students(email,full_name,roll,unsubscribed_emails)")
       .eq("exam_id", examId);
 
     recipients = (data ?? [])
       .map((row) => {
         const student = Array.isArray((row as { student: unknown }).student)
-          ? (row as { student: { email?: string; full_name?: string; unsubscribed_emails?: boolean }[] }).student[0]
-          : ((row as { student: { email?: string; full_name?: string; unsubscribed_emails?: boolean } }).student ?? null);
+          ? (row as { student: { email?: string; full_name?: string; roll?: string; unsubscribed_emails?: boolean }[] }).student[0]
+          : ((row as { student: { email?: string; full_name?: string; roll?: string; unsubscribed_emails?: boolean } }).student ?? null);
         if (!student?.email) return null;
         if (student.unsubscribed_emails === true) return null; // Skip unsubscribed students
         return {
           student_id: String((row as { student_id?: string }).student_id ?? ""),
           email: student.email,
           full_name: student.full_name ?? "Student",
+          roll: student.roll ?? "",
         };
       })
       .filter((row): row is Recipient => !!row);
@@ -68,7 +70,7 @@ Deno.serve(async (req) => {
   const results = await Promise.all(
     recipients.map((recipient) =>
       sendWithRetry(async () => {
-        const joinLink = `${baseUrl}/student/exam?examId=${encodeURIComponent(exam.id)}`;
+        const joinLink = `${baseUrl}/student/exam?examId=${encodeURIComponent(exam.id)}&roll=${encodeURIComponent(recipient.roll ?? "")}&name=${encodeURIComponent(recipient.full_name ?? "")}&email=${encodeURIComponent(recipient.email)}`;
         const dateObj = exam.scheduled_at ? new Date(exam.scheduled_at) : null;
         const html = examPublishedTemplate({
           studentId: recipient.student_id,
