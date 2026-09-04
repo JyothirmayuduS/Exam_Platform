@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
-import { listLiveAttempts, subscribeToAttempts, saveViolation, setAttemptPaused, forceSubmitAttempt, sendProctorMessage, extendAttemptTime, listAssignedExamsForAuthUser, type LiveAttempt, type ViolationEvent } from "../lib/examApi";
+import { listLiveAttempts, subscribeToAttempts, saveViolation, setAttemptPaused, forceSubmitAttempt, sendProctorMessage, extendAttemptTime, listAssignedExamsForAuthUser, listExams, type LiveAttempt, type ViolationEvent } from "../lib/examApi";
 import { startProctorViewing, identityLabel, type RemoteFeed, type ViewerState } from "../lib/proctorViewer";
 import { FiDownload, FiPlay, FiMic, FiMicOff } from "react-icons/fi";
 import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
@@ -114,9 +114,20 @@ export default function ProctorGrid() {
   useEffect(() => { stopSpeaking(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [examId]);
 
   // Load the proctor's assigned exams once. ?exam= picks a specific one.
+  // Anon (no-auth) mode has no proctor_assignments rows, so fall back to the
+  // full published exam list — the teacher side works the same way.
   useEffect(() => {
     let active = true;
-    void listAssignedExamsForAuthUser().then((rows) => {
+    void (async () => {
+      const assigned = await listAssignedExamsForAuthUser();
+      if (!active) return;
+      let rows = assigned;
+      if (rows.length === 0) {
+        const all = await listExams();
+        rows = (all ?? [])
+          .filter((e) => e.status !== "draft")
+          .map((e) => ({ id: e.id, name: e.name, batch: e.batch ?? "", status: e.status, mode: e.mode, assignee_role: "proctor" }));
+      }
       if (!active) return;
       setExamOptions(rows);
       setLoadingExam(false);
@@ -124,7 +135,7 @@ export default function ProctorGrid() {
         if (rows.length > 0) setExamId(rows[0].id);
         else setExamId(null);
       }
-    });
+    })();
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -381,7 +392,11 @@ export default function ProctorGrid() {
               <button onClick={() => setMainTab("recordings")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider border-l border-line ${mainTab === "recordings" ? "bg-forest text-paper" : "text-ink-soft hover:bg-paper-raised"}`}>Recordings</button>
             </div>
           </div>
-          <p className="mt-2 text-[13px] text-ink-soft">{examName || "Assigned exam"} · {examId}{examBatch ? ` · ${examBatch}` : ""}</p>
+          <p className="mt-2 text-[13px] text-ink-soft">
+            {examId
+              ? <>{examName || "Assigned exam"}{examBatch ? ` · ${examBatch}` : ""}</>
+              : "Assigned exam — none selected"}
+          </p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="flex items-center gap-2">
