@@ -731,11 +731,35 @@ function ManualAnswer({ q, cid, score, rubricChecks, feedback, setScore, toggleI
     : null;
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(uploadedMatch ? uploadedMatch[1] : null);
 
-  // Also fetch the upload directly from question_submissions if not embedded in answer
+  // Also fetch the upload directly from question_submissions AND student_answers
   useEffect(() => {
     if (uploadedMatch) return;
     const db = getSupabase();
     if (!db || !cid) return;
+
+    const fetchUrl = (path: string | null | undefined) => {
+      if (!path) return;
+      if (path.startsWith("http")) {
+        setUploadedUrl(path);
+      } else {
+        const { data: urlData } = db.storage.from("exam-records").getPublicUrl(path);
+        if (urlData?.publicUrl) setUploadedUrl(urlData.publicUrl);
+      }
+    };
+
+    // 1. Check student_answers table (direct desktop image upload)
+    db.from("student_answers")
+      .select("uploaded_image_url, answer_text")
+      .eq("attempt_id", cid)
+      .eq("question_id", String(q.id))
+      .maybeSingle()
+      .then(({ data, error }: { data: any; error: any }) => {
+        if (!error && data?.uploaded_image_url) {
+          fetchUrl(data.uploaded_image_url);
+        }
+      });
+
+    // 2. Check question_submissions (mobile upload via QR)
     db.from("question_submissions")
       .select("pdf_storage_path, original_storage_path")
       .eq("attempt_id", cid)
@@ -745,11 +769,8 @@ function ManualAnswer({ q, cid, score, rubricChecks, feedback, setScore, toggleI
       .maybeSingle()
       .then(({ data, error }: { data: any; error: any }) => {
         if (error || !data) return;
-        const path = (data as any).pdf_storage_path || (data as any).original_storage_path;
-        if (path) {
-          const { data: urlData } = db.storage.from("exam-records").getPublicUrl(path);
-          if (urlData?.publicUrl) setUploadedUrl(urlData.publicUrl);
-        }
+        const path = data.pdf_storage_path || data.original_storage_path;
+        if (path) fetchUrl(path);
       });
   }, [cid, q.id, uploadedMatch]);
 
