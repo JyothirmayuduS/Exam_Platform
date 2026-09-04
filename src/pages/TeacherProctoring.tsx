@@ -10,7 +10,10 @@ import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
 import { downloadSessionReportPdf } from "../lib/sessionReport";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import { getTeacherNav } from "./TeacherDashboard";
-import { FiVideo, FiMonitor } from "react-icons/fi";
+import { FiVideo, FiMonitor, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight } from "react-icons/fi";
+import ProctoringAssessmentSelect from "../components/teacher/ProctoringAssessmentSelect";
+import { Button } from "../components/ui";
+import type { ProctorAssignment } from "../lib/examApi";
 
 type Student = {
   name: string;
@@ -60,7 +63,16 @@ export default function TeacherProctoring() {
   const [searchParams, setSearchParams] = useSearchParams();
   const paramExamId = searchParams.get("examId") ?? searchParams.get("exam");
   const [examList, setExamList] = useState<{ id: string; name: string; batch?: string }[]>([]);
-  const [selectedExamId, setSelectedExamId] = useState<string>(paramExamId ?? "EXAM-2026-072");
+  // Two-stage flow: pick the assessment(s) first (Mettl-style selector), then
+  // enter the live command centre for the chosen exam. A ?examId deep link
+  // jumps straight into monitoring.
+  const [stage, setStage] = useState<"select" | "monitor">(paramExamId ? "monitor" : "select");
+  const [selectedExamId, setSelectedExamId] = useState<string>(paramExamId ?? "");
+  const beginMonitoring = (examId: string) => {
+    setSelectedExamId(examId);
+    setSearchParams({ examId });
+    setStage("monitor");
+  };
 
   const [students, setStudents] = useState<Student[]>([]);
   const [live, setLive] = useState(false);
@@ -79,6 +91,17 @@ export default function TeacherProctoring() {
   const [assignments, setAssignments] = useState<Record<string, { role: "proctor" | "teacher" | "ta"; id?: string | null; email?: string | null }>>({});
   const [emailProctors, setEmailProctors] = useState(true);
   const [savingAssignments, setSavingAssignments] = useState(false);
+  // Allocation: which proctors are assigned to this assessment, so the live
+  // roster is fairly shared. Loads once per exam (the Assign modal reloads it
+  // too).
+  const [proctors, setProctors] = useState<ProctorAssignment[]>([]);
+  useEffect(() => {
+    if (!selectedExamId) return;
+    let active = true;
+    void listProctorAssignments(selectedExamId).then((rows) => { if (active) setProctors(rows); });
+    return () => { active = false; };
+  }, [selectedExamId]);
+
   // Live voice: push-to-talk to the selected candidate's own channel.
   const voiceRef = useRef<Awaited<ReturnType<typeof startVoiceBroadcast>> | null>(null);
   const [speakingTo, setSpeakingTo] = useState<string | null>(null);
@@ -115,13 +138,7 @@ export default function TeacherProctoring() {
     (async () => {
       const all = await listExams();
       if (!active) return;
-      if (all && all.length > 0) {
-        setExamList(all);
-        if (!paramExamId) {
-          const defaultExam = all.find((x: any) => x.status === "published" || x.id === "EXAM-2026-072") || all[0];
-          setSelectedExamId(defaultExam.id);
-        }
-      }
+      if (all && all.length > 0) setExamList(all);
     })();
     return () => { active = false; };
   }, [paramExamId]);
@@ -311,8 +328,20 @@ export default function TeacherProctoring() {
     });
   };
 
+  if (stage === "select") {
+    return <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={getTeacherNav(0, 0, 0)}>
+      <ProctoringAssessmentSelect onStart={beginMonitoring} />
+    </RoleLayout>;
+  }
+
   return <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav} status={live ? "Live monitoring active" : "Not connected"}>
-    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+      <button onClick={() => { setStage("select"); setSearchParams({}); }} className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:text-forest">
+        <FiGrid aria-hidden /> All assessments
+      </button>
+      <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Proctoring centre · {examList.find((e) => e.id === selectedExamId)?.name || selectedExamId}</span>
+    </div>
+    <div className="mt-6 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
       <div>
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Faculty console / Proctoring</p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -368,6 +397,7 @@ export default function TeacherProctoring() {
       <Stat label="Needs attention" value={flaggedCount.toString()} sub="Active violations" alert={flaggedCount > 0} />
       <Stat label="Live Feeds" value={feedCount.toString()} sub={viewerState === "connected" ? "LiveKit connected" : viewerState === "connecting" ? "Connecting to LiveKit..." : viewerState === "idle" ? "Not connected" : viewerState === "error" ? (viewerError ?? "Error") : viewerState === "disconnected" ? "Disconnected" : viewerState === "reconnecting" ? "Reconnecting..." : "Unknown"} alert={viewerState === "error" || viewerState === "disconnected"}/>
     </div>
+    <AllocationPanel students={students} proctors={proctors} me={profile?.full_name ?? ""} />
     {viewerState === "error" && viewerError && (
       <div className="mt-4 border border-alert/40 bg-alert/5 px-4 py-3 font-mono text-[11px] text-alert">
         <strong>LiveKit Error:</strong> {viewerError}
@@ -462,13 +492,13 @@ export default function TeacherProctoring() {
           <button
             disabled={!selected || voiceBusy || selected.status === "Submitted"}
             onClick={() => void toggleSpeak(selected)}
-            className={`py-2 font-mono text-[10px] uppercase tracking-wider transition-colors disabled:opacity-50 ${
+            className={`inline-flex items-center justify-center gap-2 py-2 font-mono text-[10px] uppercase tracking-wider transition-colors disabled:opacity-50 ${
               speakingTo === selected?.roll
                 ? "border border-alert bg-alert text-paper hover:bg-alert/90"
                 : "border border-forest bg-forest/5 text-forest hover:bg-forest hover:text-paper"
             }`}
           >
-            {speakingTo === selected?.roll ? "■ Stop speaking" : voiceBusy ? "Connecting mic…" : "🎙 Speak to candidate"}
+            {speakingTo === selected?.roll ? <><FiMicOff aria-hidden /> Stop speaking</> : voiceBusy ? "Connecting mic…" : <><FiMic aria-hidden /> Speak to candidate</>}
           </button>
           <button
             disabled={!selected || (selected.status !== "Writing" && selected.status !== "Paused")}
@@ -647,7 +677,7 @@ function VideoWall({ visible, selected, onSelect, feedFor, source, onSourceChang
               showScreen ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"
             }`}
           >
-            🖥️ Screen
+            <FiMonitor aria-hidden /> Screen
           </button>
         </div>
       </div>
@@ -831,7 +861,7 @@ function AudioPlayer({ track }: { track: any }) {
   );
 }
 
-function ActivityView({ visible, selected, onSelect }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void }) { return <section className="mt-6 border border-line"><div className="border-b border-line bg-paper-raised px-5 py-4"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Activity stream</p><h2 className="mt-1 font-serif text-xl font-semibold">Student activity by priority</h2></div><div className="divide-y divide-line">{visible.map((student) => <button key={student.roll} onClick={() => onSelect(student)} className={`flex w-full flex-col gap-3 px-5 py-4 text-left sm:flex-row sm:items-center sm:justify-between ${selected?.roll === student.roll ? "bg-success/5" : "hover:bg-paper-raised"}`}><div><p className="text-[13px] font-medium">{student.name} <span className="ml-2 font-mono text-[10px] text-ink-soft">{student.roll}</span></p><p className="mt-1 text-[11px] text-ink-soft">Last event: {student.violation || "Status updated recently"}</p></div><span className={`font-mono text-[10px] uppercase ${student.violation ? "text-alert" : "text-success"}`}>{student.violation ? "Review violation →" : "Monitoring clear"}</span></button>)}{visible.length === 0 && <div className="p-10 text-center font-mono text-[11px] text-ink-soft">No active candidates.</div>}</div></section>; }
+function ActivityView({ visible, selected, onSelect }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void }) { return <section className="mt-6 border border-line"><div className="border-b border-line bg-paper-raised px-5 py-4"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Activity stream</p><h2 className="mt-1 font-serif text-xl font-semibold">Student activity by priority</h2></div><div className="divide-y divide-line">{visible.map((student) => <button key={student.roll} onClick={() => onSelect(student)} className={`flex w-full flex-col gap-3 px-5 py-4 text-left sm:flex-row sm:items-center sm:justify-between ${selected?.roll === student.roll ? "bg-success/5" : "hover:bg-paper-raised"}`}><div><p className="text-[13px] font-medium">{student.name} <span className="ml-2 font-mono text-[10px] text-ink-soft">{student.roll}</span></p><p className="mt-1 text-[11px] text-ink-soft">Last event: {student.violation || "Status updated recently"}</p></div><span className={`font-mono text-[10px] uppercase ${student.violation ? "text-alert" : "text-success"}`}>{student.violation ? <span className="inline-flex items-center gap-1">Review violation <FiChevronRight /></span> : "Monitoring clear"}</span></button>)}{visible.length === 0 && <div className="p-10 text-center font-mono text-[11px] text-ink-soft">No active candidates.</div>}</div></section>; }
 function ScreenRecording({ selected, feed }: { selected: Student; feed: RemoteFeed | null }) { const liveScreen = !!feed?.screenTrack; return <div className="mt-4"><div className="relative flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#252923]">{liveScreen ? <ScreenFeedView feed={feed}/> : <><div className="absolute inset-3 bg-ink/90 flex items-center justify-center text-paper font-mono text-[10px] uppercase">Screen feed unavailable</div></>}<span className="absolute bottom-2 left-2 z-10 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">{liveScreen ? "● LIVE SCREEN SHARE" : "○ SCREEN PREVIEW"}</span></div><p className="mt-3 text-[11px] text-ink-soft">{selected.name} · {liveScreen ? "Live screen share" : "Screen recording · awaiting feed"}</p></div>; }
 function FeedView({ feed, initials }: { feed: RemoteFeed | null; initials: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -869,6 +899,49 @@ function ScreenFeedView({ feed }: { feed: RemoteFeed | null }) {
   );
 }
 function Stat({ label, value, sub, alert = false }: { label: string; value: string; sub: string; alert?: boolean }) { return <div className="border border-line bg-paper-raised p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">{label}</p><p className={`mt-2 font-serif text-3xl ${alert ? "text-alert" : "text-ink"}`}>{value}</p><p className="mt-1 text-[12px] text-ink-soft">{sub}</p></div>; }
+
+/**
+ * Mettl-style allocation: the live roster is shared fairly between the
+ * proctors assigned to this assessment (assignments come from the DB via the
+ * Assign Proctors modal). With no assignment rows the current user is treated
+ * as the single proctor.
+ */
+function AllocationPanel({ students, proctors, me }: { students: Student[]; proctors: ProctorAssignment[]; me: string }) {
+  const total = students.length;
+  const online = students.filter((s) => s.status === "Writing" || s.status === "Paused").length;
+  const proctorNames = proctors.length > 0 ? proctors.map((p) => p.assignee_name) : me ? [me] : [];
+  const effective = Math.max(1, proctorNames.length);
+  const share = Math.ceil(total / effective);
+  const myTurn = proctorNames.indexOf(me) >= 0;
+  return (
+    <section className="mt-6 border border-line bg-paper-raised p-5">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <span className="flex h-9 w-9 items-center justify-center border border-line-strong bg-paper text-forest"><FiUsers aria-hidden /></span>
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Allocation · fair share of the live roster</p>
+            <p className="mt-0.5 text-[13px]">{total} candidate{total === 1 ? "" : "s"} across {effective} proctor{effective === 1 ? "" : "s"} · your share ≈ <strong className="font-serif text-[15px]">{share}</strong></p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-right">
+          <div><p className="font-serif text-xl">{online}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Online now</p></div>
+          <div><p className="font-serif text-xl">{total - online}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Idle / submitted</p></div>
+          <div><p className={`font-serif text-xl ${myTurn ? "text-forest" : "text-amber"}`}>{myTurn ? "Active" : "Standby"}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Your role</p></div>
+        </div>
+      </div>
+      {proctors.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {proctors.map((p) => (
+            <span key={p.assignee_name} className={`px-2 py-1 font-mono text-[9px] uppercase tracking-wider ${p.assignee_name === me ? "border border-forest bg-forest/10 text-forest" : "border border-line-strong bg-paper text-ink-soft"}`}>
+              {p.assignee_name} · {p.assignee_role}
+            </span>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function formatClock(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
   const h = Math.floor(s / 3600);

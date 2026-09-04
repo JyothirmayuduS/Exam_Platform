@@ -959,6 +959,43 @@ export async function removeStudentFromExam(examId: string, roll: string): Promi
 export async function listExamsForTeacher(): Promise<ExamRecord[]> { const db = getSupabase(); if (!db) return []; const { data } = await db.from('exams').select('*').order('created_at', { ascending: false }); return (data ?? []).map(normalizeExamRecord); }
 export { listExamsForTeacher as listExams };
 
+/**
+ * Live per-exam proctoring stats for the assessment selector: one query for
+ * attempts, one for violation events, grouped by exam_id client-side.
+ */
+export async function listProctoringStats(): Promise<
+  Record<string, { candidates: number; active: number; submitted: number; paused: number; flagged: number }>
+> {
+  const db = getSupabase();
+  if (!db) return {};
+  const out: Record<string, { candidates: number; active: number; submitted: number; paused: number; flagged: number }> = {};
+  const bump = (examId: string, field: "candidates" | "active" | "submitted" | "paused" | "flagged") => {
+    if (!examId) return;
+    const row = (out[examId] ??= { candidates: 0, active: 0, submitted: 0, paused: 0, flagged: 0 });
+    row[field] += 1;
+  };
+  const { data: attempts } = await db
+    .from("attempts")
+    .select("exam_id,state,student_id");
+  if (attempts) {
+    for (const r of attempts as { exam_id?: string; state?: string; student_id?: string }[]) {
+      const examId = String(r.exam_id ?? "");
+      bump(examId, "candidates");
+      if (r.state === "in_progress" || r.state === "not_started") bump(examId, "active");
+      else if (r.state === "submitted") bump(examId, "submitted");
+      else if (r.state === "paused") bump(examId, "paused");
+    }
+  }
+  const { data: violations } = await db
+    .from("violation_events")
+    .select("exam_id")
+    .not("severity", "eq", "info");
+  if (violations) {
+    for (const r of violations as { exam_id?: string }[]) bump(String(r.exam_id ?? ""), "flagged");
+  }
+  return out;
+}
+
 export async function updateAttemptScore(attemptId: string, score: number): Promise<boolean> {
   const db = getSupabase();
   if (!db) return false;
