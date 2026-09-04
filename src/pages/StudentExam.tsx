@@ -28,7 +28,7 @@ import useProctoring from "../hooks/useProctoring";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useOfflineSync from "../hooks/useOfflineSync";
 import { invoke } from "@tauri-apps/api/core";
-import { uploadExamRecords } from "../lib/examStorage";
+import { uploadExamRecords, startScreenshotCapture, type ScreenshotHandle } from "../lib/examStorage";
 import {
   DownloadGateScreen,
   InstalledScreen,
@@ -106,6 +106,12 @@ export default function StudentExam() {
   const [screen, setScreen] = useState<"idle" | "granted" | "denied">("idle");
   const [requesting, setRequesting] = useState(false);
   const previewRef = useRef<HTMLVideoElement | null>(null);
+  // Hidden video element for screenshot capture from screen stream
+  const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
+  // Screenshot capture handle (startScreenshotCapture)
+  const screenshotHandleRef = useRef<ScreenshotHandle | null>(null);
+  // Real violation snapshot blobs (captured at violation moment)
+  const violationSnapshotsRef = useRef<{ label: string; blob: Blob }[]>([]);
   const accessStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
 
@@ -153,6 +159,37 @@ export default function StudentExam() {
     EXAM_ID,
     studentIdRef.current ?? undefined
   );
+
+  // On every new violation, capture a high-quality snapshot via the screenshot handle
+  useEffect(() => {
+    if (!activeViolation || !screenshotHandleRef.current) return;
+    void screenshotHandleRef.current.captureViolationSnapshot(activeViolation.kind).then((blob) => {
+      if (blob) violationSnapshotsRef.current.push({ label: `${activeViolation.kind} at ${activeViolation.at}`, blob });
+    });
+  }, [activeViolation]);
+
+  // Start screenshot capture when exam starts (hidden video is now in DOM)
+  useEffect(() => {
+    if (step !== "exam") return;
+    // Attach screen stream to hidden video and start per-second screenshot capture
+    if (screenStreamRef.current && hiddenVideoRef.current) {
+      hiddenVideoRef.current.srcObject = screenStreamRef.current;
+      hiddenVideoRef.current.play().catch(() => {});
+      screenshotHandleRef.current = startScreenshotCapture({
+        examName: examName || EXAM_ID,
+        studentId: `${STUDENT_NAME}_${STUDENT_ROLL}`,
+        intervalMs: 1000,
+      });
+      screenshotHandleRef.current.setVideo(hiddenVideoRef.current);
+    }
+    // Stop when exam ends
+    return () => {
+      if (screenshotHandleRef.current) {
+        screenshotHandleRef.current.stop();
+        screenshotHandleRef.current = null;
+      }
+    };
+  }, [step]);
 
   // Download gate: only offer the installer after confirming the link resolves
   // to real installer bytes. Without the probe, an unhosted path returns a 404
@@ -513,15 +550,19 @@ export default function StudentExam() {
       } catch (e) {
         console.warn("Failed to start MediaRecorder", e);
       }
-
     }
-    
+
     setStep("exam");
   }
 
   async function doSubmit() {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
+    }
+    // Stop per-second screenshot capture
+    if (screenshotHandleRef.current) {
+      screenshotHandleRef.current.stop();
+      screenshotHandleRef.current = null;
     }
 
     if (supabaseConfigured && studentIdRef.current) {
@@ -545,15 +586,16 @@ export default function StudentExam() {
         } catch {}
       }
     }
-    
-    // Upload the screen recording to Cloudflare R2 only (no PDF, no screenshots)
+
+    // Upload all exam artifacts: recording + screenshots + violations + PDF
     setTimeout(async () => {
       try {
         const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
         await uploadExamRecords({
-          examId: EXAM_ID,
-          studentIdentifier: STUDENT_ROLL,
+          examName: examName || EXAM_ID,
+          studentId: `${STUDENT_NAME}_${STUDENT_ROLL}`,
           videoBlob,
+          violationSnapshots: violationSnapshotsRef.current,
         });
       } catch (err) {
         console.error("Failed to upload recording:", err);

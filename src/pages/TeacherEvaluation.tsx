@@ -7,6 +7,7 @@ import useLiveAttempts from "../hooks/useLiveAttempts";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import ProctorAI from "../components/ProctorAI";
 import { getTeacherNav } from "./TeacherDashboard";
+import { getSupabase } from "../lib/supabase";
 
 type QType = "MCQ" | "MSQ" | "TrueFalse" | "Numerical" | "Subjective" | "Coding";
 type RubricItem = { id: string; label: string; detail: string; marks: number };
@@ -724,9 +725,51 @@ function ManualAnswer({ q, cid, score, rubricChecks, feedback, setScore, toggleI
   setScore: (qid: string, marks: number, maxMarks: number) => void; toggleItem: (q: Question, itemId: string) => void; setFeedback: (qid: string, v: string) => void;
 }) {
   const fb = feedback[key(cid, q.id)] ?? "";
+  // Detect uploaded image: response starts with "[Uploaded answer: URL]"
+  const uploadedMatch = typeof q.response === "string" && q.response.startsWith("[Uploaded answer:")
+    ? q.response.match(/^\[Uploaded answer:\s*(.+?)\s*\]$/)
+    : null;
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(uploadedMatch ? uploadedMatch[1] : null);
+
+  // Also fetch the upload directly from question_submissions if not embedded in answer
+  useEffect(() => {
+    if (uploadedMatch) return;
+    const db = getSupabase();
+    if (!db || !cid) return;
+    db.from("question_submissions")
+      .select("pdf_storage_path, original_storage_path")
+      .eq("attempt_id", cid)
+      .eq("question_id", String(q.id))
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data, error }: { data: any; error: any }) => {
+        if (error || !data) return;
+        const path = (data as any).pdf_storage_path || (data as any).original_storage_path;
+        if (path) {
+          const { data: urlData } = db.storage.from("exam-records").getPublicUrl(path);
+          if (urlData?.publicUrl) setUploadedUrl(urlData.publicUrl);
+        }
+      });
+  }, [cid, q.id, uploadedMatch]);
+
   return (
     <div className="mt-4">
-      <article className="whitespace-pre-wrap border-l-2 border-forest bg-paper-raised p-4 text-[14px] leading-7">{q.response || "No answer submitted."}</article>
+      {uploadedUrl ? (
+        <div className="border-l-2 border-forest bg-paper-raised p-4">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-bold mb-2">✓ Uploaded Handwritten Answer</p>
+          <a href={uploadedUrl} target="_blank" rel="noopener noreferrer">
+            <img
+              src={uploadedUrl}
+              alt="Student's handwritten answer"
+              className="w-full max-h-[600px] object-contain border border-line bg-paper cursor-zoom-in"
+            />
+          </a>
+          <p className="mt-2 font-mono text-[9px] text-ink-soft">Click image to view full size</p>
+        </div>
+      ) : (
+        <article className="whitespace-pre-wrap border-l-2 border-forest bg-paper-raised p-4 text-[14px] leading-7">{q.response || "No answer submitted."}</article>
+      )}
       {q.rubric && (
         <div className="mt-4 border border-line">
           <p className="border-b border-line bg-paper-raised px-3 py-2 font-mono text-[9px] uppercase tracking-widest text-ink-soft">Rubric · tick to build the score</p>

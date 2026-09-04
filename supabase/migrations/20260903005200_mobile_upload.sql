@@ -22,6 +22,20 @@ create policy "Students can create mobile upload sessions"
   on public.mobile_upload_sessions for insert
   with check ( student_id in (select id from public.students where auth_id = auth.uid()) );
 
+-- Allow teachers/proctors to create upload sessions for their students
+create policy "Teachers can create mobile upload sessions"
+  on public.mobile_upload_sessions for insert
+  with check (
+    auth.uid() in (select auth_id from public.teachers)
+  );
+
+-- Allow teachers to view all mobile upload sessions
+create policy "Teachers can view all mobile upload sessions"
+  on public.mobile_upload_sessions for select
+  using (
+    auth.uid() in (select auth_id from public.teachers)
+  );
+
 -- Edge functions (service_role) bypass RLS, so no update policy needed here for the backend.
 
 -- Question Submissions (Tracking the actual PDFs/Images per question)
