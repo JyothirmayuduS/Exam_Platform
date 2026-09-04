@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { FiUpload, FiArrowLeft, FiX, FiDownload, FiCheck } from "react-icons/fi";
 import { saveQuestion, type DBQuestion } from "../lib/examApi";
 
 type Props = { notify: (message: string) => void; navigate: (path: string) => void };
@@ -249,8 +250,8 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
           <p className="mt-2 text-[13px] text-ink-soft">Saved straight to the database — difficulty, unit and marks are part of the question, so they show up in the pool and the paper.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <button onClick={() => setBulkOpen((o) => !o)} className="border border-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest">↑ Bulk upload CSV/Excel</button>
-          <button onClick={() => navigate(exitPath)} className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">← Back</button>
+          <button onClick={() => setBulkOpen((o) => !o)} className="inline-flex items-center gap-2 border border-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest"><FiUpload /> Bulk upload CSV/Excel</button>
+          <button onClick={() => navigate(exitPath)} className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft"><FiArrowLeft /> Back</button>
         </div>
       </div>
 
@@ -264,11 +265,11 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
                 Upload a CSV (the template matches the import format). Rows are validated here and inserted into the database in one pass.
               </p>
             </div>
-            <button onClick={() => setBulkOpen(false)} className="self-start font-mono text-[10px] uppercase tracking-wider text-ink-soft">Close ×</button>
+            <button onClick={() => setBulkOpen(false)} className="self-start font-mono text-[10px] uppercase tracking-wider text-ink-soft"><FiX /> Close</button>
           </div>
           <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_250px]">
             <label className="flex cursor-pointer flex-col items-center justify-center border border-dashed border-forest bg-paper px-6 py-8 text-center transition hover:bg-paper-raised">
-              <span className="text-2xl text-forest">↑</span>
+              <span className="text-2xl text-forest"><FiUpload /></span>
               <span className="mt-2 text-[13px] font-medium">{bulkFile || "Choose CSV file"}</span>
               <span className="mt-1 text-[12px] text-ink-soft">.csv · up to 500 questions · difficulty &amp; marks columns supported</span>
               <input type="file" accept=".csv,text/csv" className="sr-only" onChange={(e) => void handleBulkFile(e.target.files?.[0])} />
@@ -276,7 +277,7 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
             <div className="border border-line bg-paper p-4">
               <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Template · {examId || "general bank"}</p>
               <p className="mt-3 text-[12px] leading-relaxed text-ink-soft">exam_id, question, type, option_a, option_b, option_c, option_d, answer, unit, difficulty, marks</p>
-              <button onClick={exportTemplate} className="mt-4 font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">↓ Download CSV template</button>
+              <button onClick={exportTemplate} className="mt-4 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-forest hover:underline"><FiDownload /> Download CSV template</button>
             </div>
           </div>
 
@@ -311,7 +312,7 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
                         <td className="px-3 py-2">{r.title || "—"}</td>
                         <td className="px-3 py-2">{r.type}</td>
                         <td className="px-3 py-2">{r.difficulty}</td>
-                        <td className={`px-3 py-2 font-mono text-[10px] ${r.valid ? "text-success" : "text-alert"}`}>{r.valid ? "✓ valid" : r.reason}</td>
+                        <td className={`px-3 py-2 font-mono text-[10px] ${r.valid ? "text-success" : "text-alert"}`}>{r.valid ? <><FiCheck className="inline" aria-hidden /> valid</> : r.reason}</td>
                       </tr>
                     ))}
                   </tbody>

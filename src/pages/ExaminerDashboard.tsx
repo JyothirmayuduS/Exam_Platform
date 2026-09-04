@@ -6,6 +6,7 @@
 // Everything is read from Supabase; nothing is hard-coded demo data.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { FiFileText, FiFolder, FiUsers, FiSettings, FiCalendar, FiX, FiCheck, FiPlus, FiArrowLeft, FiArrowRight } from "react-icons/fi";
 import {
   loadExaminerDashboard,
   assignEvaluators,
@@ -481,11 +482,11 @@ function AutoAssignPanel({
   };
 
   const summary = [
-    { icon: "🗎", label: "Test Name", value: exam.name },
-    { icon: "🗂", label: "Test Reports Selected", value: `${available} report(s)` },
-    { icon: "👤", label: "Evaluators Selected", value: `${selected.length}` },
-    { icon: "⚙", label: "Evaluator Role Selected", value: role },
-    { icon: "📅", label: "Due Date Selected", value: dueDate ? new Date(dueDate + "T00:00:00").toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "Not set" },
+    { icon: <FiFileText />, label: "Test Name", value: exam.name },
+    { icon: <FiFolder />, label: "Test Reports Selected", value: `${available} report(s)` },
+    { icon: <FiUsers />, label: "Evaluators Selected", value: `${selected.length}` },
+    { icon: <FiSettings />, label: "Evaluator Role Selected", value: role },
+    { icon: <FiCalendar />, label: "Due Date Selected", value: dueDate ? new Date(dueDate + "T00:00:00").toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "Not set" },
   ];
 
   return (
@@ -501,7 +502,7 @@ function AutoAssignPanel({
               {step === 1 ? "Test reports will be randomly assigned to new evaluator(s)." : "Review the distribution and assign the reports."}
             </p>
           </div>
-          <button onClick={onClose} className="px-2 py-1 font-mono text-[18px] leading-none text-ink-soft hover:text-ink">×</button>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 text-ink-soft transition hover:text-ink"><FiX size={18} /></button>
         </div>
 
         {step === 1 ? (
@@ -533,7 +534,7 @@ function AutoAssignPanel({
                         <span className="block font-medium">{f.name}</span>
                         <span className="block truncate font-mono text-[10px] text-ink-soft">{f.email ?? "no email on file"}</span>
                       </span>
-                      <span className={`font-mono text-[11px] ${on ? "text-forest" : "text-ink-soft"}`}>{on ? "✓" : "+"}</span>
+                      <span className={`font-mono text-[11px] ${on ? "text-forest" : "text-ink-soft"}`}>{on ? <FiCheck /> : <FiPlus />}</span>
                     </button>
                   );
                 })}
@@ -594,11 +595,11 @@ function AutoAssignPanel({
         )}
 
         <div className="flex gap-2 border-t border-line px-6 py-5">
-          {step === 2 && <Button onClick={() => setStep(1)}>← Back</Button>}
+          {step === 2 && <Button icon={<FiArrowLeft />} onClick={() => setStep(1)}>Back</Button>}
           <div className="flex-1" />
-          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
           {step === 1 ? (
-            <Button primary onClick={goConfirm} disabled={selected.length === 0}>Next →</Button>
+            <Button primary iconRight={<FiArrowRight />} onClick={goConfirm} disabled={selected.length === 0}>Next</Button>
           ) : (
             <Button primary onClick={() => void assign()} disabled={busy || totalCount === 0}>
               {busy ? "Assigning…" : totalCount === available ? "Assign Test Reports" : `Assign ${totalCount}/${available}`}

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FiAlertTriangle } from "react-icons/fi";
 
 type ExamSidebarProps = {
   answered: number;
@@ -32,8 +33,8 @@ export default function ExamSidebar({
     "text-success border-success bg-success/10";
 
   const timerLabel =
-    secondsLeft <= 60 ? "⚠ Less than 1 minute!" :
-    secondsLeft <= 300 ? "⚠ 5 minutes remaining" :
+    secondsLeft <= 60 ? <><FiAlertTriangle className="inline text-alert" aria-hidden /> Less than 1 minute!</> :
+    secondsLeft <= 300 ? <><FiAlertTriangle className="inline text-amber" aria-hidden /> 5 minutes remaining</> :
     "Time remaining";
 
   return (

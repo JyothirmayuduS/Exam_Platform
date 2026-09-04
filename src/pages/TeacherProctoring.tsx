@@ -10,7 +10,7 @@ import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
 import { downloadSessionReportPdf } from "../lib/sessionReport";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import { getTeacherNav } from "./TeacherDashboard";
-import { FiVideo, FiMonitor, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight } from "react-icons/fi";
+import { FiVideo, FiMonitor, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight, FiVolume2 } from "react-icons/fi";
 import ProctoringAssessmentSelect from "../components/teacher/ProctoringAssessmentSelect";
 import { Button } from "../components/ui";
 import type { ProctorAssignment } from "../lib/examApi";
@@ -826,7 +826,7 @@ function AudioPlayer({ track }: { track: any }) {
               onClick={handleEnableAudio}
               className="border border-forest bg-forest/10 px-2 py-1 font-mono text-[9px] uppercase text-forest hover:bg-forest/20"
             >
-              ▶ Enable Audio
+              <FiVolume2 aria-hidden /> Enable Audio
             </button>
           )}
           <button

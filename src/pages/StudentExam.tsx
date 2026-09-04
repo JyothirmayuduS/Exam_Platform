@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FiCheck, FiAlertTriangle } from "react-icons/fi";
 import * as Sentry from "@sentry/react";
 import Seal from "../components/Seal";
 import ProctorCamera from "../components/ProctorCamera";
@@ -1115,7 +1116,7 @@ export default function StudentExam() {
                       aiStatus.faceCount === 1 ? "text-success" :
                       aiStatus.faceCount === 0 ? "text-alert" : "text-alert"
                     }`}>
-                      {aiStatus.faceCount === 0 ? "NONE" : aiStatus.faceCount === 1 ? "1 ✓" : `${aiStatus.faceCount} ⚠`}
+                      {aiStatus.faceCount === 0 ? "NONE" : aiStatus.faceCount === 1 ? <><span>1</span><FiCheck className="inline" aria-hidden /></> : <><span>{aiStatus.faceCount}</span><FiAlertTriangle className="inline" aria-hidden /></>}
                     </span>
                   </div>
                   {/* Gaze */}
@@ -1132,7 +1133,7 @@ export default function StudentExam() {
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-mono text-[9px] text-ink-soft">Voice</span>
                       <span className={`font-mono text-[9px] ${aiStatus.voiceSpeaking ? "text-alert" : "text-ink-soft"}`}>
-                        {aiStatus.voiceSpeaking ? "SPEAKING ⚠" : "SILENT ✓"}
+                        {aiStatus.voiceSpeaking ? <><span>SPEAKING</span><FiAlertTriangle className="inline" aria-hidden /></> : <><span>SILENT</span><FiCheck className="inline" aria-hidden /></>}
                       </span>
                     </div>
                     <div className="h-1 w-full bg-line">

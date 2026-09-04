@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { FiCamera, FiAlertTriangle } from "react-icons/fi";
 import { QRCodeSVG } from "qrcode.react";
 import { getSupabase } from "../../lib/supabase";
 import { uploadSubjectiveAnswer } from "../../lib/subjectiveUpload";
@@ -187,7 +188,7 @@ export default function SubjectiveQRBlock({
 
       {sessionError && (
         <div className="mb-3 border border-alert/40 bg-alert/5 px-4 py-2.5 text-[12px] text-alert">
-          <span className="font-mono text-[10px] uppercase tracking-wider">⚠ Session: </span>
+          <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider"><FiAlertTriangle className="text-amber" aria-hidden /> Session: </span>
           {sessionError}
         </div>
       )}
@@ -219,7 +220,7 @@ export default function SubjectiveQRBlock({
             Upload a photo of your handwritten answer directly from this device
           </p>
           <label className="flex cursor-pointer items-center gap-3 border border-forest/40 bg-forest/5 px-4 py-3 hover:bg-forest/10">
-            <span className="text-xl">📷</span>
+            <span className="text-xl text-forest"><FiCamera aria-hidden /></span>
             <div>
               <p className="font-mono text-[11px] uppercase tracking-wider text-forest font-bold">Choose image file</p>
               <p className="font-mono text-[10px] text-ink-soft">JPG, PNG, HEIC — max 10 MB</p>
@@ -239,7 +240,7 @@ export default function SubjectiveQRBlock({
               <p className="font-mono text-[10px] text-ink-soft">Uploading… {uploadProgress}%</p>
             </div>
           )}
-          {uploadError && <p className="text-[12px] text-alert">⚠ {uploadError}</p>}
+          {uploadError && <p className="flex items-center gap-1.5 text-[12px] text-alert"><FiAlertTriangle aria-hidden /> {uploadError}</p>}
         </div>
       ) : (
         <div className="flex flex-col sm:flex-row gap-6">

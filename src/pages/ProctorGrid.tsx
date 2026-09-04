@@ -4,6 +4,7 @@ import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
 import { listLiveAttempts, subscribeToAttempts, saveViolation, setAttemptPaused, forceSubmitAttempt, sendProctorMessage, extendAttemptTime, listAssignedExamsForAuthUser, type LiveAttempt, type ViolationEvent } from "../lib/examApi";
 import { startProctorViewing, identityLabel, type RemoteFeed, type ViewerState } from "../lib/proctorViewer";
+import { FiDownload, FiPlay, FiMic, FiMicOff } from "react-icons/fi";
 import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
 import RecordingReviewer from "../components/RecordingReview";
 import useCurrentProfile from "../hooks/useCurrentProfile";
@@ -615,7 +616,7 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
             }`}
             title="Talk to this candidate — they hear you live"
           >
-            {speaking ? "■ Stop speaking" : voiceBusy ? "Mic…" : "🎙 Speak"}
+            {speaking ? <><FiMicOff aria-hidden /> Stop speaking</> : voiceBusy ? "Mic…" : <><FiMic aria-hidden /> Speak</>}
           </button>
         </div>
 
@@ -796,13 +797,13 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
             <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exports & Evidence</p>
             <div className="mt-4 grid gap-2">
               <button onClick={runExportPdf} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
-                <span>{exporting === "pdf" ? "Generating…" : "Session Report (PDF)"}</span> <span>↓</span>
+                <span>{exporting === "pdf" ? "Generating…" : "Session Report (PDF)"}</span> <FiDownload aria-hidden />
               </button>
               <button onClick={onShowRecordings} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
-                <span>Review recordings</span> <span>▶</span>
+                <span>Review recordings</span> <FiPlay aria-hidden />
               </button>
               <button onClick={runExportCsv} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
-                <span>{exporting === "csv" ? "Exporting…" : "Proctor Activity Log (CSV)"}</span> <span>↓</span>
+                <span>{exporting === "csv" ? "Exporting…" : "Proctor Activity Log (CSV)"}</span> <FiDownload aria-hidden />
               </button>
             </div>
           </div>

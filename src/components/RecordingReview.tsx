@@ -10,6 +10,7 @@
 //     from Cloudflare R2 (examStorage.listStudentArtifacts)
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FiDownload } from "react-icons/fi";
 import { listStudentArtifacts, getArtifactObjectUrl } from "../lib/examStorage";
 import type { ViolationEvent } from "../lib/examApi";
 
@@ -308,7 +309,7 @@ export default function RecordingReviewer({
                 rel="noreferrer"
                 className="border border-forest bg-forest/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-forest/10"
               >
-                ↓ Open PDF report
+                <FiDownload aria-hidden /> Open PDF report
               </a>
             )}
           </div>

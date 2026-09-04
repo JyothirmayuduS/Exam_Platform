@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
+import { FiDownload, FiChevronRight } from "react-icons/fi";
 import { getExamRoster, bulkEnrollStudents, removeStudentFromExam, getStudentsByBranchAndSection, bulkImportGlobalStudents, type Student as DBStudent } from "../lib/examApi";
 
 type Exam = { id: string; name: string; batch: string; state: string; tone: string };
@@ -117,11 +118,11 @@ function StuHeader({ batch, exams, onBatch, counts, onExams, onExport }: { batch
         </label>
         
         <div className="ml-auto flex items-center gap-3">
-          <button onClick={onExport} className="border border-line-strong px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-forest">
-            Export CSV ↓
+          <button onClick={onExport} className="inline-flex items-center gap-2 border border-line-strong px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-forest">
+            Export CSV <FiDownload aria-hidden />
           </button>
-          <button onClick={onExams} className="border border-line-strong px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-forest">
-            Manage exams →
+          <button onClick={onExams} className="inline-flex items-center gap-2 border border-line-strong px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-forest">
+            Manage exams <FiChevronRight aria-hidden />
           </button>
         </div>
       </div>
@@ -334,7 +335,7 @@ function BulkGlobalPanel({ notify }: { notify: (m: string) => void; }) {
             <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Step 1 — Template</p>
             <p className="mt-2 text-[13px] text-ink-soft">Columns: <span className="font-mono text-[12px] text-ink">roll_no, full_name, email, branch, section, phone</span></p>
           </div>
-          <button onClick={downloadTemplate} className="mt-5 w-full border border-line-strong bg-paper py-3 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">↓ Download CSV template</button>
+          <button onClick={downloadTemplate} className="mt-5 inline-flex w-full items-center justify-center gap-2 border border-line-strong bg-paper py-3 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest"><FiDownload aria-hidden /> Download CSV template</button>
         </div>
         <label className="flex cursor-pointer flex-col items-center justify-center gap-2 border-2 border-dashed border-line-strong bg-paper-raised px-6 py-10 text-center hover:border-forest">
           <span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Step 2 — Upload</span>

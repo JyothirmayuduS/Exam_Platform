@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FiCheck } from "react-icons/fi";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { loadExamBundle, updateAttemptScore, listAttemptViolations, getAttemptExamId, saveViolation, addGradingComment, listGradingComments, listFaculty, assignGradingDelegates, type ViolationEvent, type GradingComment } from "../lib/examApi";
@@ -699,7 +700,7 @@ function McqAnswer({ q }: { q: Question }) {
           <div key={i} className={`flex items-center gap-3 border px-3 py-2.5 text-[13px] ${tone}`}>
             <span className={`flex h-5 w-5 shrink-0 items-center justify-center border font-mono text-[10px] ${markTone}`}>{String.fromCharCode(65 + i)}</span>
             <span className="flex-1">{opt}</span>
-            {isCorrect && <span className="font-mono text-[9px] uppercase tracking-wider text-success">{chosen ? "Student ✓" : "Correct"}</span>}
+            {isCorrect && <span className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-wider text-success">{chosen ? <><FiCheck /> Student</> : <><FiCheck /> Correct</>}</span>}
             {chosen && !isCorrect && <span className="font-mono text-[9px] uppercase tracking-wider text-alert">Student's answer</span>}
           </div>
         );
@@ -722,7 +723,7 @@ function MsqAnswer({ q }: { q: Question }) {
         const markTone = isCorrect ? "border-success text-success" : isChosen ? "border-alert text-alert" : "border-line-strong text-ink-soft";
         return (
           <div key={i} className={`flex items-center gap-3 border px-3 py-2.5 text-[13px] ${tone}`}>
-            <span className={`flex h-5 w-5 shrink-0 items-center justify-center border font-mono text-[10px] ${markTone}`}>{isChosen ? "✓" : String.fromCharCode(65 + i)}</span>
+            <span className={`flex h-5 w-5 shrink-0 items-center justify-center border font-mono text-[10px] ${markTone}`}>{isChosen ? <FiCheck /> : String.fromCharCode(65 + i)}</span>
             <span className="flex-1">{opt}</span>
             {isCorrect && isChosen && <span className="font-mono text-[9px] uppercase tracking-wider text-success">Student ✓</span>}
             {isCorrect && !isChosen && <span className="font-mono text-[9px] uppercase tracking-wider text-amber">Missed</span>}
@@ -939,7 +940,7 @@ function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manu
         <Row label="Manual review (subjective + coding)" value={`${manualTotal}`} />
         <Row label="Manual answers scored" value={`${gradedManual} / ${manualCount}`} />
       </div>
-      <div className={`mt-3 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${done ? "border-success/40 bg-success/5 text-success" : "border-amber/40 bg-amber/5 text-amber"}`}>{done ? "✓ Ready to record" : `${manualCount - gradedManual} answer(s) still need a score`}</div>
+      <div className={`mt-3 flex items-center gap-1.5 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${done ? "border-success/40 bg-success/5 text-success" : "border-amber/40 bg-amber/5 text-amber"}`}>{done ? <><FiCheck /> Ready to record</> : `${manualCount - gradedManual} answer(s) still need a score`}</div>
       <div className="mt-4 grid gap-2">
         {hasNext && <button onClick={onFinishNext} className="border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save &amp; next → {nextName}</button>}
         <button onClick={onFinish} className="border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5">{hasNext ? "Save & close" : "Save & finish"}</button>

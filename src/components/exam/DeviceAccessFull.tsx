@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { FiCheck, FiAlertTriangle, FiAlertOctagon, FiLock, FiArrowRight } from "react-icons/fi";
 import { useAudioTest, AudioBars, runDeviceDetection, useScreenShareTest, type DeviceRisk } from "../../lib/proctorUtils";
 import type { RefObject } from "react";
 
@@ -77,7 +78,7 @@ export default function DeviceAccessFull({
               <div className="border border-alert/40 bg-alert/5 p-3 text-[12px]">
                 <p className="font-mono text-[10px] uppercase tracking-wider text-alert mb-1">How to fix permission errors</p>
                 <ol className="list-decimal pl-4 space-y-0.5 text-ink-soft">
-                  <li>Click the 🔒 lock icon in your browser address bar</li>
+                  <li>Click the <FiLock className="inline" aria-hidden /> lock icon in your browser address bar</li>
                   <li>Set Camera and Microphone to "Allow"</li>
                   <li>Reload the page and click Grant again</li>
                 </ol>
@@ -175,7 +176,7 @@ export default function DeviceAccessFull({
               <div key={r.label} className={`flex items-center justify-between border px-3 py-2 text-[12px] ${r.detected ? (r.severity === "block" ? "border-alert/40 bg-alert/5" : r.severity === "warn" ? "border-amber/40 bg-amber/5" : "border-line") : "border-line"}`}>
                 <span className="text-ink">{r.label}</span>
                 <span className={`font-mono text-[10px] uppercase tracking-wider ${r.detected ? (r.severity === "block" ? "text-alert" : r.severity === "warn" ? "text-amber" : "text-ink-soft") : "text-success"}`}>
-                  {r.detected ? (r.severity === "block" ? "⛔ Blocked" : "⚠ Warning") : "✓ Clear"}
+                  {r.detected ? (r.severity === "block" ? <><FiAlertOctagon className="inline" aria-hidden /> Blocked</> : <><FiAlertTriangle className="inline" aria-hidden /> Warning</>) : <><FiCheck className="inline" aria-hidden /> Clear</>}
                 </span>
               </div>
             ))}
@@ -199,7 +200,7 @@ export default function DeviceAccessFull({
           title={!devicesReady ? "Grant all permissions first" : blockers.length > 0 ? "Resolve security issues first" : undefined}
           className="w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {!devicesReady ? "Grant permissions to continue" : blockers.length > 0 ? "Resolve issues to continue" : "Continue →"}
+          {!devicesReady ? "Grant permissions to continue" : blockers.length > 0 ? "Resolve issues to continue" : <><span>Continue</span><FiArrowRight aria-hidden /></>}
         </button>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { FiDownload } from "react-icons/fi";
 import Seal from "../Seal";
 
 export type CheckResult = { label: string; ok: boolean; detail: string };
@@ -31,7 +32,7 @@ export function DownloadGateScreen({
         <div className="border border-line bg-paper-raised p-5">
           <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Detected OS: {os}</p>
           {installer === "checking" && <div className="mt-4 border border-line py-3 text-center font-mono text-[12px] uppercase tracking-widest text-ink-soft">Locating installer…</div>}
-          {installer === "ready" && <a href={href} download={downloadFilename} className="mt-4 block w-full border border-maroon bg-maroon py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper">↓ Download</a>}
+          {installer === "ready" && <a href={href} download={downloadFilename} className="mt-4 flex w-full items-center justify-center gap-2 border border-maroon bg-maroon py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper"><FiDownload aria-hidden /> Download</a>}
           {installer === "release" && <a href={href} target="_blank" rel="noreferrer" className="mt-4 block w-full border border-maroon bg-maroon py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper">Open download page →</a>}
           {installer === "missing" && <p className="mt-4 text-[12px] text-ink-soft">Installer unavailable for this OS.</p>}
         </div>
@@ -83,7 +84,7 @@ export function InstalledScreen({
                 ⚡ Continue in browser (Demo / Bypass mode) →
               </button>
             )}
-            <a href={downloadHref} download={downloadFilename} className="block w-full border border-line-strong py-3 text-center font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-paper-raised">↓ Download again</a>
+            <a href={downloadHref} download={downloadFilename} className="flex w-full items-center justify-center gap-2 border border-line-strong py-3 text-center font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-paper-raised"><FiDownload aria-hidden /> Download again</a>
           </div>
         ) : (
           <div className="mt-5 font-mono text-[11px] text-ink-soft">Launching Vignan Exam Browser…</div>

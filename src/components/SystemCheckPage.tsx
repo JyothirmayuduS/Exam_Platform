@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FiCheck, FiAlertTriangle } from "react-icons/fi";
 import { useParams, useNavigate } from "react-router-dom";
 
 type CheckResult = {
@@ -126,7 +127,7 @@ export default function SystemCheckPage() {
         {results.map((check) => (
           <div key={check.key} className="border border-line p-3">
             <p className={`font-mono text-[11px] uppercase tracking-wider ${check.ok ? "text-success" : "text-alert"}`}>
-              {check.ok ? "✓" : "⚠"} {check.label}
+              {check.ok ? <FiCheck className="inline text-success" aria-hidden /> : <FiAlertTriangle className="inline text-alert" aria-hidden />} {check.label}
             </p>
             <p className="mt-1 text-[12px] text-ink-soft">{check.detail}</p>
             {!check.ok && <p className="mt-1 text-[12px] text-alert">Fix: {check.fix}</p>}

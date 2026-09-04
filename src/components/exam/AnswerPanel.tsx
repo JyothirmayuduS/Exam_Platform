@@ -1,3 +1,4 @@
+import { FiCheckCircle, FiAlertCircle } from "react-icons/fi";
 import type { SaveStatus } from "../../hooks/useAutosave";
 
 type AnswerPanelProps = {
@@ -37,7 +38,7 @@ export default function AnswerPanel({
     <aside className="space-y-3 border border-line bg-paper-raised p-4">
       <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Answer panel</p>
       <p className="text-[13px]"><span className="font-medium">Status:</span> {answerStatus}</p>
-      <p className={`font-mono text-[11px] ${saveTone(saveStatus)}`}>✅ {saveText(saveStatus)}{lastSavedAt ? ` · ${lastSavedAt}` : ""}</p>
+      <p className={`flex items-center gap-1.5 font-mono text-[11px] ${saveTone(saveStatus)}`}>{saveStatus === "saved" ? <FiCheckCircle aria-hidden /> : <FiAlertCircle aria-hidden />} {saveText(saveStatus)}{lastSavedAt ? ` · ${lastSavedAt}` : ""}</p>
       <p className="font-mono text-[11px] text-ink-soft">{draftedCount} answers drafted</p>
       <div className="border border-line bg-paper px-3 py-2 font-mono text-[13px]">
         Time remaining: {timeString}
