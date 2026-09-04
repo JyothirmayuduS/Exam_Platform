@@ -1,21 +1,4 @@
 // Supabase Edge Function: mint short-lived LiveKit access tokens.
-//
-// Runtime: Deno (Supabase Edge Functions). Deploy WITH JWT verification so only
-// authenticated users can request a token:
-//   supabase functions deploy livekit-token
-// Set secrets (NEVER in the frontend):
-//   supabase secrets set LIVEKIT_API_KEY=... LIVEKIT_API_SECRET=... LIVEKIT_URL=wss://...
-//   supabase secrets set ALLOWED_ORIGIN=https://your-app-origin   # optional CORS lock
-//
-// Security model:
-//   • The caller MUST present a valid Supabase auth JWT (Authorization: Bearer).
-//     We verify it against the project and reject anonymous callers — otherwise
-//     anyone could mint a token and subscribe to another student's camera feed.
-//   • A student's LiveKit identity is derived from their authenticated user id;
-//     they cannot impersonate someone else.
-//   • canSubscribe (watch other participants) is only granted to teacher/proctor
-//     roles, never to a student publishing their own feed.
-
 import { AccessToken } from "https://esm.sh/livekit-server-sdk@2.7.2";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -39,7 +22,6 @@ Deno.serve(async (req: Request) => {
   if (!apiKey || !apiSecret) return json({ error: "LiveKit secrets not configured" }, 500);
   if (!supabaseUrl || !anonKey) return json({ error: "Supabase env not configured" }, 500);
 
-  // ── Authenticate the caller ────────────────────────────────────────────────
   const authHeader = req.headers.get("Authorization") ?? "";
   const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!jwt) return json({ error: "missing bearer token" }, 401);
@@ -52,32 +34,62 @@ Deno.serve(async (req: Request) => {
   if (authError || !user) return json({ error: "unauthorized" }, 401);
 
   let body: Record<string, unknown> = {};
-  try { body = await req.json(); } catch { /* empty body */ }
+  try { body = await req.json(); } catch { /* empty */ }
 
   const room = String(body.room ?? "").trim();
   if (!room) return json({ error: "room is required" }, 400);
 
-  // Role decides subscribe rights. A proctor/teacher (from app_metadata.role)
-  // may subscribe to watch feeds; everyone else can only publish their own.
-  const role = String((user.app_metadata as Record<string, unknown> | undefined)?.role ?? "student");
-  const isProctor = role === "proctor" || role === "teacher" || role === "admin";
-  const canPublish = !isProctor;   // students publish their camera/mic
-  const canSubscribe = isProctor;  // only proctors watch others
+  // Role resolution order:
+  //   1. app_metadata.role (set directly on auth.users)
+  //   2. teachers table by auth_id
+  //   3. teachers table by email (fallback for unlinked accounts)
+  //   4. Email pattern heuristic (catches demo accounts not yet in teachers table)
+  //   5. Default to "student"
+  let role = String((user.app_metadata as Record<string, unknown> | undefined)?.role ?? "");
 
-  // For students, derive identity from their roll number so the teacher dashboard
-  // can map feeds by roll. We look it up server-side (never trust the client).
+  if (!role) {
+    const { data: teacherRow } = await supabase
+      .from("teachers")
+      .select("role")
+      .eq("auth_id", user.id)
+      .maybeSingle();
+    if (teacherRow?.role) role = String(teacherRow.role);
+  }
+
+  if (!role && user.email) {
+    const { data: teacherByEmail } = await supabase
+      .from("teachers")
+      .select("role")
+      .eq("email", user.email.toLowerCase())
+      .maybeSingle();
+    if (teacherByEmail?.role) role = String(teacherByEmail.role);
+  }
+
+  if (!role && user.email) {
+    const email = user.email.toLowerCase();
+    if (email.includes("teacher") || email.includes("faculty") || email.includes("proctor") || email.includes("admin")) {
+      role = "teacher";
+    }
+  }
+
+  if (!role) role = "student";
+
+  const isProctor = role === "proctor" || role === "teacher" || role === "admin";
+  const canPublish = !isProctor;
+  const canSubscribe = isProctor;
+
+  console.log("[livekit-token] role:", { email: user.email, role, isProctor, canPublish, canSubscribe });
+
   let identity: string;
   if (isProctor) {
     identity = `proctor:${user.id}`;
   } else {
-    // Try to find the student's roll number from the students table.
     const { data: studentRow } = await supabase
       .from("students")
       .select("roll")
       .eq("auth_id", user.id)
       .maybeSingle();
     const roll = studentRow?.roll as string | undefined;
-    // Fall back to auth UUID if no row found (shouldn't happen in production).
     identity = roll ? `student:${roll}` : `student:${user.id}`;
   }
 

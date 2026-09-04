@@ -40,7 +40,10 @@ async function fetchViewerToken(
   const { data, error } = await db.functions.invoke("livekit-token", {
     body: { room, canSubscribe: true, canPublish: false },
   });
-  if (error || !data?.token) return null;
+  if (error || !data?.token) {
+    console.error("[proctor-viewer] Edge Function error:", error, "| data:", data);
+    return null;
+  }
   return {
     token: data.token as string,
     url: (data.url as string) || env.livekitUrl,
@@ -59,11 +62,18 @@ export async function startProctorViewing(opts: {
   onState?: (s: ViewerState) => void;
   onFeeds?: (feeds: RemoteFeed[]) => void;
 }): Promise<ViewerHandle | null> {
-  if (!livekitConfigured) { console.warn("[proctor-viewer] livekitConfigured=false -- set VITE_LIVEKIT_URL"); return null; }
+  console.warn("[proctor-viewer] ▶ START — livekitConfigured:", livekitConfigured, "| supabaseUrl:", env.supabaseUrl ? "✅ SET" : "❌ MISSING", "| room:", opts.room);
+  if (!livekitConfigured) {
+    console.error("[proctor-viewer] ❌ ABORT: livekitConfigured=false — VITE_LIVEKIT_URL is missing on Vercel");
+    return null;
+  }
   console.debug("[proctor-viewer] fetching token for room:", opts.room);
   const creds = await fetchViewerToken(opts.room);
-  if (!creds) { console.error("[proctor-viewer] token fetch returned null"); return null; }
-  console.debug("[proctor-viewer] token received, identity:", creds.identity, "url:", creds.url);
+  if (!creds) {
+    console.error("[proctor-viewer] ❌ ABORT: token fetch returned null — Edge Function call failed or returned no token");
+    return null;
+  }
+  console.warn("[proctor-viewer] ✅ token received — identity:", creds.identity, "url:", creds.url, "| token starts with:", creds.token.slice(0, 30) + "...");
 
   const room = new Room({ adaptiveStream: true, dynacast: true });
   const feeds = new Map<string, RemoteFeed>();
@@ -119,12 +129,13 @@ export async function startProctorViewing(opts: {
   });
 
   try {
+    console.warn("[proctor-viewer] Attempting room.connect() to", creds.url, "...");
     await room.connect(creds.url, creds.token);
-    console.debug("[proctor-viewer] connected to room:", opts.room);
+    console.warn("[proctor-viewer] ✅ room.connect() succeeded! room:", opts.room);
     opts.onState?.("connected");
   } catch (err) {
     void room.disconnect();
-    console.warn("[proctor-viewer] connect failed:", err);
+    console.error("[proctor-viewer] ❌ room.connect() FAILED:", err);
     return null;
   }
 

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { startProctorPublishing, type ProctorHandle, type ProctorState } from "../lib/proctor";
 import { env } from "../lib/env";
-import { startFrameCapture, type FrameCaptureHandle } from "../lib/storage";
 import { startVideoRecording, type RecorderHandle } from "../lib/recorder";
 
 export default function ProctorCamera({
@@ -27,7 +26,6 @@ export default function ProctorCamera({
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const handleRef = useRef<ProctorHandle | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const captureRef = useRef<FrameCaptureHandle | null>(null);
   const cameraRecordRef = useRef<RecorderHandle | null>(null);
   const screenRecordRef = useRef<RecorderHandle | null>(null);
 
@@ -127,12 +125,10 @@ export default function ProctorCamera({
       cancelled = true;
       handleRef.current?.stop();
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
-      captureRef.current?.stop();
       cameraRecordRef.current?.stop();
       screenRecordRef.current?.stop();
       // Null out refs so GC can collect the streams immediately.
       localStreamRef.current = null;
-      captureRef.current = null;
       cameraRecordRef.current = null;
       screenRecordRef.current = null;
     };
@@ -161,15 +157,11 @@ export default function ProctorCamera({
     let starting = false;
 
     const start = () => {
-      if (starting || captureRef.current) return;
+      if (starting) return;
       starting = true; // lock immediately — synchronous, so safe before any await
 
-      try {
-        captureRef.current = startFrameCapture({ video, examId, studentId, intervalMs: 1000 });
-        console.debug("[ProctorCamera] frame capture started", { examId, studentId });
-      } catch (err) {
-        console.error("[ProctorCamera] frame capture failed to start", err);
-      }
+      // NOTE: Per-second screenshot capture is disabled (no flooding R2 with JPEGs).
+      // Only continuous video recording (camera + screen) is kept — goes to Cloudflare R2.
 
       // Camera recording — guarded independently so a screen-share failure
       // doesn't prevent camera recording from starting.
@@ -204,7 +196,6 @@ export default function ProctorCamera({
       // If the component unmounted while we were in start(), tear everything
       // down immediately so streams aren't orphaned.
       if (unmounted) {
-        captureRef.current?.stop(); captureRef.current = null;
         cameraRecordRef.current?.stop(); cameraRecordRef.current = null;
         screenRecordRef.current?.stop(); screenRecordRef.current = null;
         console.debug("[ProctorCamera] unmounted during start — streams released");
@@ -219,10 +210,8 @@ export default function ProctorCamera({
     return () => {
       unmounted = true;
       video.removeEventListener("playing", start);
-      captureRef.current?.stop();
       cameraRecordRef.current?.stop();
       screenRecordRef.current?.stop();
-      captureRef.current = null;
       cameraRecordRef.current = null;
       screenRecordRef.current = null;
       console.debug("[ProctorCamera] recording cleanup — streams released", { examId, studentId });

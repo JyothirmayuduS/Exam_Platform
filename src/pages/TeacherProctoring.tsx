@@ -39,6 +39,13 @@ export default function TeacherProctoring() {
   const [filter, setFilter] = useState("All candidates");
   const [screenMode, setScreenMode] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  // Video wall: per-tile source. "camera" shows webcam, "screen" shows the
+  // candidate's shared screen (which is also the recorded exam view). Defaults
+  // to camera and persists per session via sessionStorage.
+  const [wallSource, setWallSource] = useState<"camera" | "screen">(() => {
+    if (typeof window === "undefined") return "camera";
+    return (sessionStorage.getItem("proctor-wall-source") as "camera" | "screen") ?? "camera";
+  });
 
   // Load available exams for switcher
   useEffect(() => {
@@ -181,7 +188,7 @@ export default function TeacherProctoring() {
       </div>
     )}
     <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat (2)</button></div><div className="flex items-center gap-3"><span className={`font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}>● {live ? `${feedCount} feed(s) · DB live` : "Demo mode"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
-    {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChat />}
+    {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChat />}
     <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
       <section className="border border-line bg-paper p-5 sm:p-6">
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Selected candidate</p>
@@ -298,7 +305,114 @@ export default function TeacherProctoring() {
   </RoleLayout>;
 }
 
-function VideoWall({ visible, selected, onSelect, feedFor }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void; feedFor: FeedLookup }) { return <section className="mt-6 border border-line bg-paper p-5 sm:p-6"><div className="flex items-center justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">All student video feeds</p><h2 className="mt-1 font-serif text-xl font-semibold">Live camera wall</h2></div><span className="font-mono text-[10px] text-ink-soft">Flagged feeds appear first</span></div><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">{visible.map((student, index) => <button key={student.roll} onClick={() => onSelect(student)} className={`overflow-hidden border text-left ${student.violation ? "border-alert ring-1 ring-alert" : selected?.roll === student.roll ? "border-forest ring-1 ring-forest" : "border-line hover:border-line-strong"}`}><div className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#D9D5CB]"><FeedView feed={feedFor(student)} initials={student.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}/><span className={`absolute right-2 top-2 z-10 h-2 w-2 rounded-full ${student.violation ? "bg-alert" : "bg-success"}`}/><span className="absolute left-2 top-2 z-10 bg-ink/75 px-1.5 py-0.5 font-mono text-[8px] text-paper">{index === 0 && student.violation ? "REVIEW FIRST" : "REC"}</span><span className="absolute bottom-0 left-0 right-0 z-10 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">{student.status} · {student.progress}%</span></div><div className="p-2"><p className="truncate text-[11px] font-medium">{student.name}</p><p className={`truncate font-mono text-[9px] ${student.violation ? "text-alert" : "text-ink-soft"}`}>{student.violation || "No violations"}</p></div></button>)}{visible.length === 0 && <div className="col-span-full border border-dashed border-line-strong p-10 text-center font-mono text-[11px] text-ink-soft">Waiting for candidates to begin…</div>}</div></section>; }
+function VideoWall({ visible, selected, onSelect, feedFor, source, onSourceChange }: {
+  visible: Student[];
+  selected: Student | null;
+  onSelect: (student: Student) => void;
+  feedFor: FeedLookup;
+  source: "camera" | "screen";
+  onSourceChange: (s: "camera" | "screen") => void;
+}) {
+  const showScreen = source === "screen";
+  const initials = (name: string) => name.split(" ").map((x) => x[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+
+  return (
+    <section className="mt-6 border border-line bg-paper p-5 sm:p-6">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">All student video feeds</p>
+          <h2 className="mt-1 font-serif text-xl font-semibold">
+            {showScreen ? "Live screen wall" : "Live camera wall"}
+          </h2>
+        </div>
+
+        {/* Camera / Screen toggle */}
+        <div className="flex items-center gap-2 border border-line-strong bg-paper-raised p-1">
+          <button
+            onClick={() => onSourceChange("camera")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+              !showScreen ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"
+            }`}
+          >
+            📷 Camera
+          </button>
+          <button
+            onClick={() => onSourceChange("screen")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+              showScreen ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"
+            }`}
+          >
+            🖥️ Screen
+          </button>
+        </div>
+      </div>
+
+      <p className="mt-2 font-mono text-[9px] text-ink-soft">
+        {showScreen
+          ? "Showing each candidate's shared screen — this is also the exam view being recorded."
+          : "Showing each candidate's webcam feed. Flagged feeds appear first."}
+      </p>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        {visible.map((student, index) => {
+          const feed = feedFor(student);
+          const hasFeed = showScreen ? !!feed?.screenTrack : !!feed?.cameraTrack;
+          const isSelected = selected?.roll === student.roll;
+          const isViolated = !!student.violation;
+
+          return (
+            <button
+              key={student.roll}
+              onClick={() => onSelect(student)}
+              className={`overflow-hidden border text-left transition-colors ${
+                isViolated
+                  ? "border-alert ring-1 ring-alert"
+                  : isSelected
+                  ? "border-forest ring-1 ring-forest"
+                  : "border-line hover:border-line-strong"
+              }`}
+            >
+              <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#252923]">
+                <span className="absolute left-2 top-2 z-10 bg-ink/75 px-1.5 py-0.5 font-mono text-[7px] uppercase text-paper">
+                  {showScreen ? "🖥️ Screen" : "📷 Camera"}
+                </span>
+
+                {showScreen ? (
+                  <ScreenFeedView feed={feed} />
+                ) : (
+                  <FeedView feed={feed} initials={initials(student.name)} />
+                )}
+
+                <span className={`absolute right-2 top-2 h-2 w-2 rounded-full ${hasFeed ? "bg-success" : "bg-ink-soft"}`} />
+
+                {index === 0 && isViolated && (
+                  <span className="absolute left-2 top-5 z-10 bg-alert px-1.5 py-0.5 font-mono text-[7px] uppercase text-paper">REVIEW FIRST</span>
+                )}
+
+                <span className="absolute bottom-0 left-0 right-0 z-10 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">
+                  {student.status} · {student.progress}%
+                </span>
+              </div>
+
+              <div className="p-2">
+                <p className="truncate text-[11px] font-medium">{student.name}</p>
+                <p className={`truncate font-mono text-[9px] ${isViolated ? "text-alert" : "text-ink-soft"}`}>
+                  {isViolated ? student.violation : hasFeed ? (showScreen ? "Screen active" : "Camera active") : "No feed"}
+                </p>
+              </div>
+            </button>
+          );
+        })}
+
+        {visible.length === 0 && (
+          <div className="col-span-full border border-dashed border-line-strong p-10 text-center font-mono text-[11px] text-ink-soft">
+            Waiting for candidates to begin…
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
 function AudioPlayer({ track }: { track: any }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isMuted, setIsMuted] = useState(true);

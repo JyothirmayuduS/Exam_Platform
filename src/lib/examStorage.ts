@@ -1,4 +1,3 @@
-import { getSupabase } from "./supabase";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const s3Client = new S3Client({
@@ -10,54 +9,39 @@ const s3Client = new S3Client({
   },
 });
 
+/**
+ * Upload the screen recording video to Cloudflare R2 ONLY.
+ *
+ * No PDF is generated, no per-second screenshots are uploaded, and no upload
+ * goes to Supabase Storage. Everything is kept in one place: the R2 bucket
+ * configured via VITE_S3_* env vars.
+ */
 export async function uploadExamRecords(opts: {
   examId: string;
   studentIdentifier: string;
-  pdfBlob: Blob;
   videoBlob: Blob;
 }) {
-  const { examId, studentIdentifier, pdfBlob, videoBlob } = opts;
-  
-  // Format requested: Exam folder / student folder / images pdf and recording video
-  const pdfPath = `${examId}/${studentIdentifier}/images.pdf`;
+  const { examId, studentIdentifier, videoBlob } = opts;
+
+  // Single folder layout in R2: exam / student / recording.webm
   const videoPath = `${examId}/${studentIdentifier}/recording.webm`;
-  
-  const supabase = getSupabase();
-  const bucketName = import.meta.env.VITE_SUPABASE_BUCKET_NAME || "exam-records";
-  
-  // Upload to Supabase Storage
-  if (supabase) {
-    try {
-      await supabase.storage.from(bucketName).upload(pdfPath, pdfBlob, { upsert: true, contentType: "application/pdf" });
-      await supabase.storage.from(bucketName).upload(videoPath, videoBlob, { upsert: true, contentType: "video/webm" });
-      console.log("Uploaded to Supabase successfully.");
-    } catch (err) {
-      console.error("Supabase upload failed:", err);
-    }
+
+  const s3Bucket = import.meta.env.VITE_S3_BUCKET_NAME;
+  if (!s3Bucket || !import.meta.env.VITE_S3_ENDPOINT) {
+    console.warn("[examStorage] VITE_S3_BUCKET_NAME / VITE_S3_ENDPOINT not set — skipping R2 upload");
+    return;
   }
 
-  // Upload to Cloudflare R2 / MinIO via S3 compatible API
-  const s3Bucket = import.meta.env.VITE_S3_BUCKET_NAME;
-  if (s3Bucket && import.meta.env.VITE_S3_ENDPOINT) {
-    try {
-      const pdfCommand = new PutObjectCommand({
-        Bucket: s3Bucket,
-        Key: pdfPath,
-        Body: pdfBlob,
-        ContentType: "application/pdf"
-      });
-      await s3Client.send(pdfCommand);
-
-      const videoCommand = new PutObjectCommand({
-        Bucket: s3Bucket,
-        Key: videoPath,
-        Body: videoBlob,
-        ContentType: "video/webm"
-      });
-      await s3Client.send(videoCommand);
-      console.log("Uploaded to S3/Cloudflare/MinIO successfully.");
-    } catch (err) {
-      console.error("S3 upload failed:", err);
-    }
+  try {
+    const videoCommand = new PutObjectCommand({
+      Bucket: s3Bucket,
+      Key: videoPath,
+      Body: videoBlob,
+      ContentType: "video/webm",
+    });
+    await s3Client.send(videoCommand);
+    console.log(`[examStorage] ✅ Uploaded recording to R2: ${videoPath}`);
+  } catch (err) {
+    console.error("[examStorage] R2 upload failed:", err);
   }
 }

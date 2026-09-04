@@ -28,7 +28,6 @@ import useProctoring from "../hooks/useProctoring";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useOfflineSync from "../hooks/useOfflineSync";
 import { invoke } from "@tauri-apps/api/core";
-import { jsPDF } from "jspdf";
 import { uploadExamRecords } from "../lib/examStorage";
 import {
   DownloadGateScreen,
@@ -124,12 +123,9 @@ export default function StudentExam() {
   const [deepLinkTried, setDeepLinkTried] = useState(false);
   const [deepLinkFailed, setDeepLinkFailed] = useState(false);
 
-  // Recording and screenshots state
+  // Recording state (screen recording only — no per-second screenshots, no PDF)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-  const screenshotsRef = useRef<string[]>([]);
-  const screenshotIntervalRef = useRef<number | undefined>(undefined);
-  const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const {
     currentIndex: current,
@@ -282,7 +278,6 @@ export default function StudentExam() {
   useEffect(() => () => {
     accessStreamRef.current?.getTracks().forEach((t) => t.stop());
     screenStreamRef.current?.getTracks().forEach((t) => t.stop());
-    clearInterval(screenshotIntervalRef.current);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
@@ -519,30 +514,12 @@ export default function StudentExam() {
         console.warn("Failed to start MediaRecorder", e);
       }
 
-      if (hiddenVideoRef.current) {
-        hiddenVideoRef.current.srcObject = targetStream;
-        hiddenVideoRef.current.play().catch(() => {});
-      }
-      
-      screenshotIntervalRef.current = window.setInterval(() => {
-        const video = hiddenVideoRef.current;
-        if (!video) return;
-        const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth || 1280;
-        canvas.height = video.videoHeight || 720;
-        const ctx = canvas.getContext("2d");
-        if (ctx && video.videoWidth) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          screenshotsRef.current.push(canvas.toDataURL("image/jpeg", 0.5));
-        }
-      }, 1000);
     }
     
     setStep("exam");
   }
 
   async function doSubmit() {
-    clearInterval(screenshotIntervalRef.current);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
@@ -569,26 +546,17 @@ export default function StudentExam() {
       }
     }
     
-    // Generate PDF and upload
+    // Upload the screen recording to Cloudflare R2 only (no PDF, no screenshots)
     setTimeout(async () => {
       try {
-        const pdf = new jsPDF("landscape");
-        const shots = screenshotsRef.current;
-        for (let i = 0; i < shots.length; i++) {
-          if (i > 0) pdf.addPage();
-          pdf.addImage(shots[i], "JPEG", 10, 10, 277, 190);
-        }
-        const pdfBlob = pdf.output("blob");
         const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
-        
         await uploadExamRecords({
           examId: EXAM_ID,
           studentIdentifier: STUDENT_ROLL,
-          pdfBlob,
           videoBlob,
         });
       } catch (err) {
-        console.error("Failed to upload records:", err);
+        console.error("Failed to upload recording:", err);
       }
     }, 500);
 
@@ -757,7 +725,6 @@ export default function StudentExam() {
   // ---------- Step: exam (kiosk mode) ----------
   return (
     <div className="min-h-screen bg-paper text-ink">
-      <video ref={hiddenVideoRef} style={{ display: "none" }} muted playsInline />
       {activeViolation && (
         <div className="fixed inset-x-0 top-0 z-[60] flex justify-center px-4 py-3">
           <div className="flex w-full max-w-xl items-center gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl">
