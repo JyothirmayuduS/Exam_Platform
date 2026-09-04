@@ -6,6 +6,8 @@
 // no demo data.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { FiArrowLeft, FiArrowRight, FiCheck, FiUpload, FiEdit3, FiEye, FiSettings, FiLink, FiSearch, FiX, FiChevronDown, FiChevronRight, FiClock, FiLock, FiMail } from "react-icons/fi";
+import { Button, Badge } from "../components/ui";
 import {
   listExamsForTeacher,
   listQuestionsForExam,
@@ -188,17 +190,17 @@ export default function ExamStudio({
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-5 border-b border-line pb-6">
         <div>
-          <button onClick={() => navigate(exam.status === "draft" ? `/teacher/exams/${examId}` : `/teacher/exams/${examId}`)} className="font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:text-forest">← Back to test</button>
+          <Button size="sm" variant="ghost" icon={<FiArrowLeft />} onClick={() => navigate(`/teacher/exams/${examId}`)}>Back to test</Button>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <span className="border border-line-strong bg-paper-raised px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-ink-soft">{exam.id}</span>
             <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Test name" className="min-w-0 flex-1 border border-transparent bg-transparent px-1 font-serif text-3xl font-semibold tracking-tight text-ink outline-none transition hover:border-line-strong focus:border-forest sm:min-w-[280px]" />
-            <span className="flex h-8 w-8 items-center justify-center text-ink-soft">✎</span>
+            <span className="flex h-8 w-8 items-center justify-center text-ink-soft" aria-hidden><FiEdit3 /></span>
           </div>
           <p className="mt-1 text-[12px] text-ink-soft">{exam.batch} · {String(s.language ?? "English")} · {String(s.purpose ?? "")} · <span className={exam.status === "draft" ? "text-amber" : "text-success"}>{exam.status}</span></p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => void saveAndExit()} disabled={saving} className={`border px-4 py-3 font-mono text-[10px] uppercase tracking-wider ${saving ? "cursor-not-allowed border-line text-ink-soft" : "border-line-strong text-ink-soft transition hover:border-forest hover:text-forest"}`}>{saving ? "Saving…" : "Save & exit"}</button>
-          <button onClick={() => setShareOpen(true)} className="border border-forest bg-forest px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-paper transition hover:bg-forest-light">Publish &amp; share →</button>
+          <Button size="lg" onClick={() => void saveAndExit()} disabled={saving} icon={<FiCheck />}>{saving ? "Saving…" : "Save & exit"}</Button>
+          <Button size="lg" variant="primary" onClick={() => setShareOpen(true)} iconRight={<FiArrowRight />}>Publish &amp; share</Button>
         </div>
       </div>
 
@@ -236,8 +238,8 @@ export default function ExamStudio({
               <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="border border-line-strong bg-paper px-2.5 py-1.5 text-[12px] outline-none focus:border-forest">
                 <option>All</option><option>Easy</option><option>Medium</option><option>Hard</option>
               </select>
-              <button onClick={() => navigate(`/teacher/questions/new?exam=${examId}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)} className="border border-line-strong px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-forest">+ Write new question</button>
-              <button onClick={() => navigate(`/teacher/questions/new?exam=${examId}&bulk=1&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)} className="border border-line-strong px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-forest">↑ Import CSV</button>
+              <Button size="sm" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Write new question</Button>
+              <Button size="sm" variant="secondary" icon={<FiUpload />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&bulk=1&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Import CSV</Button>
             </div>
           </div>
           <div className="flex flex-wrap items-end gap-3">
@@ -245,9 +247,9 @@ export default function ExamStudio({
               <span className="font-medium text-ink">Test duration (min)</span>
               <input type="number" min={1} max={600} step={5} value={duration} onChange={(e) => setDuration(Math.max(1, Math.min(600, Number(e.target.value) || 1)))} className={`mt-1 block w-28 ${inputCls}`} />
             </label>
-            <button onClick={() => setPreviewOpen(true)} className="border border-line-strong px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-ink">Preview</button>
+            <Button size="sm" variant="secondary" icon={<FiEye />} onClick={() => setPreviewOpen(true)}>Preview</Button>
             <div className="relative">
-              <button onClick={() => setMenuOpen((o) => !o)} className="border border-line-strong px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-ink">Advance options ▾</button>
+              <Button size="sm" variant="secondary" icon={<FiSettings />} iconRight={<FiChevronDown />} onClick={() => setMenuOpen((o) => !o)}>Advance options</Button>
               {menuOpen && (
                 <>
                   <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
@@ -259,7 +261,7 @@ export default function ExamStudio({
                     ] as const).map(([key, label, detail]) => (
                       <button key={key} onClick={() => { setMenuOpen(false); setDialog(key); }} className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-paper-raised">
                         <span><span className="block text-[13px] font-medium">{label}</span><span className="mt-0.5 block text-[11px] leading-snug text-ink-soft">{detail}</span></span>
-                        <span className="text-ink-soft">›</span>
+                        <FiChevronRight className="shrink-0 text-ink-soft" aria-hidden />
                       </button>
                     ))}
                   </div>
@@ -311,9 +313,9 @@ export default function ExamStudio({
                 <td className="px-4 py-3 font-mono text-[10px] text-ink-soft">{q.type}</td>
                 <td className="px-4 py-3 text-right">{q.marks || 1}</td>
                 <td className="px-4 py-3 text-right">
-                  <div className="flex items-center justify-end gap-3 opacity-0 transition group-hover:opacity-100">
-                    <button onClick={() => navigate(`/teacher/questions/new?exam=${examId}&edit=${q.id}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)} className="font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Edit</button>
-                    <button onClick={() => removeFromPool(q.id)} aria-label={`Remove ${q.id}`} className="text-ink-soft transition hover:text-alert">×</button>
+                  <div className="flex items-center justify-end gap-2 opacity-0 transition group-hover:opacity-100">
+                    <Button size="sm" variant="ghost" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&edit=${q.id}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Edit</Button>
+                    <Button size="sm" variant="ghost" aria-label={`Remove ${q.id}`} className="text-alert hover:bg-alert/10" onClick={() => removeFromPool(q.id)} icon={<FiX />}>Remove</Button>
                   </div>
                 </td>
               </tr>
@@ -373,7 +375,7 @@ export default function ExamStudio({
         <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-ink/50 p-4 backdrop-blur-sm sm:items-center">
           <div className="w-full max-w-xl border border-line-strong bg-paper shadow-2xl">
             <div className={`px-8 py-10 text-center ${result.status === "draft" ? "" : "bg-success/5"}`}>
-              <span className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full font-serif text-2xl text-paper ${result.status === "scheduled" ? "bg-amber" : "bg-success"}`}>{result.status === "scheduled" ? "◷" : "✓"}</span>
+              <span className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full text-paper ${result.status === "scheduled" ? "bg-amber" : "bg-success"}`}>{result.status === "scheduled" ? <FiClock size={24} /> : <FiCheck size={24} />}</span>
               <h2 className="mt-4 font-serif text-3xl font-semibold">{result.status === "scheduled" ? "Test scheduled" : result.status === "draft" ? "Draft saved" : "Test published"}</h2>
               <p className="mt-2 text-[13px] text-ink-soft">{result.status === "scheduled" ? `${name} opens on ${result.when}.` : result.status === "draft" ? `Draft of ${name} saved.` : `${name} is live now for ${exam.batch}.`}</p>
             </div>
@@ -646,7 +648,7 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
             <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{pool}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Questions</p></div>
             <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{perStudent}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Per student</p></div>
             <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{totalMarks}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Marks</p></div>
-            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{s.mode === "lockdown" ? "🔒" : "✎"}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">{s.mode}</p></div>
+            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{s.mode === "lockdown" ? <FiLock /> : <FiEdit3 />}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">{s.mode}</p></div>
           </div>
 
           <p className="mt-5 font-mono text-[10px] uppercase tracking-widest text-forest">Who will take this test?</p>
@@ -708,7 +710,7 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="border border-line-strong px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-ink">Cancel</button>
-            <button onClick={() => void publish("published", null)} disabled={!ready || busy} className={`border px-6 py-3 font-mono text-[10px] uppercase tracking-wider ${ready && !busy ? "border-forest bg-forest text-paper hover:bg-forest-light" : "cursor-not-allowed border-line-strong bg-line/30 text-ink-soft"}`}>{busy ? "Publishing…" : notifyStudents && emails.length > 0 ? `● Publish & email ${emails.length}` : "● Publish now"}</button>
+            <button onClick={() => void publish("published", null)} disabled={!ready || busy} className={`inline-flex items-center justify-center gap-2 border px-6 py-3 font-mono text-[10px] uppercase tracking-wider ${ready && !busy ? "border-forest bg-forest text-paper hover:bg-forest-light" : "cursor-not-allowed border-line-strong bg-line/30 text-ink-soft"}`}>{busy ? "Publishing…" : notifyStudents && emails.length > 0 ? <><FiMail /> Publish &amp; email {emails.length}</> : <><FiCheck /> Publish now</>}</button>
           </div>
         </div>
       </div>

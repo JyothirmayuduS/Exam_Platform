@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { FiCamera } from "react-icons/fi";
 import { useParams, useSearchParams } from "react-router-dom";
 import ImageCropper from "../components/ImageCropper";
 import { getSupabase } from "../lib/supabase";
@@ -154,7 +155,7 @@ export default function MobileUpload() {
               </p>
               <label className="block w-full cursor-pointer border-2 border-dashed border-line-strong bg-paper-raised py-12 text-center hover:bg-paper">
                 <div className="flex flex-col items-center gap-3">
-                  <span className="text-4xl">📷</span>
+                  <span className="text-4xl text-ink-soft"><FiCamera aria-hidden /></span>
                   <span className="font-mono text-[11px] uppercase tracking-wider text-ink">Take Photo / Choose from Gallery</span>
                   <span className="font-mono text-[9px] text-ink-soft">JPEG, PNG up to 20 MB</span>
                 </div>

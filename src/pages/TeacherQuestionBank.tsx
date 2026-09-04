@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listAllQuestions, deleteQuestion, type DBQuestion } from "../lib/examApi";
 import { PageHeading, Button } from "./TeacherDashboard";
+import { PlusIcon, ArrowRightIcon } from "../components/ui";
 
 type BankQuestion = DBQuestion & { exam_name: string | null };
 
@@ -84,7 +85,7 @@ export default function TeacherQuestionBank({
         eyebrow="Faculty console / Questions"
         title="My question bank"
         detail={`${questions.length} question${questions.length === 1 ? "" : "s"} across ${exams.length} exam${exams.length === 1 ? "" : "s"} — difficulty mix ${easy}E · ${medium}M · ${hard}H.`}
-        action={<Button primary onClick={() => navigate("/teacher/questions/new")}>+ New question</Button>}
+        action={<Button primary icon={<PlusIcon />} onClick={() => navigate("/teacher/questions/new")}>New question</Button>}
       />
 
       <div className="mt-6 grid gap-3 border border-line bg-paper-raised p-4 md:grid-cols-[minmax(0,1fr)_190px_150px_150px]">
@@ -127,9 +128,9 @@ export default function TeacherQuestionBank({
             {questions.length === 0 && (
               <button
                 onClick={() => navigate("/teacher/questions/new")}
-                className="mt-5 border border-forest bg-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light"
+                className="mt-5 inline-flex items-center gap-2 border border-forest bg-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper shadow-sm hover:bg-forest-light"
               >
-                Write a question →
+                Write a question <ArrowRightIcon />
               </button>
             )}
           </div>

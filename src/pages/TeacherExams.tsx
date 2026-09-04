@@ -6,6 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "../lib/supabase";
 import type { ExamRecord } from "../lib/examApi";
 import { PageHeading, Button } from "./TeacherDashboard";
+import { PlusIcon, ArrowRightIcon } from "../components/ui";
+import { FiGrid, FiList } from "react-icons/fi";
 import CreateTestModal from "../components/teacher/CreateTestModal";
 
 type ExamCard = {
@@ -102,7 +104,7 @@ export default function TeacherExams({
         eyebrow="Faculty console / Exams"
         title="My tests"
         detail="Create exam papers, add questions, set schedules, and publish — every test card below is a live assessment."
-        action={<Button primary onClick={() => setShowCreate(true)}>+ Create new test</Button>}
+        action={<Button primary icon={<PlusIcon />} onClick={() => setShowCreate(true)}>Create new test</Button>}
       />
 
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
@@ -120,8 +122,8 @@ export default function TeacherExams({
           ))}
         </div>
         <div className="flex border border-line bg-paper-raised p-1">
-          <button onClick={() => setView("cards")} className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider ${view === "cards" ? "bg-forest text-paper" : "text-ink-soft"}`}>▦ Cards</button>
-          <button onClick={() => setView("list")} className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider ${view === "list" ? "bg-forest text-paper" : "text-ink-soft"}`}>≡ List</button>
+          <button onClick={() => setView("cards")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${view === "cards" ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}><FiGrid aria-hidden /> Cards</button>
+          <button onClick={() => setView("list")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${view === "list" ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}><FiList aria-hidden /> List</button>
         </div>
       </div>
 
@@ -144,12 +146,15 @@ export default function TeacherExams({
                 <CardStat label="Duration" value={exam.duration ? `${exam.duration}m` : "—"} />
                 <CardStat label="Test takers" value={String(exam.takers)} />
               </div>
-              <button
-                onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
-                className="mt-auto border-t border-line px-5 py-3 text-left font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5"
-              >
-                {exam.state === "Draft" ? "Continue setup →" : "Open test →"}
-              </button>
+              <div className="mt-auto border-t border-line p-3">
+                <Button
+                  onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
+                  iconRight={<ArrowRightIcon />}
+                  className="w-full"
+                >
+                  {exam.state === "Draft" ? "Continue setup" : "Open test"}
+                </Button>
+              </div>
             </div>
           ))}
           {filtered.length === 0 && (
@@ -189,7 +194,7 @@ export default function TeacherExams({
                   <td className="px-5 py-4">{exam.takers}</td>
                   <td className="px-5 py-4"><span className={`font-mono text-[10px] uppercase ${exam.tone}`}>{exam.state}</span></td>
                   <td className="px-5 py-4 text-right">
-                    <button onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)} className="font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">{exam.state === "Draft" ? "Continue setup →" : "Open →"}</button>
+                    <Button size="sm" onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)} iconRight={<ArrowRightIcon />}>{exam.state === "Draft" ? "Continue setup" : "Open"}</Button>
                   </td>
                 </tr>
               ))}

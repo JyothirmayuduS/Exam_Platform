@@ -10,6 +10,7 @@ import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
 import { downloadSessionReportPdf } from "../lib/sessionReport";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import { getTeacherNav } from "./TeacherDashboard";
+import { FiVideo, FiMonitor } from "react-icons/fi";
 
 type Student = {
   name: string;
@@ -638,7 +639,7 @@ function VideoWall({ visible, selected, onSelect, feedFor, source, onSourceChang
               !showScreen ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"
             }`}
           >
-            📷 Camera
+            <FiVideo aria-hidden /> Camera
           </button>
           <button
             onClick={() => onSourceChange("screen")}
@@ -678,7 +679,7 @@ function VideoWall({ visible, selected, onSelect, feedFor, source, onSourceChang
             >
               <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#252923]">
                 <span className="absolute left-2 top-2 z-10 bg-ink/75 px-1.5 py-0.5 font-mono text-[7px] uppercase text-paper">
-                  {showScreen ? "🖥️ Screen" : "📷 Camera"}
+                  {showScreen ? <><FiMonitor aria-hidden /> Screen</> : <><FiVideo aria-hidden /> Camera</>}
                 </span>
 
                 {showScreen ? (

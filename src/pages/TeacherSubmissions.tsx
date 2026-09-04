@@ -4,6 +4,8 @@ import { LIVE_EXAM, SESSION_MINUTES, evaluationPath, needsAttention, type Attemp
 import useLiveAttempts from "../hooks/useLiveAttempts";
 import { listLiveAttempts, forceSubmitAttempt, extendAttemptTime, sendProctorMessage } from "../lib/examApi";
 import { downloadCsv } from "../lib/sessionReport";
+import { FiUpload, FiSend, FiEye, FiClock, FiMessageSquare, FiAlertTriangle, FiChevronRight } from "react-icons/fi";
+import { Button } from "../components/ui";
 import { getSupabase } from "../lib/supabase";
 
 type StatusTab = "All" | AttemptState | "Needs attention";
@@ -142,8 +144,8 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
         <p className="mt-2 max-w-2xl text-[13px] text-ink-soft">This page follows the attempt itself — progress, time used, connection, and integrity. Answer papers are graded from <button onClick={() => navigate("/teacher/evaluate")} className="text-forest underline">Evaluate</button>.</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <button onClick={broadcast} className="border border-line-strong bg-paper px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Send announcement</button>
-        <button onClick={exportRosterCsv} className="border border-forest bg-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Export roster</button>
+        <Button variant="secondary" icon={<FiSend />} onClick={broadcast}>Send announcement</Button>
+        <Button icon={<FiUpload />} onClick={exportRosterCsv}>Export roster</Button>
       </div>
     </div>
     {liveScope && <section className="mt-8 border border-alert/30 bg-alert/5 p-5">
@@ -158,8 +160,8 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
             <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Time left</p>
             <p className="tabular font-mono text-[15px] text-alert">● {hms(remaining)}</p>
           </div>
-          <button onClick={() => void extendAll()} className="border border-line-strong bg-paper px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">+5 min for all</button>
-          <button onClick={() => void forceSubmitAll()} className="border border-alert px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/10">Force submit remaining</button>
+          <Button variant="secondary" size="sm" icon={<FiClock />} onClick={() => void extendAll()}>+5 min for all</Button>
+          <Button variant="danger" size="sm" icon={<FiAlertTriangle />} onClick={() => void forceSubmitAll()}>Force submit remaining</Button>
         </div>
       </div>
     </section>}
@@ -205,10 +207,10 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
                 <td className="px-5 py-4"><p className={`font-mono text-[10px] uppercase tracking-wider ${stateTone(a.state)}`}>{a.state === "In progress" && "● "}{a.state}</p><p className="mt-0.5 text-[11px] text-ink-soft">{a.state === "Submitted" ? a.submittedAgo : a.lastActivity}</p></td>
                 <td className="px-5 py-4 text-right">
                   {a.state === "Submitted"
-                    ? <button onClick={(e) => { e.stopPropagation(); openEvaluation(a); }} className="whitespace-nowrap font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Evaluate →</button>
+                    ? <Button size="sm" onClick={(e) => { e.stopPropagation(); openEvaluation(a); }} iconRight={<FiChevronRight />}>Evaluate</Button>
                     : a.state === "In progress"
-                      ? <button onClick={(e) => { e.stopPropagation(); watchLive(a); }} className="whitespace-nowrap font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink hover:underline">Watch live →</button>
-                      : <button onClick={(e) => { e.stopPropagation(); void remind(a.email); }} className="whitespace-nowrap font-mono text-[10px] uppercase tracking-wider text-amber hover:underline">Remind</button>}
+                      ? <Button size="sm" variant="secondary" icon={<FiEye />} onClick={(e) => { e.stopPropagation(); watchLive(a); }}>Watch live</Button>
+                      : <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); void remind(a.email); }}>Remind</Button>}
                 </td>
               </tr>)}
             </tbody>
@@ -239,11 +241,11 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
           </ul>}
           <div className="mt-5 grid gap-2">
             {selected.state === "Submitted"
-              ? <button onClick={() => openEvaluation(selected)} className="border border-forest bg-forest px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Open in evaluation →</button>
-              : <button disabled className="cursor-not-allowed border border-line-strong bg-line/30 px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft">Evaluation opens after submit</button>}
-            {selected.state !== "Not started" && <button onClick={() => watchLive(selected)} className="border border-line-strong px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Watch proctoring feed</button>}
-            {selected.state === "In progress" && <button onClick={() => void grantExtraTime(selected)} className="border border-line-strong px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Grant +5 minutes</button>}
-            <button onClick={() => void messageCandidate(selected)} className="border border-line-strong px-3 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Message candidate</button>
+              ? <Button size="lg" iconRight={<FiChevronRight />} onClick={() => openEvaluation(selected)}>Open in evaluation</Button>
+              : <Button size="lg" disabled>Evaluation opens after submit</Button>}
+            {selected.state !== "Not started" && <Button size="lg" variant="secondary" icon={<FiEye />} onClick={() => watchLive(selected)}>Watch proctoring feed</Button>}
+            {selected.state === "In progress" && <Button size="lg" variant="secondary" icon={<FiClock />} onClick={() => void grantExtraTime(selected)}>Grant +5 minutes</Button>}
+            <Button size="lg" variant="secondary" icon={<FiMessageSquare />} onClick={() => void messageCandidate(selected)}>Message candidate</Button>
           </div>
         </section>}
 
@@ -251,9 +253,9 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Latest submissions</p>
           <h2 className="mt-1 font-serif text-xl font-semibold">Ready to evaluate</h2>
           <div className="mt-4 space-y-2">
-            {submittedFeed.map((a) => <button key={a.id} onClick={() => openEvaluation(a)} className="flex w-full items-center justify-between gap-3 border-l-2 border-success px-3 py-2 text-left hover:bg-paper-raised">
+            {submittedFeed.map((a) => <button key={a.id} onClick={() => openEvaluation(a)} className="flex w-full items-center justify-between gap-3 border-l-2 border-success px-3 py-2 text-left transition hover:bg-paper-raised">
               <span><span className="block text-[12px] font-medium">{a.name}</span><span className="mt-0.5 block font-mono text-[10px] text-ink-soft">{a.submittedAgo} · {a.answered}/{a.total} answered</span></span>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-forest">Evaluate →</span>
+              <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-forest">Evaluate <FiChevronRight /></span>
             </button>)}
             {submittedFeed.length === 0 && <p className="text-[12px] text-ink-soft">No submissions in this view yet.</p>}
           </div>

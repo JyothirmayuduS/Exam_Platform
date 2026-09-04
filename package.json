@@ -27,6 +27,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-icons": "^5.7.0",
     "rxjs": "^7.8.2",
     "tus-js-client": "^4.3.1"
   },
