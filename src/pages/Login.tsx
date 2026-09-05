@@ -173,21 +173,20 @@ export default function Login() {
               />
             </div>
 
-            {mode !== "student" && (
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-ink-soft">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="mt-2 w-full border-b border-line bg-transparent px-0 py-2 text-lg text-ink placeholder:text-ink-soft/40 focus:border-ink focus:outline-none focus:ring-0"
-                />
-              </div>
-            )}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-ink-soft">
+                Password
+              </label>
+              <input
+                type="password"
+                required
+                autoComplete="current-password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="mt-2 w-full border-b border-line bg-transparent px-0 py-2 text-lg text-ink placeholder:text-ink-soft/40 focus:border-ink focus:outline-none focus:ring-0"
+              />
+            </div>
 
             {error && (
               <div className="rounded border border-maroon/20 bg-maroon/5 p-3 text-xs text-maroon">
@@ -197,7 +196,7 @@ export default function Login() {
 
             <button
               type="submit"
-              disabled={loading || !identifier || (mode !== "student" && !password)}
+              disabled={loading || !identifier || !password}
               className="mt-4 flex w-full items-center justify-center gap-2 bg-ink py-3.5 text-sm font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
             >
               {loading ? (
