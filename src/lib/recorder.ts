@@ -68,8 +68,10 @@ export function startVideoRecording(opts: {
   roll: string;
   kind: "camera" | "screen";
   chunkDurationMs?: number;
+  /** Upload each chunk to R2 live (crash-proof parts). Default true. */
+  liveParts?: boolean;
 }): RecorderHandle {
-  const { stream, examId, roll, kind, chunkDurationMs = 1000 } = opts;
+  const { stream, examId, roll, kind, chunkDurationMs = 10_000, liveParts = true } = opts;
 
   const mimeType =
     [
@@ -85,6 +87,9 @@ export function startVideoRecording(opts: {
 
   const chunks: Blob[] = [];
   let started = false;
+  let partSeq = 0;
+  // Serialised chain so parts upload in order without overlapping.
+  let partChain: Promise<void> = Promise.resolve();
 
   const start = () => {
     if (started) return;
@@ -94,7 +99,25 @@ export function startVideoRecording(opts: {
   };
 
   recorder.ondataavailable = (e) => {
-    if (e.data && e.data.size > 0) chunks.push(e.data);
+    if (!e.data || e.data.size <= 0) return;
+    chunks.push(e.data);
+    if (liveParts) {
+      const blob = e.data;
+      partChain = partChain.then(async () => {
+        try {
+          partSeq += 1;
+          await r2PutBlob({
+            examId,
+            ownerSegment: roll,
+            kind: "recordings",
+            name: `parts/${kind}_${String(partSeq).padStart(8, "0")}.webm`,
+            blob,
+          });
+        } catch {
+          /* live part upload is best-effort */
+        }
+      });
+    }
   };
 
   recorder.onstop = () => {

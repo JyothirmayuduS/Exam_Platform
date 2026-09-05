@@ -30,6 +30,7 @@ type LoadingArtifacts = {
   posterUrl: string | null;
   snapshotUrls: string[];
   reportUrl: string | null;
+  rebuilt: boolean;
   status: "loading" | "ready" | "empty" | "error";
 };
 
@@ -39,6 +40,7 @@ function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
     posterUrl: null,
     snapshotUrls: [],
     reportUrl: null,
+    rebuilt: false,
     status: "loading",
   });
 
@@ -57,8 +59,13 @@ function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
           setState((s) => ({ ...s, status: "empty" }));
           return;
         }
+        // Crash-proof parts live under recordings/parts/ — they are chunk
+        // fragments of one continuous recording, excluded from the normal pick.
+        const parts = arts
+          .filter((a) => a.kind === "recordings" && a.key.includes("/parts/"))
+          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
         const recordings = arts
-          .filter((a) => a.kind === "recordings")
+          .filter((a) => a.kind === "recordings" && !a.key.includes("/parts/"))
           .sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? ""));
         const snaps = arts
           .filter((a) => a.kind === "violations")
@@ -84,13 +91,36 @@ function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
           snaps.slice(0, 8).map((a) => getArtifactObjectUrl(a.key)),
         );
         const reportUrl = report ? await getArtifactObjectUrl(report.key) : null;
+
+        // No finished video (browser crashed before submit?) — rebuild it from
+        // the live-uploaded parts by fetching them in order and concatenating.
+        // Parts come from ONE continuous recorder, so byte-concatenation is the
+        // same assembly the recorder would have done in memory.
+        let rebuiltUrl: string | null = null;
+        if (!recUrl && parts.length > 0) {
+          const partUrls = (
+            await Promise.all(parts.slice(0, 2000).map((a) => getArtifactObjectUrl(a.key)))
+          ).filter((u): u is string => !!u);
+          const concat: Blob[] = [];
+          for (const u of partUrls) {
+            try {
+              const r = await fetch(u);
+              if (r.ok) concat.push(await r.blob());
+            } catch { /* skip a lost part */ }
+          }
+          if (concat.length > 0) {
+            rebuiltUrl = URL.createObjectURL(new Blob(concat, { type: "video/webm" }));
+          }
+        }
+        const finalRecUrl = recUrl ?? rebuiltUrl;
         if (cancelled) return;
         setState({
-          recordingUrl: recUrl,
+          recordingUrl: finalRecUrl,
           posterUrl: posterUrl,
           snapshotUrls: snapshotUrls.filter((u): u is string => !!u),
           reportUrl,
-          status: recUrl ? "ready" : snaps.length > 0 ? "empty" : "empty",
+          rebuilt: rebuiltUrl !== null,
+          status: finalRecUrl ? "ready" : snaps.length > 0 ? "empty" : "empty",
         });
       } catch (err) {
         console.warn("[RecordingReview] artifact load failed:", err);
@@ -176,6 +206,11 @@ export default function RecordingReviewer({
       <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden border border-line bg-[#1F231D]">
         {artifacts.status === "loading" && (
           <p className="font-mono text-[10px] uppercase tracking-widest text-paper/60">Loading recording from Cloudflare…</p>
+        )}
+        {artifacts.rebuilt && artifacts.recordingUrl && (
+          <span className="absolute left-3 top-3 z-10 border border-amber/40 bg-ink/70 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber">
+            Rebuilt from crash-safe parts
+          </span>
         )}
         {artifacts.status !== "loading" && artifacts.recordingUrl && (
           <video

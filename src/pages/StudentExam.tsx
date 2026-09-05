@@ -34,7 +34,7 @@ import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useOfflineSync from "../hooks/useOfflineSync";
 import useCurrentProfile from "../hooks/useCurrentProfile";
 import { invoke } from "@tauri-apps/api/core";
-import { uploadExamRecords, startScreenshotCapture, type ScreenshotHandle, type ViolationSnap } from "../lib/examStorage";
+import { uploadExamRecords, uploadRecordingPart, startScreenshotCapture, type ScreenshotHandle, type ViolationSnap } from "../lib/examStorage";
 import { startServerProctorWatchdog, type ServerProctorHandle } from "../lib/serverProctor";
 import {
   DownloadGateScreen,
@@ -183,6 +183,39 @@ export default function StudentExam() {
   // Recording state (screen recording only — no per-second screenshots, no PDF)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  // Crash-proof recording: every chunk the recorder emits is also uploaded to
+  // R2 immediately (parts/seg_NNNNNNNN.webm). A browser crash mid-exam then
+  // loses at most the in-flight tail — the reviewer rebuilds the video from
+  // the uploaded parts. Uploads run one-at-a-time to keep order stable.
+  const partsSeqRef = useRef(0);
+  const partsQueueRef = useRef<Blob[]>([]);
+  const partsBusyRef = useRef(false);
+  async function drainRecordingParts() {
+    if (partsBusyRef.current) return;
+    partsBusyRef.current = true;
+    try {
+      while (partsQueueRef.current.length > 0) {
+        const blob = partsQueueRef.current.shift();
+        if (!blob) continue;
+        try {
+          await uploadRecordingPart({
+            examId: EXAM_ID,
+            roll: STUDENT_ROLL,
+            blob,
+            seq: (partsSeqRef.current += 1),
+          });
+        } catch { /* keep draining */ }
+      }
+    } finally {
+      partsBusyRef.current = false;
+      if (partsQueueRef.current.length > 0) void drainRecordingParts();
+    }
+  }
+  const queueRecordingPart = (blob: Blob) => {
+    if (!supabaseConfigured || !EXAM_ID || !STUDENT_ROLL) return;
+    partsQueueRef.current.push(blob);
+    void drainRecordingParts();
+  };
 
   // Explicit consent to recording/proctoring (required before the exam starts;
   // persisted on the attempt row as consent_at).
@@ -741,9 +774,13 @@ export default function StudentExam() {
       try {
         const mr = new MediaRecorder(targetStream, { mimeType: "video/webm" });
         mr.ondataavailable = (e) => {
-          if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+          if (e.data.size <= 0) return;
+          // 1) Local accumulation → merged full video at submit (unchanged).
+          recordedChunksRef.current.push(e.data);
+          // 2) Live upload of this chunk → crash-proof parts in R2.
+          queueRecordingPart(e.data);
         };
-        mr.start(1000);
+        mr.start(10_000); // 10 s chunk cadence (final video is identical)
         mediaRecorderRef.current = mr;
       } catch (e) {
         console.warn("Failed to start MediaRecorder", e);

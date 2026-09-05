@@ -236,6 +236,34 @@ export async function uploadArtifactBlob(
   return storeArtifact(key, blob, contentType);
 }
 
+/**
+ * Crash-proof recording part. The recorder emits a chunk every few seconds;
+ * each chunk is uploaded HERE immediately so a browser crash mid-exam loses at
+ * most the tail of the session. Chunks come from ONE continuous recorder, so
+ * concatenating them in order yields the full playable video (see
+ * RecordingReview's parts-rebuild fallback).
+ */
+export async function uploadRecordingPart(opts: {
+  examId: string;
+  roll: string;
+  blob: Blob;
+  seq: number;
+}): Promise<string | null> {
+  const name = `seg_${String(opts.seq).padStart(8, "0")}.webm`;
+  try {
+    return await r2PutBlob({
+      examId: opts.examId,
+      ownerSegment: opts.roll,
+      kind: "recordings",
+      name: `parts/${name}`,
+      blob: opts.blob,
+    });
+  } catch (err) {
+    console.warn("[examStorage] recording part upload failed:", err);
+    return null;
+  }
+}
+
 /** Store a flagged frame as a violation snapshot (used by the proctor console). */
 export async function storeViolationSnapshot(opts: {
   examId: string;

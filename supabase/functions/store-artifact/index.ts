@@ -34,12 +34,13 @@ const CORS = {
 
 const KINDS = new Set(["screenshots", "recordings", "violations", "report", "ai_evidence"]);
 
-// Only allow a safe leaf filename — no path traversal, no slashes.
+// Allow a safe leaf filename or one-level subfolder (e.g. "parts/seg_01.webm").
+// No path traversal, no leading/trailing slashes, no double slashes.
 function safeName(name: string): string | null {
   const n = name.trim();
   if (!n || n.length > 128) return null;
-  if (!/^[A-Za-z0-9._-]+$/.test(n)) return null;
-  if (n.includes("..")) return null;
+  if (!/^[A-Za-z0-9._/-]+$/.test(n)) return null;
+  if (n.includes("..") || n.includes("//") || n.startsWith("/") || n.endsWith("/")) return null;
   return n;
 }
 
