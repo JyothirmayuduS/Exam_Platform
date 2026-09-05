@@ -162,17 +162,43 @@ export default function ProctorGrid() {
     return () => { active = false; unsub(); };
   }, [examId]);
 
-  // Live camera + screen viewer — subscribe to the room and collect remote feeds.
+  // Live camera + screen viewer — subscribe to the room and collect remote
+  // feeds. If the connect fails (flaky mobile network, LiveKit hiccup, expired
+  // session) it retries with backoff instead of dying permanently — a live
+  // proctor console that silently loses feeds is worse than none.
   useEffect(() => {
     if (!examId) { setFeeds([]); setViewerState("off"); return; }
-    let handle: Awaited<ReturnType<typeof startProctorViewing>> | null = null;
     let cancelled = false;
-    (async () => {
-      handle = await startProctorViewing({ room: examId, onState: setViewerState, onFeeds: setFeeds });
+    let handle: Awaited<ReturnType<typeof startProctorViewing>> | null = null;
+    let timer: number | undefined;
+    let attempt = 0;
+
+    const connectOnce = async () => {
+      if (cancelled) return;
+      attempt += 1;
+      setViewerState("connecting");
+      try {
+        handle = await startProctorViewing({ room: examId, onState: setViewerState, onFeeds: setFeeds });
+      } catch {
+        handle = null;
+      }
       if (cancelled) { handle?.stop(); return; }
-      if (handle) setViewerState((s) => (s === "off" ? "connecting" : s));
-    })();
-    return () => { cancelled = true; handle?.stop(); };
+      if (handle) {
+        attempt = 0; // connected — reset the backoff
+        setViewerState((s) => (s === "off" ? "connecting" : s));
+        return;
+      }
+      // Connect failed — retry (3s → 6s → … capped at 10s) until it heals.
+      const delay = Math.min(3_000 * attempt, 10_000);
+      timer = window.setTimeout(() => void connectOnce(), delay);
+    };
+
+    void connectOnce();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      handle?.stop();
+    };
   }, [examId]);
 
   // Live voice toggle for the focused candidate (speak → they hear you live).
@@ -195,11 +221,18 @@ export default function ProctorGrid() {
     pushLog(`Speaking live to ${selected.name} — they can hear you now.`);
   };
 
-  // Map a tile → its live feed (matched by student uuid embedded in identity).
+  // Map a tile → its live feed. LiveKit student identities are now always
+  // `student:<roll>`, so match by roll first; fall back to the DB uuid in case
+  // an identity came through as a uuid (older clients / unlinked accounts).
   const feedFor: FeedLookup = useMemo(() => {
     const byId = new Map<string, RemoteFeed>();
-    for (const f of feeds) byId.set(identityLabel(f.identity), f);
-    return (t: Tile) => (t.studentId ? byId.get(t.studentId) ?? null : null);
+    const byRoll = new Map<string, RemoteFeed>();
+    for (const f of feeds) {
+      const key = identityLabel(f.identity);
+      byId.set(key, f);
+      byRoll.set(key, f);
+    }
+    return (t: Tile) => (t.studentId ? byId.get(t.studentId) : null) ?? (t.roll ? byRoll.get(t.roll) : null) ?? null;
   }, [feeds]);
 
   const selected = (selectedId ? tiles.find((t) => t.id === selectedId) : null) ?? tiles[0];

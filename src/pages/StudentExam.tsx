@@ -695,7 +695,13 @@ export default function StudentExam() {
     
     // Camera + mic
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      // Cap the camera at 640x480: the feed is analysed (MediaPipe), recorded,
+      // and streamed live — 1080p front-cam on a phone is what made detection
+      // crawl and the UI lag. 640x480 is plenty for proctoring tiles + flags.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: true,
+      });
       
       // Virtual Webcam Detection
       const devices = await navigator.mediaDevices.enumerateDevices();
@@ -1253,6 +1259,7 @@ export default function StudentExam() {
               examId={EXAM_ID}
               studentId={STUDENT_ROLL}
               screenStream={screenStream}
+              initialStream={cameraStream}
               violationActive={!!activeViolation}
               proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
             />

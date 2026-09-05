@@ -9,6 +9,11 @@ export default function ProctorCamera({
   examId,
   studentId,
   screenStream,
+  /** Camera+mic stream already acquired at the device gate (phone/desktop). When
+   *  present it is reused for LiveKit publishing AND the local preview, so there
+   *  is exactly one camera capture and the AI sees the same feed the proctor
+   *  does. Tracks are owned by the caller and are never stopped here. */
+  initialStream,
   violationActive = false,
   proctorMessages = [],
 }: {
@@ -17,6 +22,7 @@ export default function ProctorCamera({
   examId?: string;
   studentId?: string;
   screenStream?: MediaStream | null;
+  initialStream?: MediaStream | null;
   violationActive?: boolean;
   proctorMessages?: string[];
 }) {
@@ -26,6 +32,9 @@ export default function ProctorCamera({
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const handleRef = useRef<ProctorHandle | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  // True when localStreamRef holds tracks WE created (must stop on teardown);
+  // false when they came from initialStream (caller owns them — never stop).
+  const ownsStreamRef = useRef(false);
   const cameraRecordRef = useRef<RecorderHandle | null>(null);
   const screenRecordRef = useRef<RecorderHandle | null>(null);
 
@@ -40,12 +49,24 @@ export default function ProctorCamera({
   // always calls the most-recent version without being a dependency itself.
   const connectRef = useRef(async () => {});
   const connect = useCallback(async () => {
-    // Clean up any prior session before attempting a new one.
+    // Clean up any prior LiveKit session before attempting a new one — but
+    // NEVER stop the caller's shared camera stream (it keeps feeding the AI
+    // and the on-page recording between reconnect attempts).
     handleRef.current?.stop();
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    localStreamRef.current = null;
+    if (ownsStreamRef.current) {
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+      ownsStreamRef.current = false;
+    }
 
     setState("connecting");
+
+    // ── Show the shared camera immediately (no waiting on LiveKit) ─────────
+    if (initialStream && videoRef.current) {
+      videoRef.current.srcObject = initialStream;
+      localStreamRef.current = initialStream;
+      ownsStreamRef.current = false;
+    }
 
     // ── Attempt LiveKit / proctor server connection ────────────────────────
     // Wrap in try-catch so ANY failure (auth, network, timeout, bad room ID)
@@ -60,7 +81,7 @@ export default function ProctorCamera({
         setTimeout(() => reject(new Error("Proctor connection timed out after 15s")), CONNECT_TIMEOUT_MS)
       );
       handle = await Promise.race([
-        startProctorPublishing({ room, identity, screenStream, onState: setState }),
+        startProctorPublishing({ room, identity, screenStream, localStream: initialStream, onState: setState }),
         timeoutPromise,
       ]);
     } catch (err) {
@@ -80,37 +101,71 @@ export default function ProctorCamera({
 
       // Fall back to local-only camera so the exam can still proceed and the
       // component is in a known, valid state rather than limbo.
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        localStreamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
-        setState("local-only");
-        console.warn("[ProctorCamera] falling back to local-only camera after proctor failure");
-      } catch (camErr) {
-        console.error("[ProctorCamera] local camera fallback also failed:", camErr);
-        setState("disconnected");
+      if (!localStreamRef.current) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          localStreamRef.current = stream;
+          ownsStreamRef.current = true;
+          if (videoRef.current) videoRef.current.srcObject = stream;
+        } catch (camErr) {
+          console.error("[ProctorCamera] local camera fallback also failed:", camErr);
+        }
       }
+      if (videoRef.current?.srcObject) setState("local-only");
+      else setState("disconnected");
+      console.warn("[ProctorCamera] falling back to local-only camera after proctor failure");
       return; // done — skip the handle assignment below
     }
 
     handleRef.current = handle;
 
     if (handle?.stream) {
-      localStreamRef.current = handle.stream;
-      if (videoRef.current) videoRef.current.srcObject = handle.stream;
+      if (!localStreamRef.current) {
+        localStreamRef.current = handle.stream;
+        ownsStreamRef.current = true;
+      }
+      if (videoRef.current) videoRef.current.srcObject = localStreamRef.current;
     } else if (!handle) {
       // If the server returned null (feature disabled / not configured) rather
       // than throwing, still fall back to local camera gracefully.
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        localStreamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
-        setState("local-only");
-      } catch {
-        setState("disconnected");
+      if (!localStreamRef.current) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          localStreamRef.current = stream;
+          ownsStreamRef.current = true;
+          if (videoRef.current) videoRef.current.srcObject = stream;
+        } catch {
+          setState("disconnected");
+          return;
+        }
       }
+      setState("local-only");
     }
-  }, [room, identity, screenStream]);
+  }, [room, identity, screenStream, initialStream]);
+
+
+  // Always keep the ref current so effects can call the latest version.
+  useEffect(() => { connectRef.current = connect; }, [connect]);
+
+  // Initial connect: runs only when room/identity change (correct). Calls
+  // connectRef.current() so it always uses the latest closure — no stale capture.
+  useEffect(() => {
+    let cancelled = false;
+    void connectRef.current().catch(() => { if (!cancelled) setState("disconnected"); });
+    return () => {
+      cancelled = true;
+      handleRef.current?.stop();
+      if (ownsStreamRef.current) {
+        localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      }
+      cameraRecordRef.current?.stop();
+      screenRecordRef.current?.stop();
+      // Null out refs so GC can collect the streams immediately.
+      localStreamRef.current = null;
+      cameraRecordRef.current = null;
+      screenRecordRef.current = null;
+    };
+  }, [room, identity]); // [ok] No eslint-disable needed — connectRef is stable
 
 
   // Always keep the ref current so effects can call the latest version.

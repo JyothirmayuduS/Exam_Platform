@@ -97,12 +97,38 @@ Deno.serve(async (req: Request) => {
   if (isProctor) {
     identity = `proctor:${user.id}`;
   } else {
+    // Resolve the student's ROLL (not their auth uuid) so the proctor / teacher
+    // consoles can attach the live feed to the right roster tile by roll.
+    // Resolution order:
+    //   1. students.auth_id linkage
+    //   2. students.email matching the auth email (covers unlinked accounts)
+    //   3. the roll@student.vignan.ac.in email pattern (provisioned accounts)
+    //   4. the identity the client requested (sanitized roll string)
+    let roll = "";
     const { data: studentRow } = await supabase
       .from("students")
       .select("roll")
       .eq("auth_id", user.id)
       .maybeSingle();
-    const roll = studentRow?.roll as string | undefined;
+    if (studentRow?.roll) {
+      roll = String(studentRow.roll);
+    } else if (user.email) {
+      const email = user.email.toLowerCase();
+      const { data: byEmail } = await supabase
+        .from("students")
+        .select("roll")
+        .eq("email", email)
+        .maybeSingle();
+      if (byEmail?.roll) {
+        roll = String(byEmail.roll);
+      } else if (email.endsWith("@student.vignan.ac.in")) {
+        roll = email.replace(/@student\.vignan\.ac\.in$/, "");
+      }
+    }
+    if (!roll) {
+      const requested = String(body.identity ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "");
+      if (requested) roll = requested;
+    }
     identity = roll ? `student:${roll}` : `student:${user.id}`;
   }
 

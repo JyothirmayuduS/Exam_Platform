@@ -160,18 +160,27 @@ export default function TeacherProctoring() {
     return () => { active = false; unsub(); };
   }, [selectedExamId]);
 
-  // Subscribe to LiveKit room for real-time video feeds (camera + screen)
+  // Subscribe to LiveKit room for real-time video feeds (camera + screen).
+  // Transient failures (flaky mobile network, LiveKit hiccup, expired token)
+  // auto-retry with backoff instead of leaving a dead console — the banner
+  // shows the real reason when live feeds can't come up.
   useEffect(() => {
     if (!supabaseConfigured || !selectedExamId) {
       setFeeds([]);
       setViewerState("idle");
       return;
     }
-    setViewerState("connecting");
-    setViewerError(null);
     let active = true;
     let viewer: Awaited<ReturnType<typeof startProctorViewing>> | null = null;
-    (async () => {
+    let timer: number | undefined;
+    let attempt = 0;
+    const FAILED = "LiveKit feeds unavailable — retrying…";
+
+    const connectOnce = async () => {
+      if (!active) return;
+      attempt += 1;
+      setViewerState("connecting");
+      setViewerError(null);
       try {
         viewer = await startProctorViewing({
           room: selectedExamId,
@@ -179,6 +188,7 @@ export default function TeacherProctoring() {
             if (!active) return;
             console.debug("[proctor-viewer] state:", state);
             setViewerState(state);
+            if (state === "connected") setViewerError(null);
           },
           onFeeds: (feeds: RemoteFeed[]) => {
             if (!active) return;
@@ -186,23 +196,46 @@ export default function TeacherProctoring() {
             setFeeds(feeds);
           },
         });
-        if (!viewer) {
-          if (active) { setViewerState("error"); setViewerError("LiveKit viewer could not start - check console."); }
-        }
       } catch (err: any) {
-        if (active) { setViewerState("error"); setViewerError(err?.message ?? String(err)); }
+        viewer = null;
+        if (active) setViewerError(err?.message ?? FAILED);
       }
-    })();
+      if (!active) return;
+      if (viewer) {
+        attempt = 0;
+        setViewerState("connected");
+        setViewerError(null);
+        return;
+      }
+      // Connect failed — show why and retry with backoff until it heals.
+      const delay = Math.min(3_000 * attempt, 12_000);
+      if (active) {
+        setViewerState("error");
+        setViewerError(FAILED);
+      }
+      timer = window.setTimeout(() => void connectOnce(), delay);
+    };
+
+    void connectOnce();
     return () => {
       active = false;
+      if (timer) window.clearTimeout(timer);
       viewer?.stop();
     };
   }, [selectedExamId]);
 
   const feedFor: FeedLookup = useMemo(() => {
     const byId = new Map<string, RemoteFeed>();
-    for (const f of feeds) byId.set(identityLabel(f.identity), f);
-    return (s: Student) => (s.roll ? byId.get(s.roll) ?? null : null);
+    const byRoll = new Map<string, RemoteFeed>();
+    for (const f of feeds) {
+      const key = identityLabel(f.identity);
+      byId.set(key, f);
+      byRoll.set(key, f);
+    }
+    return (s: Student) =>
+      (s.studentId ? byId.get(s.studentId) : null) ??
+      (s.roll && s.roll !== "—" ? byRoll.get(s.roll) : null) ??
+      null;
   }, [feeds]);
 
   const visible = useMemo(() => {

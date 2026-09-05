@@ -571,9 +571,13 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   // Propagate status to parent
   useEffect(() => { onStatus?.(status); }, [status, onStatus]);
 
+  // The analysis <video> must stay in the document at a REAL (painted) size:
+  // iOS Safari stops decoding frames for 0x0 / display:none video elements, so
+  // detection silently never fires on phones. It renders transparent at the
+  // bottom corner — invisible to the student, but WebKit keeps advancing frames.
   return (
-    <div className="pointer-events-none absolute h-0 w-0 opacity-0 overflow-hidden">
-      <video ref={videoRef} playsInline muted className="pointer-events-none sr-only" />
+    <div className="pointer-events-none fixed bottom-1 left-1 z-[-1] h-[180px] w-[240px] opacity-0">
+      <video ref={videoRef} autoPlay playsInline muted className="h-full w-full" />
     </div>
   );
 }
