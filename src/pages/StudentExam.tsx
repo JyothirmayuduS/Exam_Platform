@@ -307,19 +307,25 @@ export default function StudentExam() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViolation]);
 
-  // Start screenshot capture when exam starts (hidden video is now in DOM)
+  // Start screenshot capture when the exam begins. The capture frame source is
+  // the student's screen when screen-share was granted (that is the recorded
+  // exam view), otherwise the shared camera stream — so snapshots exist on
+  // phones too, where screen share isn't available.
   useEffect(() => {
     if (step !== "exam") return;
-    // Attach screen stream to hidden video and start per-second screenshot capture
-    if (screenStreamRef.current && hiddenVideoRef.current) {
-      hiddenVideoRef.current.srcObject = screenStreamRef.current;
-      hiddenVideoRef.current.play().catch(() => {});
+    const source = screenStreamRef.current ?? cameraStreamRef.current;
+    const el = hiddenVideoRef.current;
+    if (source && el) {
+      el.srcObject = source;
+      void el.play().catch(() => {});
       screenshotHandleRef.current = startScreenshotCapture({
         examId: EXAM_ID,
         roll: STUDENT_ROLL,
-        intervalMs: 2000,
+        // ~12 frames/min keeps the Cloudflare record readable without flooding
+        // the bucket (R2 lifecycle clears everything after 90 days).
+        intervalMs: 5000,
       });
-      screenshotHandleRef.current.setVideo(hiddenVideoRef.current);
+      screenshotHandleRef.current.setVideo(el);
     }
     // Server-side watchdog: same screen feed, downsampled, analysed server-side.
     if (screenStreamRef.current) {
@@ -1083,6 +1089,7 @@ export default function StudentExam() {
         studentRoll={STUDENT_ROLL}
         violationsCount={violations.length}
         examId={EXAM_ID}
+        attemptId={attemptId ?? null}
       />
     );
   }
@@ -1200,7 +1207,6 @@ export default function StudentExam() {
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <p className="font-mono text-[11px] uppercase tracking-widest text-maroon">Question {current + 1} of {questions.length}</p>
-              <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-ink-soft">{q?.category}</p>
             </div>
           </div>
 
@@ -1342,6 +1348,12 @@ export default function StudentExam() {
             onViolation={handleAIViolation}
             onStatus={setAiStatus}
           />
+
+          {/* Screenshot frame source — painted at a real size (iOS Safari stops
+              decoding 0x0 video), transparent so the student never sees it. */}
+          <div aria-hidden className="pointer-events-none fixed bottom-1 right-1 z-[-1] h-[90px] w-[160px] opacity-0">
+            <video ref={hiddenVideoRef} autoPlay playsInline muted className="h-full w-full" />
+          </div>
 
           <div>
             <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Tools</p>

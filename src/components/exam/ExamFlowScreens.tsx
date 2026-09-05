@@ -186,17 +186,41 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
   );
 }
 
-export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId: _examId }: {
+export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId }: {
   answeredCount: number;
   totalQuestions: number;
   studentName: string;
   studentRoll: string;
   violationsCount: number;
   examId: string;
+  attemptId?: string | null;
 }) {
-  const attemptId = `ATT-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+  // Real attempt id from the DB (short-displayed). Falls back to the exam id
+  // when the attempt row hasn't been created yet — never a random fake.
+  const receiptId = attemptId && attemptId.length > 8 ? attemptId.slice(0, 8).toUpperCase() : (attemptId || examId || "—");
   const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const date = new Date().toLocaleDateString();
+
+  const backToDashboard = () => {
+    window.location.assign("/student/exams");
+  };
+
+  const closeExamWindow = () => {
+    const w = window as unknown as { __TAURI_INTERNALS__?: { invoke?: (cmd: string) => Promise<unknown> } };
+    // Inside the Vignan lockdown desktop app, ask Rust to exit the app itself.
+    if (w.__TAURI_INTERNALS__?.invoke) {
+      void w.__TAURI_INTERNALS__.invoke("exit_app").catch(() => {
+        try { window.close(); } catch { /* ignore */ }
+        backToDashboard();
+      });
+      return;
+    }
+    // Browsers silently refuse window.close() for tabs the script didn't open,
+    // so after attempting it, back out to the student dashboard — the button
+    // always does something visible instead of being a dead control.
+    try { window.close(); } catch { /* ignore */ }
+    window.setTimeout(backToDashboard, 350);
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper px-6 text-ink pb-20 pt-12 overflow-y-auto">
@@ -215,7 +239,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
           <div className="flex border-b border-line">
             <div className="flex-1 border-r border-line px-5 py-3">
               <span className="block uppercase tracking-widest text-[9px] mb-1">Attempt ID</span>
-              <span className="text-ink text-[12px]">{attemptId}</span>
+              <span className="text-ink text-[12px]">{receiptId}</span>
             </div>
             <div className="flex-1 px-5 py-3">
               <span className="block uppercase tracking-widest text-[9px] mb-1">Submitted at</span>
@@ -248,7 +272,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
           </a>
           
           <button 
-            onClick={() => window.close()} 
+            onClick={closeExamWindow} 
             className="block w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink transition-colors hover:bg-paper-raised"
           >
             Close Exam Window

@@ -47,10 +47,7 @@ export default function QuestionDisplay({
 
   return (
     <section className="border border-line bg-paper-raised p-5 sm:p-7">
-      {/* Category tag */}
-      <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">{question.category}</p>
-
-      {/* Question text */}
+      {/* Question text (category/unit removed — it duplicated the top label) */}
       <h2 className="mt-2 font-serif text-[22px] leading-snug text-ink sm:text-[26px]">{question.text}</h2>
 
       {/* MCQ options */}

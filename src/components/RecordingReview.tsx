@@ -18,8 +18,8 @@
 //     violation markers keep working across the segment boundaries.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FiDownload } from "react-icons/fi";
-import { listStudentArtifacts, getArtifactObjectUrl } from "../lib/examStorage";
+import { FiDownload, FiUploadCloud } from "react-icons/fi";
+import { listStudentArtifacts, getArtifactObjectUrl, uploadArtifactBlob } from "../lib/examStorage";
 import type { ViolationEvent } from "../lib/examApi";
 
 function clock(sec: number | null | undefined): string {
@@ -48,7 +48,7 @@ type LoadingArtifacts = {
   status: "loading" | "ready" | "empty" | "error";
 };
 
-function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
+function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0): LoadingArtifacts {
   const [state, setState] = useState<LoadingArtifacts>({
     recordingUrl: null,
     parts: [],
@@ -131,7 +131,7 @@ function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
       }
     })();
     return () => { cancelled = true; };
-  }, [examId, roll]);
+  }, [examId, roll, reloadKey]);
 
   return state;
 }
@@ -162,7 +162,8 @@ export default function RecordingReviewer({
   name: string;
   violations: ViolationEvent[];
 }) {
-  const artifacts = useRecordingArtifacts(examId, roll);
+  const [reloadKey, setReloadKey] = useState(0);
+  const artifacts = useRecordingArtifacts(examId, roll, reloadKey);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [current, setCurrent] = useState(0);
@@ -283,6 +284,43 @@ export default function RecordingReviewer({
     artifacts.parts.length > 0
       ? ` · ${artifacts.parts.length} crash-safe segment${artifacts.parts.length === 1 ? "" : "s"}`
       : "";
+
+  // ── Repair: when no finished recording_….webm exists (session abandoned or
+  // the submit-time upload didn't finish), stitch the crash-safe segments into
+  // one full video HERE and store it in Cloudflare R2 so the exam has a single
+  // full-length recording object — not just fragments.
+  const [saving, setSaving] = useState(false);
+  const [saveDone, setSaveDone] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [mergeMsg, setMergeMsg] = useState<string | null>(null);
+  const saveMergedVideo = async () => {
+    if (!partMode || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    setSaveDone(false);
+    setMergeMsg(null);
+    try {
+      const chunks: Blob[] = [];
+      for (let i = 0; i < artifacts.parts.length; i++) {
+        setMergeMsg(`Downloading crash-safe segment ${i + 1} of ${artifacts.parts.length}…`);
+        const res = await fetch(artifacts.parts[i].url);
+        if (!res.ok) throw new Error(`Segment ${i + 1} download failed (HTTP ${res.status})`);
+        chunks.push(await res.blob());
+      }
+      const merged = new Blob(chunks, { type: "video/webm" });
+      setMergeMsg("Uploading full recording to Cloudflare R2…");
+      const key = `${examId}/${roll}/recordings/recording_rebuilt_${Date.now()}.webm`;
+      const stored = await uploadArtifactBlob(key, merged, "video/webm");
+      if (!stored) throw new Error("Cloudflare upload did not confirm");
+      setSaveDone(true);
+      setMergeMsg("Full recording saved to Cloudflare R2");
+      setReloadKey((k) => k + 1); // reload — the finished file is now preferred
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -409,6 +447,34 @@ export default function RecordingReviewer({
           <span>{clock(current)} {visibleDuration ? `/ ${clock(visibleDuration)}` : ""}{partCountLabel}</span>
         </div>
       </div>
+
+      {/* Repair panel: no finished video yet — offer to persist the full merge */}
+      {partMode && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border border-amber/40 bg-amber/[0.05] px-4 py-3">
+          <div className="min-w-0">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-amber">No finished recording file</p>
+            <p className="mt-1 text-[12px] text-ink-soft">
+              {saveDone
+                ? "Full video has been saved to Cloudflare R2 and will be used from now on."
+                : "This exam has crash-safe segments only — stitch them into one full-length recording and store it in Cloudflare R2."}
+            </p>
+          </div>
+          <button
+            onClick={() => void saveMergedVideo()}
+            disabled={saving || saveDone}
+            className="inline-flex items-center gap-1.5 border border-amber px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-amber transition-colors hover:bg-amber/10 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <FiUploadCloud aria-hidden />
+            {saving ? "Merging…" : saveDone ? "Saved ✓" : `Save full video (${artifacts.parts.length} seg)`}
+          </button>
+        </div>
+      )}
+      {mergeMsg && (
+        <p className="font-mono text-[10px] text-ink-soft">{mergeMsg}</p>
+      )}
+      {saveError && (
+        <p className="font-mono text-[10px] text-alert">Could not save full video — {saveError}. The segments above still play as one merged preview.</p>
+      )}
 
       {/* Violation log with jump buttons */}
       <div>
