@@ -1242,6 +1242,7 @@ export default function StudentExam() {
             onSaveNow={() => {
               void saveNow();
             }}
+            onSubmit={() => setShowSubmitDialog(true)}
           />
         </main>
 
@@ -1252,7 +1253,6 @@ export default function StudentExam() {
             saveStatus={autosaveStatus}
             lastSavedAt={lastSavedAt}
             draftedCount={counts.drafted}
-            timeString={timeString}
             onSubmit={() => setShowSubmitDialog(true)}
           />
           <ExamSidebar answered={answeredCount} total={questions.length} marked={markedCount} timeString={timeString} secondsLeft={secondsLeft} />

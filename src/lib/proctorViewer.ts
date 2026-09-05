@@ -28,6 +28,11 @@ export type RemoteFeed = {
 
 export type ViewerHandle = {
   room: InstanceType<typeof Room> | null;
+  /** Live room stats for the console status line: participants we see and the
+   *  number of their published (remote) tracks. Turns the old "0 feeds" dead
+   *  end into an answer: room empty? → students not connected; tracks 0 but
+   *  participants 1? → student connected but not publishing. */
+  diagnostics: () => { participants: number; remoteTracks: number };
   stop: () => void;
 };
 
@@ -139,7 +144,21 @@ export async function startProctorViewing(opts: {
     return null;
   }
 
-  return { room, stop: () => { console.debug("[proctor-viewer] stopping"); void room.disconnect(); } };
+  const diagnostics = () => {
+    // livekit-client 2.x exposes remote participants on `remoteParticipants`.
+    const participants =
+      (room as unknown as { remoteParticipants?: Map<string, unknown> }).remoteParticipants ??
+      (room as unknown as { participants?: Map<string, unknown> }).participants ??
+      new Map<string, unknown>();
+    let remoteTracks = 0;
+    for (const p of participants.values()) {
+      const rp = p as { videoTrackPublications?: { size?: number }; audioTrackPublications?: { size?: number } };
+      remoteTracks += (rp.videoTrackPublications?.size ?? 0) + (rp.audioTrackPublications?.size ?? 0);
+    }
+    return { participants: participants.size, remoteTracks };
+  };
+
+  return { room, diagnostics, stop: () => { console.debug("[proctor-viewer] stopping"); void room.disconnect(); } };
 }
 
 /** Extract a display roll from a LiveKit identity like `student:<uuid>`. */

@@ -299,9 +299,20 @@ export function captureFrame(video: HTMLVideoElement, quality = 0.6, maxEdge = 1
   const ctx = c.getContext("2d");
   if (!ctx) return null;
   ctx.drawImage(video, 0, 0, w, h);
-  let out: Blob | null = null;
-  c.toBlob((r) => { out = r; }, "image/jpeg", quality);
-  return out;
+  // MUST be synchronous: canvas.toBlob() is async and returned null every time,
+  // which silently killed every screenshot, violation frame and proctor
+  // snapshot. toDataURL() is synchronous — convert back to a Blob here.
+  try {
+    const dataUrl = c.toDataURL("image/jpeg", quality);
+    if (!dataUrl || dataUrl.length === 0) return null;
+    const comma = dataUrl.indexOf(",");
+    const bin = atob(dataUrl.slice(comma + 1));
+    const arr = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) arr[k] = bin.charCodeAt(k);
+    return new Blob([arr], { type: "image/jpeg" });
+  } catch {
+    return null;
+  }
 }
 
 /** One violation snapshot captured at the moment of the flag. */

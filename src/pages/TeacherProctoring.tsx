@@ -196,6 +196,7 @@ export default function TeacherProctoring() {
             setFeeds(feeds);
           },
         });
+        viewerRef.current = viewer;
       } catch (err: any) {
         viewer = null;
         if (active) setViewerError(err?.message ?? FAILED);
@@ -221,7 +222,19 @@ export default function TeacherProctoring() {
       active = false;
       if (timer) window.clearTimeout(timer);
       viewer?.stop();
+      viewerRef.current = null;
     };
+  }, [selectedExamId]);
+
+  // Room diagnostics: participants/tracks the LiveKit viewer actually sees.
+  const viewerRef = useRef<Awaited<ReturnType<typeof startProctorViewing>> | null>(null);
+  const [roomDiag, setRoomDiag] = useState({ participants: 0, remoteTracks: 0 });
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const d = viewerRef.current?.diagnostics?.();
+      if (d) setRoomDiag(d);
+    }, 5_000);
+    return () => window.clearInterval(id);
   }, [selectedExamId]);
 
   const feedFor: FeedLookup = useMemo(() => {
@@ -428,7 +441,7 @@ export default function TeacherProctoring() {
       <Stat label="Active candidates" value={activeCount.toString()} sub="connected to session"/>
       <Stat label="Clear" value={clearCount.toString()} sub="No active flags"/>
       <Stat label="Needs attention" value={flaggedCount.toString()} sub="Active violations" alert={flaggedCount > 0} />
-      <Stat label="Live Feeds" value={feedCount.toString()} sub={viewerState === "connected" ? "LiveKit connected" : viewerState === "connecting" ? "Connecting to LiveKit..." : viewerState === "idle" ? "Not connected" : viewerState === "error" ? (viewerError ?? "Error") : viewerState === "disconnected" ? "Disconnected" : viewerState === "reconnecting" ? "Reconnecting..." : "Unknown"} alert={viewerState === "error" || viewerState === "disconnected"}/>
+      <Stat label="Live Feeds" value={feedCount.toString()} sub={viewerState === "connected" ? `${roomDiag.participants} in room · ${roomDiag.remoteTracks} remote track${roomDiag.remoteTracks === 1 ? "" : "s"}` : viewerState === "connecting" ? "Connecting to LiveKit..." : viewerState === "idle" ? "Not connected" : viewerState === "error" ? (viewerError ?? "Error") : viewerState === "disconnected" ? "Disconnected" : viewerState === "reconnecting" ? "Reconnecting..." : "Unknown"} alert={viewerState === "error" || viewerState === "disconnected"}/>
     </div>
     <AllocationPanel students={students} proctors={proctors} me={profile?.full_name ?? ""} />
     {viewerState === "error" && viewerError && (

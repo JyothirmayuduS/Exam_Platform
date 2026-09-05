@@ -6,7 +6,6 @@ type AnswerPanelProps = {
   saveStatus: SaveStatus;
   lastSavedAt: string | null;
   draftedCount: number;
-  timeString: string;
   onSubmit: () => void;
 };
 
@@ -31,7 +30,6 @@ export default function AnswerPanel({
   saveStatus,
   lastSavedAt,
   draftedCount,
-  timeString,
   onSubmit,
 }: AnswerPanelProps) {
   return (
@@ -40,9 +38,6 @@ export default function AnswerPanel({
       <p className="text-[13px]"><span className="font-medium">Status:</span> {answerStatus}</p>
       <p className={`flex items-center gap-1.5 font-mono text-[11px] ${saveTone(saveStatus)}`}>{saveStatus === "saved" ? <FiCheckCircle aria-hidden /> : <FiAlertCircle aria-hidden />} {saveText(saveStatus)}{lastSavedAt ? ` · ${lastSavedAt}` : ""}</p>
       <p className="font-mono text-[11px] text-ink-soft">{draftedCount} answers drafted</p>
-      <div className="border border-line bg-paper px-3 py-2 font-mono text-[13px]">
-        Time remaining: {timeString}
-      </div>
       <button onClick={onSubmit} className="w-full border border-maroon bg-maroon px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon-dark">
         Submit exam
       </button>

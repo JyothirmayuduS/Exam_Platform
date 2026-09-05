@@ -10,11 +10,6 @@
 // a local-only camera preview so the exam UI still works in the prototype.
 
 import { Room, RoomEvent, createLocalTracks } from "livekit-client";
-
-// The created local tracks. We only ever stop the tracks WE created (never the
-// caller's reused stream) — derive the type from createLocalTracks so it can't
-// drift from the installed livekit-client version.
-type CreatedLocalTracks = Awaited<ReturnType<typeof createLocalTracks>>;
 import { env, livekitConfigured } from "./env";
 import { getSupabase } from "./supabase";
 
@@ -73,32 +68,49 @@ export async function startProctorPublishing(opts: {
   room.on(RoomEvent.Reconnected, () => opts.onState?.("connected"));
   room.on(RoomEvent.Disconnected, () => opts.onState?.("disconnected"));
 
-  // Tracks WE created (createLocalTracks) are stopped on teardown; tracks that
-  // arrived via localStream belong to the caller and are left running.
-  let owned: CreatedLocalTracks | null = null;
+  // MediaStreamTracks WE own (created or cloned) — stopped on teardown. The
+  // caller's original stream tracks are NEVER stopped.
+  let ownedTracks: MediaStreamTrack[] = [];
+
+  // One publish attempt for a track. A missing track is not a failure (e.g. no
+  // mic granted); a rejected publish is a REAL failure we must not swallow —
+  // silently "connecting" without a camera in the room is exactly the bug that
+  // made proctors see 0 feeds while the student UI showed "PROCTOR LIVE".
+  const attemptPublish = async (
+    track: MediaStreamTrack | undefined,
+    source: string,
+    name: string,
+  ): Promise<boolean> => {
+    if (!track) return true;
+    try {
+      await room.localParticipant.publishTrack(track, { source, name });
+      return true;
+    } catch (err) {
+      console.warn(`[proctor] publish ${name} FAILED:`, err);
+      return false;
+    }
+  };
 
   try {
     await room.connect(creds.url, creds.token);
-    const camTrack = opts.localStream?.getVideoTracks?.()[0];
-    const micTrack = opts.localStream?.getAudioTracks?.()[0];
-    if (camTrack || micTrack) {
-      // Reuse the caller's stream: publish the camera + mic tracks as-is.
-      const pubs: Promise<unknown>[] = [];
+    if (opts.localStream?.getTracks().length) {
+      // Reuse the caller's camera+mic stream, publishing CLONES of its tracks:
+      // a MediaStreamTrack can be owned by one encoder path at a time, and the
+      // caller keeps recording the original locally — publishing the clone lets
+      // LiveKit encode independently and reconnect cleanly on phones.
+      const camTrack = opts.localStream.getVideoTracks()[0];
+      const micTrack = opts.localStream.getAudioTracks()[0];
       if (camTrack) {
-        pubs.push(
-          room.localParticipant.publishTrack(camTrack, { source: "camera", name: "camera" }).catch((e: unknown) => {
-            console.warn("[proctor] camera publish failed:", e);
-          }),
-        );
+        const clone = camTrack.clone();
+        ownedTracks.push(clone);
+        const ok = await attemptPublish(clone, "camera", "camera");
+        if (!ok) throw new Error("camera track publish failed");
       }
       if (micTrack) {
-        pubs.push(
-          room.localParticipant.publishTrack(micTrack, { source: "microphone", name: "microphone" }).catch((e: unknown) => {
-            console.warn("[proctor] mic publish failed:", e);
-          }),
-        );
+        const clone = micTrack.clone();
+        ownedTracks.push(clone);
+        await attemptPublish(clone, "microphone", "microphone");
       }
-      await Promise.all(pubs);
     } else {
       // No caller stream — acquire camera + mic here (capped so the phone CPU
       // isn't asked to analyse/encode 1080p; 640x480 is plenty for proctoring).
@@ -106,29 +118,31 @@ export async function startProctorPublishing(opts: {
         audio: true,
         video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
       });
-      owned = tracks;
-      await Promise.all(tracks.map((track) => room.localParticipant.publishTrack(track)));
+      ownedTracks = tracks.map((t) => t.mediaStreamTrack);
+      for (const track of tracks) {
+        const ok = await attemptPublish(track.mediaStreamTrack, String(track.kind), track.kind);
+        if (track.kind === "video" && !ok) throw new Error("camera track publish failed");
+      }
     }
     // Publish the already-granted screen-share track (if any) as a screen source
     // so the proctor grid can show each candidate's screen next to their camera.
-    const screenTrack = opts.screenStream?.getVideoTracks?.()[0];
-    if (screenTrack) {
-      await room.localParticipant.publishTrack(screenTrack, { source: "screen_share", name: "screen" });
-    }
+    // A screen failure is logged but never takes down the camera feed.
+    await attemptPublish(opts.screenStream?.getVideoTracks()[0], "screen_share", "screen");
     opts.onState?.("connected");
 
-    // The published local stream: caller's stream when reused, else the tracks
-    // we created (only used for the preview element — never stopped externally).
+    // The published local stream: caller's stream when reused (preview keeps
+    // working even though LiveKit encodes the clones), else the tracks we
+    // created.
     const published = opts.localStream?.getTracks().length
       ? opts.localStream
-      : new MediaStream((owned ?? []).map((t) => t.mediaStreamTrack));
+      : new MediaStream(ownedTracks);
     return {
       room,
       stream: published ?? null,
       stop: () => {
         void room.disconnect();
-        owned?.forEach((t) => t.stop());
-        owned = null;
+        for (const t of ownedTracks) t.stop();
+        ownedTracks = [];
       },
     };
   } catch (err) {

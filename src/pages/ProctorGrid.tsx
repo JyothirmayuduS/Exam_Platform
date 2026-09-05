@@ -166,6 +166,7 @@ export default function ProctorGrid() {
   // feeds. If the connect fails (flaky mobile network, LiveKit hiccup, expired
   // session) it retries with backoff instead of dying permanently — a live
   // proctor console that silently loses feeds is worse than none.
+  const viewerRef = useRef<Awaited<ReturnType<typeof startProctorViewing>> | null>(null);
   useEffect(() => {
     if (!examId) { setFeeds([]); setViewerState("off"); return; }
     let cancelled = false;
@@ -184,6 +185,7 @@ export default function ProctorGrid() {
       }
       if (cancelled) { handle?.stop(); return; }
       if (handle) {
+        viewerRef.current = handle;
         attempt = 0; // connected — reset the backoff
         setViewerState((s) => (s === "off" ? "connecting" : s));
         return;
@@ -198,7 +200,19 @@ export default function ProctorGrid() {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
       handle?.stop();
+      viewerRef.current = null;
     };
+  }, [examId]);
+
+  // Room diagnostics: how many LiveKit participants/tracks the viewer actually
+  // sees — so "0 feeds" is explained on screen instead of staying a mystery.
+  const [roomDiag, setRoomDiag] = useState({ participants: 0, remoteTracks: 0 });
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const d = viewerRef.current?.diagnostics?.();
+      if (d) setRoomDiag(d);
+    }, 5_000);
+    return () => window.clearInterval(id);
   }, [examId]);
 
   // Live voice toggle for the focused candidate (speak → they hear you live).
@@ -456,7 +470,7 @@ export default function ProctorGrid() {
             <span className="flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-alert" /> Session live</span>
           </div>
           <span className="font-mono text-[9px] text-ink-soft tracking-wider">
-            {tiles.length} candidate{tiles.length === 1 ? "" : "s"} · {feeds.length} live feed{feeds.length === 1 ? "" : "s"} · {viewerState === "connected" ? "feeds connected" : "feeds connecting"}
+            {tiles.length} candidate{tiles.length === 1 ? "" : "s"} · {feeds.length} live feed{feeds.length === 1 ? "" : "s"} · {viewerState === "connected" ? `${roomDiag.participants} in room · ${roomDiag.remoteTracks} remote track${roomDiag.remoteTracks === 1 ? "" : "s"}` : "feeds connecting"}
           </span>
         </div>
       </div>
