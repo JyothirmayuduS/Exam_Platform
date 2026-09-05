@@ -5,6 +5,7 @@
 import { getSupabase } from "../supabase";
 import type { ViolationSeverity, ViolationSource } from "./types";
 import { severityForType, sourceForType, isRealUuid } from "./helpers";
+import { logAudit } from "./audit";
 
 /**
  * Record one proctoring flag or proctor action in violation_events.
@@ -69,6 +70,9 @@ export async function forceSubmitAttempt(attemptId: string): Promise<boolean> {
     .from("attempts")
     .update({ state: "submitted", submitted_at: new Date().toISOString() })
     .eq("id", attemptId);
+  if (!error) {
+    void logAudit({ action: "attempt.force_submitted", targetType: "attempt", targetId: attemptId });
+  }
   return !error;
 }
 

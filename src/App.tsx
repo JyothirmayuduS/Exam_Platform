@@ -14,6 +14,8 @@ import PracticeModeExam from "./pages/PracticeModeExam";
 import TeacherProctoring from "./pages/TeacherProctoring";
 import MobileUpload from "./pages/MobileUpload";
 import Login from "./pages/Login";
+import ForgotPassword from "./pages/ForgotPassword";
+import PasswordRecover from "./pages/PasswordRecover";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SystemCheckPage from "./components/SystemCheckPage";
 import OfflineIndicator from "./components/OfflineIndicator";
@@ -25,6 +27,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/forgot" element={<ForgotPassword />} />
+        <Route path="/recover" element={<PasswordRecover />} />
       
       {/* Student Routes */}
       <Route path="/student" element={<ProtectedRoute allowedRole="student"><StudentHome /></ProtectedRoute>} />

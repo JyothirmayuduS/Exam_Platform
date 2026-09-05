@@ -52,7 +52,12 @@ export default function CreateTestModal({
     setError("");
     const db = getSupabase();
     if (!db) { setError("Database not connected — configure Supabase first."); setSaving(false); return; }
-    const id = "EXAM-2026-" + String(15 + Math.floor(Math.random() * 80)).padStart(3, "0");
+    // Collision-free id (the old EXAM-2026-<random 15-94> scheme overlapped
+    // seeded demo ids and could throw a primary-key error on creation).
+    const rand = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()
+      : Math.random().toString(36).slice(2, 10).toUpperCase();
+    const id = `EXAM-${new Date().getFullYear()}-${rand}`;
     const record: ExamRecord = {
       id,
       name: name.trim(),

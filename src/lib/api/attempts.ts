@@ -4,6 +4,7 @@
 
 import { getSupabase } from "../supabase";
 import type { PaperSlot } from "./types";
+import { logAudit } from "./audit";
 
 /** Resolve the exam a real attempt belongs to (for evaluation links). */
 export async function getAttemptExamId(attemptId: string): Promise<string | null> {
@@ -162,6 +163,9 @@ export async function updateAttemptScore(attemptId: string, score: number): Prom
     .from("attempts")
     .update({ score })
     .eq("id", attemptId);
+  if (!error) {
+    void logAudit({ action: "attempt.score_changed", targetType: "attempt", targetId: attemptId, meta: { score } });
+  }
   return !error;
 }
 

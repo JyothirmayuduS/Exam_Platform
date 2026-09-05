@@ -19,4 +19,5 @@ export * from "./api/chat";
 export * from "./api/assignments";
 export * from "./api/grading";
 export * from "./api/teacher";
+export * from "./api/audit";
 export * from "./api/types";

@@ -5,6 +5,7 @@
 import { getSupabase } from "../supabase";
 import type { ExamStatus, ExamRecord, Student } from "./types";
 import { normalizeExamRecord } from "./helpers";
+import { logAudit } from "./audit";
 
 /** Teacher publishes/schedules an exam. Upserts the row so students see it. */
 export async function publishExam(
@@ -13,6 +14,9 @@ export async function publishExam(
   const db = getSupabase();
   if (!db) return { ok: false, error: "offline" };
   const { error } = await db.from("exams").upsert(record, { onConflict: "id" });
+  if (!error && record.status === "published") {
+    void logAudit({ action: "exam.published", targetType: "exam", targetId: record.id });
+  }
   return error ? { ok: false, error: String(error.message ?? error) } : { ok: true };
 }
 
