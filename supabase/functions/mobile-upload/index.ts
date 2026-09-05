@@ -85,7 +85,7 @@ serve(async (req) => {
 
       const studentName = student?.full_name || session.student_id;
       const studentRoll = student?.roll || "UNKNOWN ROLL";
-      const examName = exam?.name || "EXAM-2026-014";
+      const examName = exam?.name || "your exam";
       const courseCode = "";
 
       const pdfDoc = await PDFDocument.create();

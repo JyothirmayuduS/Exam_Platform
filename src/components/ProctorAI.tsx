@@ -27,6 +27,8 @@ export interface AIViolation {
   label: string;       // human-readable description
   confidence: number;  // 0-1
   at: number;          // Date.now()
+  /** Low-res JPEG camera frame captured at flag time — uploaded as evidence. */
+  evidenceBlob?: Blob;
 }
 
 export interface AIStatus {
@@ -81,6 +83,19 @@ const MODEL_OBJ_DET =
   "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite";
 
 // ── Singleton WASM resolver (shared across mounts) ───────────────────────────
+function dataUrlToBlob(dataUrl: string): Blob | undefined {
+  try {
+    const i = dataUrl.indexOf(",");
+    const mime = dataUrl.slice(5, i).split(";")[0];
+    const bin = atob(dataUrl.slice(i + 1));
+    const arr = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) arr[k] = bin.charCodeAt(k);
+    return new Blob([arr], { type: mime });
+  } catch {
+    return undefined;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _visionCache: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -173,15 +188,34 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     voiceSpeaking: false,
   });
 
-  // Violation emitter with per-type cooldown
+  // Grab a small JPEG frame from the camera <video> as tamper-evident evidence.
+  const captureEvidence = useCallback((): Blob | undefined => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth || !v.videoHeight) return undefined;
+    try {
+      const scale = Math.min(1, 480 / Math.max(v.videoWidth, v.videoHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.round(v.videoWidth * scale);
+      c.height = Math.round(v.videoHeight * scale);
+      const ctx = c.getContext("2d");
+      if (!ctx) return undefined;
+      ctx.drawImage(v, 0, 0, c.width, c.height);
+      const dataUrl = c.toDataURL("image/jpeg", 0.55);
+      return dataUrl.length > 0 ? dataUrlToBlob(dataUrl) : undefined;
+    } catch {
+      return undefined;
+    }
+  }, []);
+
+  // Violation emitter with per-type cooldown + attached evidence frame
   const emit = useCallback(
     (type: AIViolationType, label: string, confidence: number) => {
       const now = Date.now();
       if (now - (lastFlag.current[type] ?? 0) < COOL[type]) return;
       lastFlag.current[type] = now;
-      onViolation({ type, label, confidence, at: now });
+      onViolation({ type, label, confidence, at: now, evidenceBlob: captureEvidence() });
     },
-    [onViolation]
+    [onViolation, captureEvidence]
   );
 
   // Feed camera stream into hidden video element

@@ -143,7 +143,7 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
       notify(editId ? `Question ${editId} updated.` : `${type} question saved to the bank.`);
       window.setTimeout(() => navigate(exitPath), 400);
     } else {
-      notify(`Could not save: ${res.error}. Run supabase/demo-policies.sql if RLS blocks the anon flow.`);
+      notify(`Could not save: ${res.error}. Sign in with your teacher account and try again.`);
     }
   };
 

@@ -1,33 +1,31 @@
-// Proctoring artifact storage — Cloudflare R2 ONLY.
+// Proctoring artifact storage — Cloudflare R2 PRIMARY, Supabase Storage backup.
 //
-// Recordings, per-second screenshots, violation snapshots and the PDF report
-// all live in Cloudflare R2 (S3-compatible). Supabase is never used for these
-// artifacts — it only holds the small metadata rows (attempts, violation_events).
+// Recordings, per-second screenshots, violation snapshots, AI evidence and the
+// PDF report live in Cloudflare R2 under an exam/owner folder layout. Supabase
+// is never used for these artifacts — it only holds the small metadata rows
+// (attempts, violation_events).
 //
-// Credentials come from the VITE_S3_* keys in .env.local (S3-compatible access
-// key / secret / endpoint / bucket for R2). Nothing is hard-coded here.
+// The browser NEVER holds R2 credentials. Every upload / read / list is signed
+// server-side by the `store-artifact` Edge Function (see lib/r2Function.ts),
+// so no secret ever reaches the client bundle. When R2 is unreachable the same
+// object falls back to the Supabase bucket, so an outage never loses a
+// recording or snapshot.
 //
 // Folder layout (kept identical between the exam side and the review side):
-//   ${examId}/${roll}/recordings/${name}.webm
-//   ${examId}/${roll}/screenshots/snap_${epochMs}.jpg
-//   ${examId}/${roll}/violations/${epochMs}_${type}.jpg
-//   ${examId}/${roll}/report/report_${epochMs}.pdf
+//   ${examId}/${owner}/recordings/${name}.webm
+//   ${examId}/${owner}/screenshots/snap_${epochMs}.jpg
+//   ${examId}/${owner}/violations/${epochMs}_${type}.jpg
+//   ${examId}/${owner}/ai_evidence/${epochMs}_${type}.jpg
+//   ${examId}/${owner}/report/report_${epochMs}.pdf
 
-import {
-  S3Client,
-  PutObjectCommand,
-  ListObjectsV2Command,
-  GetObjectCommand,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { jsPDF } from "jspdf";
 import { getSupabase } from "./supabase";
 import { supabaseConfigured } from "./env";
+import { r2List, r2PresignGet, r2PutBlob, type R2Kind } from "./r2Function";
 
 // Storage policy: Cloudflare R2 is PRIMARY, Supabase Storage is the BACKUP.
-// Every artifact is written to R2 first; only when the R2 write fails (bad
-// credentials, bucket CORS, network) does the same object fall back to the
-// Supabase bucket, so a Cloudflare outage never loses a recording or snapshot.
+// Every artifact is written to R2 first; only when the R2 write fails (auth,
+// network, bucket CORS) does the same object fall back to the Supabase bucket.
 export type StorageProvider = "r2" | "supabase";
 
 export type StoredArtifact = {
@@ -39,26 +37,10 @@ function supabaseBucketName(): string {
   return import.meta.env.VITE_SUPABASE_BUCKET_NAME || "exam-records";
 }
 
-const r2Endpoint = import.meta.env.VITE_S3_ENDPOINT || "";
-const r2Bucket = import.meta.env.VITE_S3_BUCKET_NAME || "";
-const r2AccessKey = import.meta.env.VITE_S3_ACCESS_KEY || "";
-const r2SecretKey = import.meta.env.VITE_S3_SECRET_KEY || "";
+/** Server-signed R2 is available whenever the Supabase backend is configured. */
+export const r2Configured = supabaseConfigured;
 
-/** True only when real R2 (Cloudflare) credentials are configured. */
-export const r2Configured = !!(r2Endpoint && r2Bucket && r2AccessKey && r2SecretKey);
-
-const s3Client = new S3Client({
-  region: "auto",
-  // R2 requires path-style addressing (endpoint/bucket/key, no bucket subdomain).
-  forcePathStyle: true,
-  endpoint: r2Endpoint,
-  credentials: {
-    accessKeyId: r2AccessKey,
-    secretAccessKey: r2SecretKey,
-  },
-});
-
-export type ArtifactKind = "recordings" | "screenshots" | "violations" | "report";
+export type ArtifactKind = R2Kind;
 
 export type R2Artifact = {
   key: string;
@@ -77,22 +59,27 @@ function buildR2Path(
   return `${examId}/${roll}/${kind}/${filename}`;
 }
 
+/** Split a stored path (`exam/owner/kind/name`) into its parts. */
+function splitPath(path: string): { examId: string; owner: string; kind: ArtifactKind; name: string } | null {
+  const parts = path.split("/");
+  if (parts.length !== 4 || !parts[0] || !parts[1] || !parts[2] || !parts[3]) return null;
+  return { examId: parts[0], owner: parts[1], kind: parts[2] as ArtifactKind, name: parts[3] };
+}
 /** List the objects under one prefix (e.g. `EXAM-2026-014/21VGN0158/`). */
 export async function listR2Artifacts(prefix: string): Promise<R2Artifact[] | null> {
   if (!r2Configured) return null;
   try {
-    const cmd = new ListObjectsV2Command({ Bucket: r2Bucket, Prefix: prefix });
-    const out = await s3Client.send(cmd);
-    return (out.Contents ?? []).map((o) => {
-      const key = o.Key ?? "";
-      const parts = key.split("/");
+    const out = await r2List(prefix.replace(/\/$/, ""));
+    if (!out) return null;
+    return out.map((o) => {
+      const parts = o.key.split("/");
       const kind = (parts[2] as ArtifactKind | undefined) ?? "screenshots";
       return {
-        key,
+        key: o.key,
         kind,
-        name: parts[parts.length - 1] ?? key,
-        size: o.Size ?? 0,
-        lastModified: o.LastModified?.toISOString() ?? null,
+        name: o.name,
+        size: o.size,
+        lastModified: o.lastModified,
       };
     });
   } catch (err) {
@@ -150,7 +137,7 @@ async function listSupabaseArtifacts(prefix: string): Promise<R2Artifact[] | nul
 
 /**
  * Playable/embeddable URL for an artifact, from whichever provider holds it:
- * R2 presigned GET first, then the Supabase public URL.
+ * server-signed R2 GET first, then the Supabase public URL.
  */
 export async function getArtifactObjectUrl(key: string, expiresIn = 3600): Promise<string | null> {
   const r2 = await getR2ObjectUrl(key, expiresIn);
@@ -166,36 +153,41 @@ export async function getArtifactObjectUrl(key: string, expiresIn = 3600): Promi
 }
 
 /**
- * A playable/embeddable URL for an R2 object. Uses a short-lived presigned GET
- * so private buckets work; returns null when R2 isn't configured.
+ * A playable/embeddable URL for an R2 object. Uses a short-lived server-signed
+ * GET (via the store-artifact Edge Function) so private buckets work without
+ * any client-side credentials; returns null when unavailable.
  */
 export async function getR2ObjectUrl(key: string, expiresIn = 3600): Promise<string | null> {
   if (!r2Configured) return null;
   try {
-    const cmd = new GetObjectCommand({ Bucket: r2Bucket, Key: key });
-    return await getSignedUrl(s3Client, cmd, { expiresIn });
+    return await r2PresignGet(key, expiresIn);
   } catch (err) {
     console.warn(`[examStorage] R2 presign failed (${key}):`, err);
     return null;
   }
 }
 
-/** Upload one blob to R2 (primary). Returns the object key, or null on failure. */
-async function uploadToR2(path: string, blob: Blob, contentType: string): Promise<string | null> {
-  if (!r2Configured) {
-    console.warn(`[examStorage] R2 not configured — ${path} will go to the Supabase backup bucket`);
+/** Upload one blob to R2 (primary) via the server-signed PUT path. */
+async function uploadToR2(path: string, blob: Blob): Promise<string | null> {
+  const parts = splitPath(path);
+  if (!parts) {
+    console.warn(`[examStorage] invalid R2 path: ${path}`);
     return null;
   }
   try {
-    const cmd = new PutObjectCommand({
-      Bucket: r2Bucket,
-      Key: path,
-      Body: blob,
-      ContentType: contentType,
+    const key = await r2PutBlob({
+      examId: parts.examId,
+      ownerSegment: parts.owner,
+      kind: parts.kind,
+      name: parts.name,
+      blob,
     });
-    await s3Client.send(cmd);
-    console.log(`[examStorage] R2 ✓ ${path} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
-    return path;
+    if (!key) {
+      console.warn(`[examStorage] R2 upload failed (${path}) — Supabase backup will be used`);
+      return null;
+    }
+    console.log(`[examStorage] R2 ✓ ${key} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+    return key;
   } catch (err) {
     console.warn(`[examStorage] R2 upload failed (${path}):`, err);
     return null;
@@ -229,7 +221,7 @@ async function uploadToSupabase(path: string, blob: Blob, contentType: string): 
 
 /** Write R2 first, fall back to Supabase. Returns where the object landed. */
 async function storeArtifact(path: string, blob: Blob, contentType: string): Promise<StoredArtifact | null> {
-  const r2key = await uploadToR2(path, blob, contentType);
+  const r2key = await uploadToR2(path, blob);
   if (r2key) return { key: r2key, provider: "r2" };
   const sbKey = await uploadToSupabase(path, blob, contentType);
   return sbKey ? { key: sbKey, provider: "supabase" } : null;

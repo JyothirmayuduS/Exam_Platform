@@ -1,33 +1,15 @@
 // WebM recording of the proctor streams (camera + screen), uploaded to
-// Cloudflare R2 on stop.
+// Cloudflare R2 on stop. Uploads go through the server-signed store-artifact
+// Edge Function (lib/r2Function.ts) — the browser never holds R2 credentials.
 //
-// Keys come from .env.local (VITE_S3_* — S3-compatible R2 credentials), the
-// same ones examStorage uses, so recordings land under:
+// Recordings land under:
 //   ${examId}/${roll}/recordings/${kind}_${timestamp}.webm
 //
-// R2 only — nothing is written to Supabase Storage for proctor artifacts.
+// R2 primary; falls back to Supabase Storage when R2 is unavailable.
 
-import {
-  S3Client,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
 import { getSupabase } from "./supabase";
 import { supabaseConfigured } from "./env";
-
-const r2Endpoint = import.meta.env.VITE_S3_ENDPOINT || "";
-const r2Bucket = import.meta.env.VITE_S3_BUCKET_NAME || "";
-const r2AccessKey = import.meta.env.VITE_S3_ACCESS_KEY || "";
-const r2SecretKey = import.meta.env.VITE_S3_SECRET_KEY || "";
-
-const s3Client = new S3Client({
-  region: "auto",
-  forcePathStyle: true,
-  endpoint: r2Endpoint,
-  credentials: {
-    accessKeyId: r2AccessKey,
-    secretAccessKey: r2SecretKey,
-  },
-});
+import { r2PutBlob } from "./r2Function";
 
 export type RecorderHandle = { stop: () => void };
 
@@ -40,23 +22,22 @@ async function putRecording(opts: {
   const { examId, roll, kind, blob } = opts;
   const key = `${examId}/${roll}/recordings/${kind}_${Date.now()}.webm`;
 
-  // Primary: Cloudflare R2. Backup: Supabase Storage when R2 is unavailable.
-  if (r2Endpoint && r2Bucket && r2AccessKey && r2SecretKey) {
-    try {
-      const cmd = new PutObjectCommand({
-        Bucket: r2Bucket,
-        Key: key,
-        Body: blob,
-        ContentType: "video/webm",
-      });
-      await s3Client.send(cmd);
-      console.log(`[recorder] [ok] ${kind} uploaded to R2: ${key} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
-      return key;
-    } catch (err) {
-      console.error(`[recorder] [fail] ${kind} R2 upload failed — trying Supabase backup:`, err);
+  // Primary: Cloudflare R2 via the server-signed PUT path.
+  try {
+    const r2key = await r2PutBlob({
+      examId,
+      ownerSegment: roll,
+      kind: "recordings",
+      name: `${kind}_${Date.now()}.webm`,
+      blob,
+    });
+    if (r2key) {
+      console.log(`[recorder] [ok] ${kind} uploaded to R2: ${r2key} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+      return r2key;
     }
-  } else {
-    console.warn(`[recorder] R2 not configured for ${kind} — using Supabase backup bucket`);
+    console.error(`[recorder] [fail] ${kind} R2 upload failed — trying Supabase backup`);
+  } catch (err) {
+    console.error(`[recorder] [fail] ${kind} R2 upload failed — trying Supabase backup:`, err);
   }
 
   if (supabaseConfigured) {

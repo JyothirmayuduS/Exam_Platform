@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listLiveAttempts, subscribeToAttempts, type LiveAttempt } from "../lib/examApi";
-import type { Attempt, AttemptState, Network, Flag } from "../data/examSession";
+import type { Attempt, AttemptState, Network, Flag } from "../lib/rosterModel";
 
 function fmtClock(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec)) return "";

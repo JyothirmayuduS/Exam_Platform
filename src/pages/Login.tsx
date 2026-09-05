@@ -48,12 +48,15 @@ export default function Login() {
       }
     }
 
-    // Default student password if omitted
-    const finalPassword = mode === "student" && !password ? "Vignan@123" : password;
+    if (!password) {
+      setError("Password is required.");
+      setLoading(false);
+      return;
+    }
 
     const { data, error: signInError } = await db.auth.signInWithPassword({
       email,
-      password: finalPassword,
+      password,
     });
 
     if (signInError) {
@@ -83,21 +86,6 @@ export default function Login() {
       }
     } else {
       navigate("/student");
-    }
-  };
-
-  const fillDemo = (role: LoginMode) => {
-    setMode(role);
-    setError(null);
-    if (role === "student") {
-      setIdentifier("21BQ1A0501");
-      setPassword("");
-    } else if (role === "teacher") {
-      setIdentifier("teacher@vignan.ac.in");
-      setPassword("password123");
-    } else if (role === "proctor") {
-      setIdentifier("proctor@vignan.ac.in");
-      setPassword("password123");
     }
   };
 
@@ -220,35 +208,6 @@ export default function Login() {
             </button>
           </form>
 
-          {/* Quick demo credentials buttons */}
-          <div className="mt-8 border-t border-line pt-5">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">
-              Quick Test Credentials:
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => fillDemo("student")}
-                className="border border-line bg-paper px-2.5 py-1.5 font-mono text-[10px] text-maroon hover:border-maroon"
-              >
-                Student (21BQ1A0501)
-              </button>
-              <button
-                type="button"
-                onClick={() => fillDemo("teacher")}
-                className="border border-line bg-paper px-2.5 py-1.5 font-mono text-[10px] text-forest hover:border-forest"
-              >
-                Teacher (teacher@)
-              </button>
-              <button
-                type="button"
-                onClick={() => fillDemo("proctor")}
-                className="border border-line bg-paper px-2.5 py-1.5 font-mono text-[10px] text-[#B7791F] hover:border-[#B7791F]"
-              >
-                Proctor (proctor@)
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </div>

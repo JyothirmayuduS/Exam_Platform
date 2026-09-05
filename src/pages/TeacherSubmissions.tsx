@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { evaluationPath, needsAttention, type Attempt, type AttemptState } from "../data/examSession";
+import { evaluationPath, needsAttention, type Attempt, type AttemptState } from "../lib/rosterModel";
 import useLiveAttempts from "../hooks/useLiveAttempts";
 import useTeacherExams from "../hooks/useTeacherExams";
 import { listLiveAttempts, forceSubmitAttempt, extendAttemptTime, sendProctorMessage } from "../lib/examApi";

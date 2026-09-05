@@ -3,12 +3,13 @@ import { FiCheck } from "react-icons/fi";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { loadExamBundle, updateAttemptScore, listAttemptViolations, getAttemptExamId, saveViolation, addGradingComment, listGradingComments, listFaculty, assignGradingDelegates, type ViolationEvent, type GradingComment } from "../lib/examApi";
-import { type Attempt, type Flag } from "../data/examSession";
+import { type Attempt, type Flag } from "../lib/rosterModel";
 import { questionsForPaper, remapAnswer, type PaperSlot } from "../lib/paperBuilder";
 import useLiveAttempts from "../hooks/useLiveAttempts";
 import useTeacherExams from "../hooks/useTeacherExams";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import ProctorAI from "../components/ProctorAI";
+import AIIntegrityCard from "../components/AIIntegrityCard";
 import { RecordingReviewModal } from "../components/RecordingReview";
 import { uploadArtifactBlob, getArtifactObjectUrl } from "../lib/examStorage";
 import { getTeacherNav } from "./TeacherDashboard";
@@ -554,6 +555,7 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
 
         <aside className="w-full border-t border-line bg-paper-raised xl:w-[340px] xl:shrink-0 xl:overflow-y-auto xl:border-l xl:border-t-0">
           <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} onFinish={() => finish(false)} onFinishNext={() => finish(true)} onDelegate={() => setShowDelegateModal(true)} onFlagModeration={flagModeration} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
+          <div className="mt-4"><AIIntegrityCard attemptId={cid} /></div>
           <CandidateFacts candidate={candidate} />
         </aside>
       </div>

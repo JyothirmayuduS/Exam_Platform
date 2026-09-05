@@ -248,6 +248,15 @@ export default function StudentExam() {
     void screenshotHandleRef.current.captureViolationSnapshot(activeViolation.kind).then((blob) => {
       if (blob) violationSnapshotsRef.current.push({ label: activeViolation.kind, blob, offsetSec });
     });
+    // AI camera evidence: MediaPipe attached a frame from the webcam feed at
+    // flag time — keep it for the PDF + R2 evidence folder (dispute-proofing).
+    if (activeViolation.evidenceBlob) {
+      violationSnapshotsRef.current.push({
+        label: `${activeViolation.kind} (camera evidence)`,
+        blob: activeViolation.evidenceBlob,
+        offsetSec,
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViolation]);
 

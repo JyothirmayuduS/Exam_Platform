@@ -11,7 +11,7 @@ import TeacherQuestionBank from "./TeacherQuestionBank";
 import TeacherStudents from "./TeacherStudents";
 import TeacherSubmissions from "./TeacherSubmissions";
 import TeacherEvaluation from "./TeacherEvaluation";
-import { needsAttention } from "../data/examSession";
+import { needsAttention } from "../lib/rosterModel";
 import useLiveAttempts from "../hooks/useLiveAttempts";
 import {
   listExamsForTeacher,

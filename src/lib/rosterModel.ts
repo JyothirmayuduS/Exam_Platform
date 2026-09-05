@@ -1,6 +1,9 @@
-// Single source of truth for the live exam session roster.
-// Submissions (live tracking) and Evaluate (grading) both read from here so the
-// two pages never disagree about who wrote which exam.
+// Shared view model for the live candidate roster.
+//
+// TeacherSubmissions (live tracking) and TeacherEvaluation (grading) both
+// consume this same shape so the two pages never disagree about who wrote
+// which exam. Real DB rows (attempts + students) are mapped into this UI model
+// by src/hooks/useLiveAttempts.ts — nothing here is mocked or seeded.
 
 export type Severity = "critical" | "notice";
 export type Flag = { severity: Severity; label: string; at: string };
@@ -32,9 +35,6 @@ export type Attempt = {
   paper?: unknown;
   score?: number | null;
 };
-
-export const LIVE_EXAM = "Data Structures & Algorithms";
-export const SESSION_MINUTES = 45;
 
 export const needsAttention = (a: Attempt) => a.flags.length > 0 || a.network === "Offline";
 export const evaluationPath = (id: string) => `/teacher/evaluate?review=${id}`;
