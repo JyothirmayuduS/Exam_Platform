@@ -186,25 +186,39 @@ export default function StudentExam() {
   // Crash-proof recording: every chunk the recorder emits is also uploaded to
   // R2 immediately (parts/seg_NNNNNNNN.webm). A browser crash mid-exam then
   // loses at most the in-flight tail — the reviewer rebuilds the video from
-  // the uploaded parts. Uploads run one-at-a-time to keep order stable.
+  // the uploaded parts.
+  //
+  // IMPORTANT: the sequence number is assigned at ENQUEUE time, not after the
+  // upload, so a failed upload can never silently renumber the parts and
+  // corrupt the rebuild order. Each part gets up to 3 attempts before being
+  // dropped, and uploads run strictly one-at-a-time to keep order stable.
   const partsSeqRef = useRef(0);
-  const partsQueueRef = useRef<Blob[]>([]);
+  const partsQueueRef = useRef<Array<{ seq: number; blob: Blob }>>([]);
   const partsBusyRef = useRef(false);
-  async function drainRecordingParts() {
+  async function drainRecordingParts(timeoutMs = 0) {
     if (partsBusyRef.current) return;
     partsBusyRef.current = true;
+    const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
     try {
       while (partsQueueRef.current.length > 0) {
-        const blob = partsQueueRef.current.shift();
-        if (!blob) continue;
-        try {
-          await uploadRecordingPart({
-            examId: EXAM_ID,
-            roll: STUDENT_ROLL,
-            blob,
-            seq: (partsSeqRef.current += 1),
-          });
-        } catch { /* keep draining */ }
+        if (deadline > 0 && Date.now() > deadline) break;
+        const item = partsQueueRef.current[0];
+        let attempts = 0;
+        let ok = false;
+        while (!ok && attempts < 3) {
+          attempts += 1;
+          try {
+            ok = (await uploadRecordingPart({
+              examId: EXAM_ID,
+              roll: STUDENT_ROLL,
+              blob: item.blob,
+              seq: item.seq,
+            })) !== null;
+          } catch { /* retry */ }
+          if (!ok && deadline > 0 && Date.now() > deadline) break;
+        }
+        // Only dequeue after success or after exhausting retries — never reorder.
+        partsQueueRef.current.shift();
       }
     } finally {
       partsBusyRef.current = false;
@@ -213,7 +227,7 @@ export default function StudentExam() {
   }
   const queueRecordingPart = (blob: Blob) => {
     if (!supabaseConfigured || !EXAM_ID || !STUDENT_ROLL) return;
-    partsQueueRef.current.push(blob);
+    partsQueueRef.current.push({ seq: (partsSeqRef.current += 1), blob });
     void drainRecordingParts();
   };
 
@@ -303,7 +317,7 @@ export default function StudentExam() {
       screenshotHandleRef.current = startScreenshotCapture({
         examId: EXAM_ID,
         roll: STUDENT_ROLL,
-        intervalMs: 1000,
+        intervalMs: 2000,
       });
       screenshotHandleRef.current.setVideo(hiddenVideoRef.current);
     }
@@ -648,12 +662,24 @@ export default function StudentExam() {
     },
   });
 
+  // Resolved when the merged recording + PDF have finished uploading. Tauri
+  // waits for it before exiting so the full video is NEVER cut off mid-upload
+  // by the 5 s auto-exit (that left reviewers with only crash-parts).
+  const artifactUploadPromiseRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
     if (step !== "submitted" || !isTauri()) return;
+    let cancelled = false;
     const t = setTimeout(() => {
-      void invoke("exit_app");
-    }, 5000);
-    return () => clearTimeout(t);
+      void (async () => {
+        // Wait up to 90 s for the merged upload, then exit either way.
+        const upload = artifactUploadPromiseRef.current ?? Promise.resolve();
+        await Promise.race([upload, new Promise((r) => setTimeout(r, 90_000))]);
+        if (!cancelled) {
+          try { await invoke("exit_app"); } catch { /* app already closed */ }
+        }
+      })();
+    }, 800);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [step]);
 
   // ── Device access ───────────────────────────────────────────────────────────
@@ -772,7 +798,19 @@ export default function StudentExam() {
     const targetStream = screenStreamRef.current || cameraStreamRef.current;
     if (targetStream) {
       try {
-        const mr = new MediaRecorder(targetStream, { mimeType: "video/webm" });
+        const mime =
+          [
+            "video/webm;codecs=vp9,opus",
+            "video/webm;codecs=vp8,opus",
+            "video/webm",
+          ].find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm";
+        const mr = new MediaRecorder(targetStream, {
+          mimeType: mime,
+          // Cap the bitrate so a long exam doesn't saturate the student's
+          // upload link (which is what made the live feeds lag) — ~1.6 Mbps is
+          // plenty readable for review at 720p-class quality.
+          videoBitsPerSecond: 1_600_000,
+        });
         mr.ondataavailable = (e) => {
           if (e.data.size <= 0) return;
           // 1) Local accumulation → merged full video at submit (unchanged).
@@ -823,9 +861,16 @@ export default function StudentExam() {
     }
 
     // Upload all exam artifacts: recording + violation snapshots + PDF — all to
-    // Cloudflare R2 (never Supabase).
-    setTimeout(async () => {
+    // Cloudflare R2 (never Supabase). Stored on a ref so the Tauri exit waits
+    // for the merged full video to land before closing the app.
+    artifactUploadPromiseRef.current = (async () => {
       try {
+        // 1. Give the recorder a moment to emit its final chunk, then flush any
+        //    remaining crash-parts so remote order matches local order.
+        await new Promise((r) => setTimeout(r, 400));
+        await drainRecordingParts(20_000);
+        // 2. Merge the local chunks into one full video and upload it. This is
+        //    the file the teacher's review prefers — parts are the crash fallback.
         const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
         const result = await uploadExamRecords({
           examId: EXAM_ID,
@@ -839,7 +884,7 @@ export default function StudentExam() {
       } catch (err) {
         console.error("Failed to upload recording:", err);
       }
-    }, 500);
+    })();
 
     screenStreamRef.current?.getTracks().forEach((t) => t.stop());
     setStep("submitted");

@@ -8,6 +8,14 @@
 //     position is estimated from the recording file time instead)
 //   • artifacts: ${examId}/${roll}/recordings + /violations + /report listed
 //     from Cloudflare R2 (examStorage.listStudentArtifacts)
+//
+// Two playback modes:
+//   • "file"  — a finished recording_….webm exists (normal submitted exam).
+//   • "parts" — no finished video (browser crashed / session abandoned), but
+//     crash-safe 10 s segments were uploaded live. Segments are played one
+//     after another over ONE continuous timeline whose duration grows as each
+//     segment loads, so a full merged preview is ALWAYS available. Red
+//     violation markers keep working across the segment boundaries.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FiDownload } from "react-icons/fi";
@@ -25,22 +33,29 @@ function clock(sec: number | null | undefined): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+type PartItem = { key: string; url: string };
+
 type LoadingArtifacts = {
+  /** Finished full video URL (normal submitted exam). */
   recordingUrl: string | null;
+  /** Crash-safe segments to stitch when no finished video exists. */
+  parts: PartItem[];
+  /** True when the URL above is a parts-assembled preview, not one file. */
+  rebuilt: boolean;
   posterUrl: string | null;
   snapshotUrls: string[];
   reportUrl: string | null;
-  rebuilt: boolean;
   status: "loading" | "ready" | "empty" | "error";
 };
 
 function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
   const [state, setState] = useState<LoadingArtifacts>({
     recordingUrl: null,
+    parts: [],
+    rebuilt: false,
     posterUrl: null,
     snapshotUrls: [],
     reportUrl: null,
-    rebuilt: false,
     status: "loading",
   });
 
@@ -50,7 +65,7 @@ function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
       setState((s) => ({ ...s, status: "empty" }));
       return;
     }
-    setState((s) => ({ ...s, status: "loading", recordingUrl: null, snapshotUrls: [], reportUrl: null }));
+    setState((s) => ({ ...s, status: "loading", recordingUrl: null, parts: [], snapshotUrls: [], reportUrl: null }));
     void (async () => {
       try {
         const arts = await listStudentArtifacts(examId, roll);
@@ -59,8 +74,8 @@ function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
           setState((s) => ({ ...s, status: "empty" }));
           return;
         }
-        // Crash-proof parts live under recordings/parts/ — they are chunk
-        // fragments of one continuous recording, excluded from the normal pick.
+        // Crash-proof parts live under recordings/parts/ — chunk fragments of
+        // ONE continuous recorder, excluded from the finished-file pick.
         const parts = arts
           .filter((a) => a.kind === "recordings" && a.key.includes("/parts/"))
           .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -73,14 +88,12 @@ function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
         const report = arts.find((a) => a.kind === "report") ?? null;
 
         // Prefer the full-exam webm, fall back to the screen / camera stream.
-        const pick = (list: typeof recordings) =>
-          list.find((a) => a.name.startsWith("recording_")) ??
-          list.find((a) => a.name.startsWith("screen_")) ??
-          list.find((a) => a.name.startsWith("camera_")) ??
-          list[0] ??
+        const chosen =
+          recordings.find((a) => a.name.startsWith("recording_")) ??
+          recordings.find((a) => a.name.startsWith("screen_")) ??
+          recordings.find((a) => a.name.startsWith("camera_")) ??
+          recordings[0] ??
           null;
-
-        const chosen = pick(recordings);
         const poster = snaps[0] ?? null;
 
         const [recUrl, posterUrl] = await Promise.all([
@@ -92,35 +105,25 @@ function useRecordingArtifacts(examId: string, roll: string): LoadingArtifacts {
         );
         const reportUrl = report ? await getArtifactObjectUrl(report.key) : null;
 
-        // No finished video (browser crashed before submit?) — rebuild it from
-        // the live-uploaded parts by fetching them in order and concatenating.
-        // Parts come from ONE continuous recorder, so byte-concatenation is the
-        // same assembly the recorder would have done in memory.
-        let rebuiltUrl: string | null = null;
+        // No finished video (crash before submit?) — stitch the live-uploaded
+        // segments into a continuous preview. Sign every segment URL up front.
+        let partsWithUrl: PartItem[] = [];
         if (!recUrl && parts.length > 0) {
-          const partUrls = (
-            await Promise.all(parts.slice(0, 2000).map((a) => getArtifactObjectUrl(a.key)))
-          ).filter((u): u is string => !!u);
-          const concat: Blob[] = [];
-          for (const u of partUrls) {
-            try {
-              const r = await fetch(u);
-              if (r.ok) concat.push(await r.blob());
-            } catch { /* skip a lost part */ }
-          }
-          if (concat.length > 0) {
-            rebuiltUrl = URL.createObjectURL(new Blob(concat, { type: "video/webm" }));
-          }
+          const urls = await Promise.all(parts.slice(0, 720).map((a) => getArtifactObjectUrl(a.key)));
+          partsWithUrl = parts
+            .slice(0, 720)
+            .map((a, i) => ({ key: a.key, url: urls[i] ?? "" }))
+            .filter((p): p is PartItem => Boolean(p.url));
         }
-        const finalRecUrl = recUrl ?? rebuiltUrl;
         if (cancelled) return;
         setState({
-          recordingUrl: finalRecUrl,
-          posterUrl: posterUrl,
+          recordingUrl: recUrl,
+          parts: partsWithUrl,
+          rebuilt: partsWithUrl.length > 0,
+          posterUrl,
           snapshotUrls: snapshotUrls.filter((u): u is string => !!u),
           reportUrl,
-          rebuilt: rebuiltUrl !== null,
-          status: finalRecUrl ? "ready" : snaps.length > 0 ? "empty" : "empty",
+          status: recUrl || partsWithUrl.length > 0 ? "ready" : "empty",
         });
       } catch (err) {
         console.warn("[RecordingReview] artifact load failed:", err);
@@ -141,6 +144,13 @@ function sortViolations(violations: ViolationEvent[]): ViolationEvent[] {
   });
 }
 
+/** Median of the durations we know — used to estimate not-yet-loaded parts. */
+function estimatePartSeconds(known: number[]): number {
+  if (known.length === 0) return 10; // recorder emits a chunk every ~10 s
+  const sorted = [...known].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? 10;
+}
+
 export default function RecordingReviewer({
   examId,
   roll,
@@ -159,15 +169,90 @@ export default function RecordingReviewer({
   const [playing, setPlaying] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
-  // Reset playback state whenever a different recording is loaded.
+  // ── Parts-assembly timeline ──────────────────────────────────────────────
+  // plays segments in order over one continuous timeline. `durations[i]` is
+  // set once segment i's metadata loads; unknown segments are estimated so the
+  // seek bar stays meaningful from the start.
+  const partMode = !artifacts.recordingUrl && artifacts.parts.length > 0;
+  const [partIdx, setPartIdx] = useState(0);
+  const durationsRef = useRef<(number | null)[]>([]);
+  const [, bump] = useState(0);
+  // True right after one segment ends and we switch src — lets the SAME
+  // <video> element auto-continue (the element already holds play permission).
+  const autoAdvanceRef = useRef(false);
+  const seekAfterLoadRef = useRef<number | null>(null);
+
+  const startsAt = useMemo(() => {
+    if (!partMode) return [0];
+    const est = estimatePartSeconds(durationsRef.current.filter((d): d is number => d != null));
+    let acc = 0;
+    return artifacts.parts.map((_, i) => {
+      const s = acc;
+      acc += durationsRef.current[i] ?? est;
+      return s;
+    });
+  }, [partMode, artifacts.parts, bump, artifacts]);
+
+  const partTotal = useMemo(() => {
+    if (!partMode) return null;
+    const est = estimatePartSeconds(durationsRef.current.filter((d): d is number => d != null));
+    let acc = 0;
+    for (let i = 0; i < artifacts.parts.length; i++) acc += durationsRef.current[i] ?? est;
+    return acc;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [partMode, artifacts.parts, bump]);
+
+  // When the mode changes (different recording loaded) reset playback state.
   useEffect(() => {
     setDuration(null);
     setCurrent(0);
     setPlaying(false);
     setLoadError(false);
+    setPartIdx(0);
+    durationsRef.current = [];
     const el = videoRef.current;
-    if (el) el.currentTime = 0;
-  }, [artifacts.recordingUrl]);
+    if (el) { el.currentTime = 0; el.removeAttribute("src"); el.load(); }
+  }, [artifacts.recordingUrl, partMode]);
+
+  const visibleDuration = partMode ? (partTotal ?? duration) : duration;
+  const videoSrc = partMode ? artifacts.parts[partIdx]?.url : artifacts.recordingUrl;
+
+  const recordDuration = (d: number) => {
+    if (!partMode) { setDuration(d); return; }
+    const i = partIdx;
+    if (durationsRef.current[i] !== d) {
+      durationsRef.current[i] = d;
+      setDuration(partTotal ?? 0);
+      bump((v) => v + 1);
+    }
+  };
+
+  const seekTo = (sec: number) => {
+    const el = videoRef.current;
+    const total = partMode ? partTotal : duration;
+    if (!el || !total) return;
+    const target = Math.min(total, Math.max(0, sec));
+    if (!partMode) {
+      el.currentTime = target;
+      void el.play().catch(() => undefined);
+      return;
+    }
+    // Find the segment containing `target`, switch to it, then seek within it.
+    let idx = artifacts.parts.length - 1;
+    for (let i = 0; i < artifacts.parts.length; i++) {
+      const next = i + 1 < artifacts.parts.length ? (startsAt[i + 1] ?? Infinity) : Infinity;
+      if (target >= startsAt[i] && target < next) { idx = i; break; }
+    }
+    const within = Math.max(0, target - startsAt[idx]);
+    if (idx !== partIdx) {
+      // src swap re-applies the seek once the new segment's metadata loads.
+      seekAfterLoadRef.current = within;
+      setPartIdx(idx);
+    } else {
+      el.currentTime = within;
+      void el.play().catch(() => undefined);
+    }
+  };
 
   const sorted = useMemo(() => sortViolations(violations), [violations]);
 
@@ -188,18 +273,16 @@ export default function RecordingReviewer({
     [sorted],
   );
 
-  const seekTo = (sec: number) => {
-    const el = videoRef.current;
-    if (!el || !duration) return;
-    el.currentTime = Math.min(duration, Math.max(0, sec));
-    void el.play().catch(() => undefined);
-  };
-
   const markerStyle = (seconds: number) => {
-    const d = duration ?? (artifacts.recordingUrl ? 1 : 1);
-    const pct = d > 0 ? Math.min(99.5, Math.max(0, (seconds / d) * 100)) : 0;
+    const d = visibleDuration;
+    const pct = d && d > 0 ? Math.min(99.5, Math.max(0, (seconds / d) * 100)) : 0;
     return { left: `${pct}%` };
   };
+
+  const partCountLabel =
+    artifacts.parts.length > 0
+      ? ` · ${artifacts.parts.length} crash-safe segment${artifacts.parts.length === 1 ? "" : "s"}`
+      : "";
 
   return (
     <div className="space-y-4">
@@ -207,31 +290,59 @@ export default function RecordingReviewer({
         {artifacts.status === "loading" && (
           <p className="font-mono text-[10px] uppercase tracking-widest text-paper/60">Loading recording from Cloudflare…</p>
         )}
-        {artifacts.rebuilt && artifacts.recordingUrl && (
+        {artifacts.rebuilt && (
           <span className="absolute left-3 top-3 z-10 border border-amber/40 bg-ink/70 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber">
-            Rebuilt from crash-safe parts
+            Live preview · merged from {artifacts.parts.length} crash-safe segment{artifacts.parts.length === 1 ? "" : "s"}
           </span>
         )}
-        {artifacts.status !== "loading" && artifacts.recordingUrl && (
+        {artifacts.status !== "loading" && videoSrc && (
           <video
             ref={videoRef}
-            src={artifacts.recordingUrl}
+            src={videoSrc}
             poster={artifacts.posterUrl ?? undefined}
             controls
             playsInline
             preload="metadata"
             className="h-full w-full object-contain"
-            onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+            onLoadedMetadata={(e) => {
+              const d = e.currentTarget.duration;
+              if (Number.isFinite(d)) recordDuration(d);
+              setLoadError(false);
+              if (partMode) {
+                // Apply a pending cross-segment seek, then play.
+                const target = seekAfterLoadRef.current;
+                const advance = autoAdvanceRef.current;
+                seekAfterLoadRef.current = null;
+                autoAdvanceRef.current = false;
+                if (target != null) {
+                  try { e.currentTarget.currentTime = Math.max(0, Math.min(target, d)); } catch { /* ignore */ }
+                }
+                if (target != null || advance) {
+                  void e.currentTarget.play().catch(() => undefined);
+                }
+              }
+            }}
             onTimeUpdate={(e) => {
               const t = e.currentTarget.currentTime;
-              setCurrent((prev) => (Math.abs(prev - t) > 0.2 ? t : prev));
+              const total = partMode ? partTotal : null;
+              const abs = partMode && total ? startsAt[partIdx] + t : t;
+              setCurrent((prev) => (Math.abs(prev - abs) > 0.25 ? abs : prev));
             }}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
+            onEnded={() => {
+              // Advance to the next crash-safe segment (continuous playback).
+              if (partMode && partIdx + 1 < artifacts.parts.length) {
+                autoAdvanceRef.current = true;
+                setPartIdx((i) => i + 1);
+              } else {
+                setPlaying(false);
+              }
+            }}
             onError={() => setLoadError(true)}
           />
         )}
-        {artifacts.status === "ready" && !artifacts.recordingUrl && !loadError && (
+        {artifacts.status === "ready" && !videoSrc && !loadError && (
           <p className="px-6 text-center font-mono text-[10px] uppercase tracking-widest text-paper/60">
             No playable recording found
           </p>
@@ -253,7 +364,7 @@ export default function RecordingReviewer({
             Could not read the recording from Cloudflare R2 or the Supabase backup bucket.
           </p>
         )}
-        {loadError && artifacts.recordingUrl && (
+        {loadError && videoSrc && (
           <div className="absolute inset-0 flex items-center justify-center bg-ink/85 px-6 text-center">
             <p className="font-mono text-[10px] uppercase tracking-widest text-alert">
               Recording could not be played — it may still be uploading.
@@ -262,7 +373,7 @@ export default function RecordingReviewer({
         )}
 
         <span className="absolute right-2 top-2 bg-ink/75 px-2 py-1 font-mono text-[9px] uppercase text-paper">
-          {artifacts.recordingUrl ? `REC · ${clock(current)}${duration ? ` / ${clock(duration)}` : ""}` : "NO RECORDING"}
+          {videoSrc ? `REC · ${clock(current)}${visibleDuration ? ` / ${clock(visibleDuration)}` : ""}` : "NO RECORDING"}
         </span>
         {playing && <span className="absolute left-2 top-2 h-2 w-2 animate-pulse rounded-full bg-alert" />}
       </div>
@@ -272,17 +383,18 @@ export default function RecordingReviewer({
         <div
           className="relative h-2 w-full cursor-pointer bg-ink/15"
           onClick={(e) => {
-            if (!duration) return;
+            const total = partMode ? partTotal : duration;
+            if (!total) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const pct = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-            seekTo(pct * duration);
+            seekTo(pct * total);
           }}
         >
           <div
             className="absolute left-0 top-0 h-full bg-forest"
-            style={{ width: duration ? `${(current / duration) * 100}%` : "0%" }}
+            style={{ width: visibleDuration ? `${Math.min(100, (current / visibleDuration) * 100)}%` : "0%" }}
           />
-          {duration && markers.map((m) => (
+          {visibleDuration && markers.map((m) => (
             <button
               key={m.v.id}
               title={`${m.label} @ ${clock(m.seconds)}`}
@@ -294,7 +406,7 @@ export default function RecordingReviewer({
         </div>
         <div className="flex items-center justify-between font-mono text-[9px] uppercase tracking-wider text-ink-soft">
           <span>{markers.length > 0 ? `${markers.length} violation marker(s) in red` : "No violations on this timeline"}</span>
-          <span>{duration ? clock(current) : ""} {duration ? `/ ${clock(duration)}` : ""}</span>
+          <span>{clock(current)} {visibleDuration ? `/ ${clock(visibleDuration)}` : ""}{partCountLabel}</span>
         </div>
       </div>
 
@@ -316,7 +428,7 @@ export default function RecordingReviewer({
                 </p>
               </div>
               <button
-                disabled={!duration}
+                disabled={!visibleDuration}
                 onClick={() => seekTo(m.seconds)}
                 className="shrink-0 border border-alert/40 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/10 disabled:cursor-not-allowed disabled:opacity-40"
               >

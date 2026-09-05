@@ -55,21 +55,37 @@ interface Props {
 // ── Tuning constants ─────────────────────────────────────────────────────────
 // Minimum ms between back-to-back flags of the same type (avoids log spam).
 const COOL: Record<AIViolationType, number> = {
-  no_face:        2_000,
-  multiple_faces: 1_500,
-  gaze_away:      1_000,
-  phone_detected: 1_500,
-  laptop_detected: 2_000,
-  audio_detected: 2_000,
-  partial_face:   2_000,
+  no_face:        8_000,
+  multiple_faces: 8_000,
+  gaze_away:      6_000,
+  phone_detected: 8_000,
+  laptop_detected: 10_000,
+  audio_detected: 8_000,
+  partial_face:   8_000,
 };
 
-const GAZE_THRESH      = 0.35;  // normalised head-pose deviation to trigger flag
-const VOICE_RMS        = 0.018; // RMS amplitude above which we flag speaking
-const FACE_MS          = 200;   // face-count detection interval
-const GAZE_MS          = 100;   // gaze estimation interval
-const PHONE_MS         = 150;   // phone detection interval (fast model)
-const AUDIO_MS         = 100;   // audio RMS check interval
+// Deviation (in nose/eye-ratio units) from the student's OWN calibrated
+// neutral that counts as looking away. 0.10 ≈ a clearly visible head turn.
+const GAZE_DEVIATION  = 0.10;
+// A condition must persist for this many consecutive samples before it is
+// reported, so a single frame of jitter never fires a flag.
+const SUSTAIN_SAMPLES = 4;      // gaze / face checks run every GAZE_MS
+const SUSTAIN_FACE    = 6;      // ~3 s of no-face at FACE_MS=500
+const SUSTAIN_AUDIO   = 4;      // ~1.6 s of sustained sound at AUDIO_MS=400
+const CLEAR_SAMPLES   = 6;      // samples back in range before a flag can re-arm
+
+const VOICE_RMS        = 0.05;  // RMS amplitude above which we flag speaking
+const FACE_MS          = 500;   // face-count detection interval
+const GAZE_MS          = 250;   // gaze estimation interval (MediaPipe head pose)
+const PHONE_MS         = 2_500; // phone detection interval (heavy model — slow it down)
+const AUDIO_MS         = 400;   // audio RMS check interval
+const PHONE_MIN_CONF   = 0.45;  // object detector confidence before flagging a phone
+const LAPTOP_MIN_CONF  = 0.55;  // and for "other electronics" (laptop/tv/monitor only)
+const FACE_MIN_CONF    = 0.6;   // face-detector confidence gate
+
+// Landmarker outputs the facial transformation matrix — used to confirm a real
+// face pose before we trust the 2-D gaze ratio.
+const LANDMARK_MIN_CONF = 0.45;
 
 // CDN base for MediaPipe WASM (pinned minor version for reproducibility)
 const MP_WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
@@ -117,10 +133,16 @@ async function getVision(): Promise<any> {
 
 // ── Head-pose / gaze estimation ──────────────────────────────────────────────
 // Uses 4 facial landmark indices from MediaPipe Face Landmarker to estimate
-// rough yaw (left/right) and pitch (up/down).
+// rough yaw (left/right) and pitch (up/down) as pure geometric RATIOS:
 //
 //   1   → nose tip     33 → left eye outer corner
 // 152   → chin        263 → right eye outer corner
+//
+// The ratios are NOT absolute angles — their neutral value depends on the
+// camera's height and the student's seating. ProctorAI therefore calibrates a
+// per-student baseline from their own neutral pose and flags only sustained
+// DEVIATIONS from it (see gazeRef below). That kills the classic false positive
+// where a laptop/phone camera angle makes "looking straight" read as "down".
 
 type GazeEst = { yaw: number; pitch: number };
 
@@ -136,19 +158,40 @@ function estimateGaze(lms: ReadonlyArray<{ x: number; y: number; z: number }>): 
   const eyeSpan = Math.abs(rEye.x - lEye.x);
   if (eyeSpan < 0.005) return { yaw: 0, pitch: 0 };
 
-  const yaw      = ((nose.x - eyeMidX) / eyeSpan) * 2.2;
+  const yaw      = (nose.x - eyeMidX) / eyeSpan;
   const vertSpan = Math.abs(chin.y - eyeMidY) || 0.18;
-  const pitch    = (((nose.y - eyeMidY) / vertSpan) - 0.48) * 2.0;
+  const pitch    = (nose.y - eyeMidY) / vertSpan; // ≈ 0.5 when looking straight
 
   return { yaw, pitch };
 }
 
-function gazeDir(yaw: number, pitch: number): AIStatus["gazeDirection"] {
-  const t = GAZE_THRESH;
-  if (Math.abs(yaw) <= t && Math.abs(pitch) <= t) return "center";
-  return Math.abs(yaw) >= Math.abs(pitch)
-    ? (yaw < 0 ? "left" : "right")
-    : (pitch < 0 ? "down" : "up");
+// Neutral-pose baseline + gaze state machine, kept per mount.
+type GazeTracker = {
+  pitch: number;   // slow EMA of the student's own neutral pose
+  yaw: number;
+  calibrated: boolean;
+  awayStreak: number;  // consecutive off-neutral samples (decays on neutral)
+  clearStreak: number; // consecutive neutral samples since last flag
+};
+
+function freshGaze(): GazeTracker {
+  return { pitch: 0, yaw: 0, calibrated: false, awayStreak: 0, clearStreak: 0 };
+}
+
+// Calibrate from the first ~2 s of samples so the baseline is valid before the
+// loop can flag, and update it only while the head is plausibly neutral.
+function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number): void {
+  if (t.calibrated) {
+    if (dev < GAZE_DEVIATION * 0.8) {
+      const k = 0.05;
+      t.pitch += k * (g.pitch - t.pitch);
+      t.yaw   += k * (g.yaw - t.yaw);
+    }
+  } else {
+    t.pitch = g.pitch;
+    t.yaw = g.yaw;
+    t.calibrated = true;
+  }
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -274,10 +317,24 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     };
   }, [cameraStream, active, emit]);
 
-  // Load MediaPipe models once; singletons survive unmount/remount
+  // Load MediaPipe models once; singletons survive unmount/remount.
+  // Every model is created with the GPU delegate first, and automatically
+  // falls back to CPU when the GPU is unsupported (iOS Safari / many phones
+  // throw on WebGL GPU delegates — previously AI silently never started there).
   useEffect(() => {
     if (!active) return;
     let alive = true;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const createWithFallback = async (make: (delegate: "GPU" | "CPU") => Promise<any>, step: string) => {
+      setStatus(s => ({ ...s, loadStep: step }));
+      try {
+        return await make("GPU");
+      } catch {
+        console.warn(`[ProctorAI] GPU delegate unavailable for ${step} — retrying on CPU`);
+        return make("CPU");
+      }
+    };
 
     void (async () => {
       try {
@@ -288,35 +345,44 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         const { FaceDetector, FaceLandmarker, ObjectDetector } = await import("@mediapipe/tasks-vision");
 
         if (!faceDetRef.current) {
-          setStatus(s => ({ ...s, loadStep: "Loading face detector…" }));
-          faceDetRef.current = await FaceDetector.createFromOptions(vision, {
-            baseOptions: { modelAssetPath: MODEL_FACE_DET, delegate: "GPU" },
-            runningMode: "VIDEO",
-            minDetectionConfidence: 0.5,
-          });
+          faceDetRef.current = await createWithFallback(
+            (delegate) =>
+              FaceDetector.createFromOptions(vision, {
+                baseOptions: { modelAssetPath: MODEL_FACE_DET, delegate },
+                runningMode: "VIDEO",
+                minDetectionConfidence: 0.5,
+              }),
+            "Loading face detector…",
+          );
         }
         if (!alive) return;
 
         if (!landmarkRef.current) {
-          setStatus(s => ({ ...s, loadStep: "Loading gaze tracker…" }));
-          landmarkRef.current = await FaceLandmarker.createFromOptions(vision, {
-            baseOptions: { modelAssetPath: MODEL_FACE_LM, delegate: "GPU" },
-            runningMode: "VIDEO",
-            numFaces: 3,
-            outputFaceBlendshapes: false,
-            outputFacialTransformationMatrixes: false,
-          });
+          landmarkRef.current = await createWithFallback(
+            (delegate) =>
+              FaceLandmarker.createFromOptions(vision, {
+                baseOptions: { modelAssetPath: MODEL_FACE_LM, delegate },
+                runningMode: "VIDEO",
+                numFaces: 3,
+                outputFaceBlendshapes: false,
+                outputFacialTransformationMatrixes: false,
+              }),
+            "Loading gaze tracker…",
+          );
         }
         if (!alive) return;
 
         if (!objDetRef.current) {
-          setStatus(s => ({ ...s, loadStep: "Loading object detector…" }));
-          objDetRef.current = await ObjectDetector.createFromOptions(vision, {
-            baseOptions: { modelAssetPath: MODEL_OBJ_DET, delegate: "GPU" },
-            runningMode: "VIDEO",
-            scoreThreshold: 0.20,
-            maxResults: 6,
-          });
+          objDetRef.current = await createWithFallback(
+            (delegate) =>
+              ObjectDetector.createFromOptions(vision, {
+                baseOptions: { modelAssetPath: MODEL_OBJ_DET, delegate },
+                runningMode: "VIDEO",
+                scoreThreshold: 0.20,
+                maxResults: 6,
+              }),
+            "Loading object detector…",
+          );
         }
         if (!alive) return;
 
@@ -330,10 +396,17 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     return () => { alive = false; };
   }, [active]);
 
-  // Main detection loop
+  // Main detection loop. Every decision is gated on a SUSTAINED condition (a
+  // single jitter frame never flags) and — for gaze — on deviation from the
+  // student's own calibrated neutral pose, which removes camera-angle bias.
   useEffect(() => {
     if (!active || status.loading) return;
     let running = true;
+    const gaze = freshGaze();
+    let noFaceStreak = 0;
+    let multiFaceStreak = 0;
+    let audioStreak = 0;
+    let landmarksVisible = false;
 
     const tick = () => {
       if (!running) return;
@@ -345,71 +418,91 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         return;
       }
 
-      // ── Face count ──────────────────────────────────────
-      if (faceDetRef.current && now - tFace.current > FACE_MS) {
-        tFace.current = now;
-        try {
-          const { detections } = faceDetRef.current.detectForVideo(video, now) as { detections: Array<{ categories: Array<{ score: number }> }> };
-          const count = detections.length;
-          if (count === 0) emit("no_face", "No face visible — camera may be covered", 0.9);
-          else if (count > 1) emit("multiple_faces", `${count} people detected — only 1 person allowed`, 0.87);
-          setStatus(s => ({ ...s, faceCount: count }));
-        } catch { /* model busy */ }
-      }
-
-      // ── Gaze / head pose & Oral Movements ────────────────────────────────
+      // ── Gaze / head pose (runs first — landmarks also veto no_face) ─────
       if (landmarkRef.current && now - tGaze.current > GAZE_MS) {
         tGaze.current = now;
         try {
           const { faceLandmarks } = landmarkRef.current.detectForVideo(video, now) as { faceLandmarks: Array<Array<{ x: number; y: number; z: number }>> };
-          if (faceLandmarks.length > 0) {
+          landmarksVisible = faceLandmarks.length > 0;
+          if (landmarksVisible) {
             const lms = faceLandmarks[0];
-            
-            // Check if face is near the edges (partially cut off)
+
+            // Face partially out of frame — sustained, then flag.
             let outOfBounds = false;
             for (const p of lms) {
-              if (p.x < 0.02 || p.x > 0.98 || p.y < 0.02 || p.y > 0.98) {
+              if (p.x < 0.01 || p.x > 0.99 || p.y < 0.01 || p.y > 0.99) {
                 outOfBounds = true;
                 break;
               }
             }
-            if (outOfBounds) {
-              emit("partial_face", "Face is partially cut off. Please center yourself in frame.", 0.9);
+            if (outOfBounds && gaze.awayStreak >= SUSTAIN_SAMPLES) {
+              emit("partial_face", "Face partially out of frame — centre yourself in the camera", 0.85);
             }
 
-            const { yaw, pitch } = estimateGaze(lms);
-            const dir   = gazeDir(yaw, pitch);
-            const score = Math.max(0, 1 - (Math.abs(yaw) + Math.abs(pitch)) / (2 * GAZE_THRESH));
+            const g = estimateGaze(lms);
+            const devPitch = Math.abs(g.pitch - gaze.pitch);
+            const devYaw   = Math.abs(g.yaw - gaze.yaw);
+            const dev      = Math.max(devPitch, devYaw);
+            updateGazeBaseline(gaze, g, dev);
 
-            if (dir !== "center") {
-              const dirLabel: Record<string, string> = {
-                left:  "Looking left — eyes off screen",
-                right: "Looking right — eyes off screen",
-                up:    "Looking up — eyes off screen",
-                down:  "Looking down — possible phone use",
-              };
-              emit("gaze_away", dirLabel[dir] ?? "Gaze off screen", Math.max(Math.abs(yaw), Math.abs(pitch)));
-            }
-
-            // Oral Movement Detection (using MediaPipe FaceMesh lips)
-            // 13: Upper lip, inner
-            // 14: Lower lip, inner
-            const upperLip = lms[13];
-            const lowerLip = lms[14];
-            if (upperLip && lowerLip) {
-              const mouthDist = Math.abs(upperLip.y - lowerLip.y);
-              // Threshold tuned for an open mouth while speaking
-              if (mouthDist > 0.035) {
-                 emit("audio_detected", "Oral movement detected (mouth opening)", Math.min(mouthDist * 10, 1));
+            if (gaze.calibrated) {
+              const neutral = dev < GAZE_DEVIATION;
+              if (neutral) {
+                gaze.awayStreak = Math.max(0, gaze.awayStreak - 1);
+                gaze.clearStreak += 1;
+                if (gaze.clearStreak >= CLEAR_SAMPLES) gaze.awayStreak = 0;
+              } else {
+                gaze.clearStreak = 0;
+                gaze.awayStreak += 1;
               }
-            }
 
-            setStatus(s => ({ ...s, gazeDirection: dir, gazeScore: score }));
+              let dir: AIStatus["gazeDirection"] = "center";
+              if (gaze.awayStreak >= SUSTAIN_SAMPLES) {
+                if (devYaw >= devPitch) dir = g.yaw < gaze.yaw ? "left" : "right";
+                else dir = g.pitch < gaze.pitch ? "up" : "down";
+                const conf = Math.min(1, dev / (GAZE_DEVIATION * 3));
+                if (gaze.awayStreak === SUSTAIN_SAMPLES || gaze.awayStreak % 12 === 0) {
+                  const dirLabel: Record<string, string> = {
+                    left:  "Head turned left / looking away from the screen",
+                    right: "Head turned right / looking away from the screen",
+                    up:    "Looking up — away from the screen",
+                    down:  "Head tilted down — check for phone / notes use",
+                  };
+                  emit("gaze_away", dirLabel[dir] ?? "Looking away from the screen", conf);
+                }
+              }
+              setStatus(s => ({ ...s, gazeDirection: dir, gazeScore: Math.max(0, Math.min(1, 1 - dev / (GAZE_DEVIATION * 3))) }));
+            }
           }
-        } catch { /* skip */ }
+        } catch { /* model busy */ }
       }
 
-      // ── Phone / object detection ────────────────────────
+      // ── Face count (landmarks veto the "no face" false positive) ────────
+      if (faceDetRef.current && now - tFace.current > FACE_MS) {
+        tFace.current = now;
+        try {
+          const { detections } = faceDetRef.current.detectForVideo(video, now) as { detections: Array<{ categories: Array<{ score: number }> }> };
+          const confident = detections.filter(d => d.categories[0]?.score >= FACE_MIN_CONF).length;
+          if (confident === 0 && !landmarksVisible) noFaceStreak += 1;
+          else noFaceStreak = 0;
+          if (confident > 1) multiFaceStreak += 1;
+          else multiFaceStreak = 0;
+
+          if (noFaceStreak === SUSTAIN_FACE) {
+            emit("no_face", "No face visible — camera may be covered or the student left", 0.9);
+          } else if (noFaceStreak > SUSTAIN_FACE && noFaceStreak % 6 === 0) {
+            emit("no_face", "Still no face visible in the camera", 0.9);
+          }
+          if (multiFaceStreak === SUSTAIN_FACE) {
+            emit("multiple_faces", `${confident} people detected — only one person is allowed`, 0.9);
+          } else if (multiFaceStreak > SUSTAIN_FACE && multiFaceStreak % 6 === 0) {
+            emit("multiple_faces", `${confident} people still in frame`, 0.9);
+          }
+          setStatus(s => ({ ...s, faceCount: landmarksVisible ? Math.max(confident, 1) : confident }));
+        } catch { /* model busy */ }
+      }
+
+      // ── Phone / object detection (slow cadence — heavy model) ───────────
       if (objDetRef.current && now - tPhone.current > PHONE_MS) {
         tPhone.current = now;
         try {
@@ -419,31 +512,34 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           const phoneHit = detections.find(d =>
             d.categories.some(c => {
               const n = c.categoryName.toLowerCase();
-              return n.includes("cell phone") || n.includes("mobile") || n === "phone";
+              return (n.includes("cell phone") || n.includes("mobile phone")) && c.score >= PHONE_MIN_CONF;
             })
           );
           if (phoneHit) {
             const conf = phoneHit.categories[0].score;
-            emit("phone_detected", `Electronic device detected (Phone/Earbuds) (${Math.round(conf * 100)}% conf)`, conf);
+            emit("phone_detected", `Mobile phone detected in view (${Math.round(conf * 100)}% conf)`, conf);
             setStatus(s => ({ ...s, phoneDetected: true }));
           } else {
             setStatus(s => ({ ...s, phoneDetected: false }));
           }
 
-          const laptopHit = detections.find(d =>
+          // Only clear "other electronics" — laptop/tv/monitor — and only at
+          // high confidence. Headphones/earbuds/pads are dropped: a student
+          // wearing earbuds is not an exam violation by itself.
+          const electronicsHit = detections.find(d =>
             d.categories.some(c => {
               const n = c.categoryName.toLowerCase();
-              return n.includes("laptop") || n.includes("tv") || n.includes("monitor") || n.includes("tablet") || n.includes("computer") || n.includes("pad") || n.includes("headphone") || n.includes("earphone") || n.includes("buds");
+              return (n.includes("laptop") || n.includes("tv") || n.includes("monitor")) && c.score >= LAPTOP_MIN_CONF;
             })
           );
-          if (laptopHit) {
-            const conf = laptopHit.categories[0].score;
-            emit("laptop_detected", `Electronic device detected: ${laptopHit.categories[0].categoryName} (${Math.round(conf * 100)}% conf)`, conf);
+          if (electronicsHit) {
+            const conf = electronicsHit.categories[0].score;
+            emit("laptop_detected", `Electronic device visible: ${electronicsHit.categories[0].categoryName} (${Math.round(conf * 100)}% conf)`, conf);
           }
         } catch { /* skip */ }
       }
 
-      // ── Audio / voice ───────────────────────────────────
+      // ── Audio / voice (sustained before flagging) ──────
       if (analyserRef.current && audioBufRef.current && now - tAudio.current > AUDIO_MS) {
         tAudio.current = now;
         analyserRef.current.getFloatTimeDomainData(audioBufRef.current);
@@ -452,8 +548,14 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         );
         const voiceLevel    = Math.min(1, rms / 0.08);
         const voiceSpeaking = rms > VOICE_RMS;
-        if (voiceSpeaking) emit("audio_detected", "Speaking or unexpected audio detected", voiceLevel);
-        setStatus(s => ({ ...s, voiceLevel, voiceSpeaking }));
+        if (voiceSpeaking) audioStreak += 1;
+        else audioStreak = Math.max(0, audioStreak - 1);
+        if (audioStreak === SUSTAIN_AUDIO) {
+          emit("audio_detected", "Sustained voice or unexpected audio detected", voiceLevel);
+        } else if (audioStreak > SUSTAIN_AUDIO && audioStreak % 12 === 0) {
+          emit("audio_detected", "Voice/audio still detected", voiceLevel);
+        }
+        setStatus(s => ({ ...s, voiceLevel, voiceSpeaking: voiceSpeaking && audioStreak >= 2 }));
       }
 
       rafRef.current = requestAnimationFrame(tick);

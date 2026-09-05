@@ -279,10 +279,20 @@ export async function storeViolationSnapshot(opts: {
   );
 }
 
-export function captureFrame(video: HTMLVideoElement, quality = 0.6): Blob | null {
-  const w = video.videoWidth;
-  const h = video.videoHeight;
-  if (!w || !h) return null;
+/**
+ * Capture a JPEG frame from a video element, downscaled so the longest edge is
+ * at most `maxEdge` px. Full-resolution captures every second were the main
+ * cause of network + CPU lag on the student machine: a 1080p screenshot is
+ * 3–5× bigger than an equally readable 1280-wide one. Evidence frames are
+ * reviewed zoomed to ~thumbnail size, so this costs nothing visually.
+ */
+export function captureFrame(video: HTMLVideoElement, quality = 0.6, maxEdge = 1280): Blob | null {
+  const w0 = video.videoWidth;
+  const h0 = video.videoHeight;
+  if (!w0 || !h0) return null;
+  const scale = Math.min(1, maxEdge / Math.max(w0, h0));
+  const w = Math.max(1, Math.round(w0 * scale));
+  const h = Math.max(1, Math.round(h0 * scale));
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
@@ -314,19 +324,28 @@ export function startScreenshotCapture(opts: {
   roll: string;
   intervalMs?: number;
 }): ScreenshotHandle {
-  const { examId, roll, intervalMs = 1000 } = opts;
+  const { examId, roll, intervalMs = 2000 } = opts;
   let video: HTMLVideoElement | null = null;
   let stopped = false;
+  let busy = false;
 
+  // Serialised: one upload at a time so a slow network can never pile up an
+  // ever-growing queue of screenshots (the other cause of student-side lag).
   const tick = async () => {
-    if (stopped || !video) return;
-    const blob = captureFrame(video);
-    if (!blob) return;
-    await storeArtifact(
-      buildR2Path(examId, roll, "screenshots", `snap_${Date.now()}.jpg`),
-      blob,
-      "image/jpeg",
-    );
+    if (stopped || busy || !video || video.readyState < 2) return;
+    busy = true;
+    try {
+      const blob = captureFrame(video, 0.55, 1280);
+      if (blob) {
+        await storeArtifact(
+          buildR2Path(examId, roll, "screenshots", `snap_${Date.now()}.jpg`),
+          blob,
+          "image/jpeg",
+        );
+      }
+    } catch { /* keep the loop alive */ } finally {
+      busy = false;
+    }
   };
 
   void tick();
@@ -340,8 +359,8 @@ export function startScreenshotCapture(opts: {
       video = null;
     },
     captureViolationSnapshot: async (violationType: string) => {
-      if (!video) return null;
-      const blob = captureFrame(video, 0.9);
+      if (!video || video.readyState < 2) return null;
+      const blob = captureFrame(video, 0.85, 1600);
       if (!blob) return null;
       const safeType = violationType.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
       await storeArtifact(
