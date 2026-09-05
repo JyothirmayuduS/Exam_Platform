@@ -50,10 +50,10 @@ async function putRecording(opts: {
         ContentType: "video/webm",
       });
       await s3Client.send(cmd);
-      console.log(`[recorder] ✅ ${kind} uploaded to R2: ${key} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+      console.log(`[recorder] [ok] ${kind} uploaded to R2: ${key} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
       return key;
     } catch (err) {
-      console.error(`[recorder] ❌ ${kind} R2 upload failed — trying Supabase backup:`, err);
+      console.error(`[recorder] [fail] ${kind} R2 upload failed — trying Supabase backup:`, err);
     }
   } else {
     console.warn(`[recorder] R2 not configured for ${kind} — using Supabase backup bucket`);
@@ -68,10 +68,10 @@ async function putRecording(opts: {
         upsert: true,
       });
       if (!error) {
-        console.log(`[recorder] ✅ ${kind} uploaded to Supabase (backup): ${key}`);
+        console.log(`[recorder] [ok] ${kind} uploaded to Supabase (backup): ${key}`);
         return key;
       }
-      console.error(`[recorder] ❌ ${kind} Supabase backup upload failed:`, error.message);
+      console.error(`[recorder] [fail] ${kind} Supabase backup upload failed:`, error.message);
     }
   }
   return null;

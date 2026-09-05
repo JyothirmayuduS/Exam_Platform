@@ -14,25 +14,11 @@ const NAV = [
   { label: "Help & support", to: "/student/help" },
 ];
 
-const FALLBACK: DBQuestion[] = [
-  {
-    id: "P1",
-    exam_id: "practice",
-    title: "Binary search complexity on sorted array?",
-    type: "mcq",
-    unit: "Algorithms",
-    difficulty: "easy",
-    marks: 1,
-    options: ["O(n)", "O(log n)", "O(n log n)", "O(1)"],
-    answer: "O(log n)",
-  },
-];
-
 export default function PracticeModeExam() {
   const { examId = "" } = useParams();
   const { profile } = useCurrentProfile();
   const [title, setTitle] = useState("Practice Mode");
-  const [questions, setQuestions] = useState<DBQuestion[]>(FALLBACK);
+  const [questions, setQuestions] = useState<DBQuestion[]>([]);
   const [answers, setAnswers] = useState<AnswerMap>(() => {
     const saved = sessionStorage.getItem(`practice_answers_${examId}`);
     try {
@@ -54,6 +40,7 @@ export default function PracticeModeExam() {
 
   useEffect(() => {
     let active = true;
+    if (!examId) return;
     void loadExamBundle(examId).then(({ exam, questions: rows }) => {
       if (!active) return;
       if (exam?.name) setTitle(`${exam.name} · Practice Mode`);
@@ -63,19 +50,14 @@ export default function PracticeModeExam() {
     });
 
     const initPracticeAttempt = async () => {
-      if (attemptId) return; // Use existing from session
-      const studentId = profile?.id ?? "175741ff-ad12-4c01-aea3-8df6b55d1e74";
+      if (attemptId || !profile?.id || !examId) return; // Use existing from session; practice needs a real exam + student
       const db = (await import("../lib/supabase")).getSupabase();
       if (db) {
         const id = await (await import("../lib/examApi")).startAttempt({
-          examId: examId || "EXAM-2026-014",
-          studentId: studentId,
+          examId,
+          studentId: profile.id,
           total: questions.length || 1
         });
-        
-        if (!id) {
-          console.error("PracticeMode: Failed to initialize dummy attempt for student:", studentId);
-        }
         
         if (id && active) {
           setAttemptId(id);
@@ -175,12 +157,12 @@ export default function PracticeModeExam() {
                         : "Scan QR & upload handwritten answer from mobile phone"}
                     </label>
                     <SubjectiveQRBlock
-                      examId={examId || "EXAM-2026-014"}
+                      examId={examId}
                       attemptId={attemptId}
                       questionId={q.id}
                       questionIndex={index + 1}
-                      studentId={profile?.id ?? "175741ff-ad12-4c01-aea3-8df6b55d1e74"}
-                      studentName={profile?.full_name ?? "Prototype Student"}
+                      studentId={profile?.id ?? ""}
+                      studentName={profile?.full_name ?? ""}
                       examName={title.replace(" · Practice Mode", "")}
                       questionText={q.title}
                       onAnswerUploaded={(url) => {

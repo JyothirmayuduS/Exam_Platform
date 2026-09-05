@@ -113,7 +113,7 @@ export async function compressImage(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      cleanup(); // ✅ revoke on success
+      cleanup(); // [ok] revoke on success
 
       let { width, height } = img;
 
@@ -155,7 +155,7 @@ export async function compressImage(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      cleanup(); // ✅ revoke on error — fixes blob memory leak
+      cleanup(); // [ok] revoke on error — fixes blob memory leak
 
       const category = classifyImageError(event);
       const message =
@@ -244,7 +244,7 @@ export async function autoCropWhiteEdges(blob: Blob, threshold = 245): Promise<B
     };
     img.onerror = (event) => {
       clearTimeout(timer);
-      cleanup(); // ✅ always revoke
+      cleanup(); // [ok] always revoke
       console.warn("[subjectiveUpload] autoCropWhiteEdges failed, returning original:", event);
       resolve(blob); // fallback: return original
     };
@@ -285,7 +285,7 @@ export async function rotateImage(blob: Blob, degrees: 90 | 180 | 270): Promise<
     };
     img.onerror = (event) => {
       clearTimeout(timer);
-      cleanup(); // ✅ always revoke
+      cleanup(); // [ok] always revoke
       console.error("[subjectiveUpload] rotateImage onerror:", event);
       reject(new Error("Failed to load image for rotation"));
     };

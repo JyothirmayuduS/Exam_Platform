@@ -5,7 +5,7 @@
 export type Severity = "critical" | "notice";
 export type Flag = { severity: Severity; label: string; at: string };
 export type AttemptState = "Submitted" | "In progress" | "Not started" | "Paused";
-export type Network = "Stable" | "Reconnected" | "Unstable" | "Offline";
+export type Network = "Stable" | "Reconnected" | "Unstable" | "Offline" | "Idle";
 
 export type Attempt = {
   id: string;

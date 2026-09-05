@@ -16,7 +16,6 @@ import SubmitDialog from "../components/exam/SubmitDialog";
 import { supabaseConfigured } from "../lib/env";
 import {
   loadPaperForStudent,
-  getStudentIdByRoll,
   getStudentProfile,
   startAttempt,
   saveAnswers,
@@ -33,6 +32,7 @@ import useAutosave from "../hooks/useAutosave";
 import useProctoring from "../hooks/useProctoring";
 import useKeyboardShortcuts from "../hooks/useKeyboardShortcuts";
 import useOfflineSync from "../hooks/useOfflineSync";
+import useCurrentProfile from "../hooks/useCurrentProfile";
 import { invoke } from "@tauri-apps/api/core";
 import { uploadExamRecords, startScreenshotCapture, type ScreenshotHandle, type ViolationSnap } from "../lib/examStorage";
 import {
@@ -90,11 +90,29 @@ export default function StudentExam() {
   const [searchParams] = useSearchParams();
   const searchExamId = searchParams.get("examId") ?? searchParams.get("exam");
   const searchRoll = searchParams.get("roll");
-  const urlParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
-  const EXAM_ID = searchExamId ?? urlParams.get("examId") ?? urlParams.get("exam") ?? "EXAM-2026-072";
-  const STUDENT_ROLL = searchRoll ?? urlParams.get("roll") ?? "21BQ1A0501";
+  // The exam must come from the invite/deep link — there is deliberately no
+  // hardcoded fallback exam any more.
+  const EXAM_ID = searchExamId ?? "";
   const ROOM = EXAM_ID;
   const [durationMin, setDurationMin] = useState(45);
+
+  // Real identity: the logged-in student's profile (auth_id-linked row). A
+  // ?roll= URL param is honoured ONLY in the explicit anon sandbox mode
+  // (VITE_ALLOW_ANON_ROLL=true) — never as a silent production fallback.
+  const anonRollAllowed = import.meta.env.VITE_ALLOW_ANON_ROLL === "true";
+  const { profile: authProfile, loading: profileLoading } = useCurrentProfile();
+  const [resolvedRoll, setResolvedRoll] = useState<string>(() =>
+    searchRoll && anonRollAllowed ? searchRoll : "",
+  );
+  useEffect(() => {
+    if (authProfile && "roll" in authProfile && authProfile.roll) {
+      setResolvedRoll(authProfile.roll);
+    }
+  }, [authProfile]);
+  const STUDENT_ROLL = resolvedRoll;
+  const identityReady = profileLoading || Boolean(STUDENT_ROLL);
+  const rollParamMismatch =
+    !anonRollAllowed && searchRoll && STUDENT_ROLL && searchRoll !== STUDENT_ROLL;
 
   // Real flow: if the student is not inside the installed Vignan Lockdown Browser,
   // they must install the desktop package first. Only the packaged Tauri app can
@@ -159,6 +177,10 @@ export default function StudentExam() {
   // Recording state (screen recording only — no per-second screenshots, no PDF)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+
+  // Explicit consent to recording/proctoring (required before the exam starts;
+  // persisted on the attempt row as consent_at).
+  const [consentGiven, setConsentGiven] = useState(false);
 
   const {
     currentIndex: current,
@@ -309,28 +331,48 @@ export default function StudentExam() {
     if (!supabaseConfigured) return;
     let active = true;
     (async () => {
-      // Resolve the student row first — the paper snapshot is seeded from it.
+      // Resolve the student row FIRST from the authenticated session (the real
+      // identity), so paper snapshots and attempts are bound to the account.
       const db = await import("../lib/supabase").then(m => m.getSupabase());
       if (db) {
-        if (STUDENT_ROLL !== "TEST-001") {
-          studentIdRef.current = await getStudentIdByRoll(STUDENT_ROLL);
-          // Pre-fill the registration screen from the student's real record.
-          const profile = await getStudentProfile(STUDENT_ROLL);
-          if (profile) {
-            if (!urlName) setStudentName(profile.full_name || "Candidate");
-            if (!urlEmail) setStudentEmail(profile.email ?? "");
+        const { data: { session } } = await db.auth.getSession();
+        const uid = session?.user?.id ?? null;
+        if (uid) {
+          const { data: st } = await db
+            .from("students")
+            .select("id, roll, full_name, email")
+            .eq("auth_id", uid)
+            .maybeSingle();
+          if (st) {
+            studentIdRef.current = st.id;
+            if (st.roll) setResolvedRoll(st.roll);
+            if (!urlName) setStudentName(st.full_name || "Candidate");
+            if (!urlEmail) setStudentEmail(st.email ?? "");
           }
-        } else {
-          const { data: { session } } = await db.auth.getSession();
-          if (session?.user?.id) {
-            const { data: st } = await db.from("students").select("id").eq("auth_id", session.user.id).maybeSingle();
-            if (st) studentIdRef.current = st.id;
+        } else if (anonRollAllowed && searchRoll) {
+          // Explicit sandbox escape: demo without Supabase Auth. Never active
+          // unless VITE_ALLOW_ANON_ROLL=true is set at build time.
+          const st = await getStudentProfile(searchRoll);
+          if (st?.id) {
+            studentIdRef.current = st.id;
+            setResolvedRoll(searchRoll);
+            if (!urlName) setStudentName(st.full_name || "Candidate");
+            if (!urlEmail) setStudentEmail(st.email ?? "");
           }
         }
       }
       if (!active) return;
 
-      const seed = studentIdRef.current ?? STUDENT_ROLL;
+      if (!EXAM_ID) {
+        setLoadError("This link is missing its exam reference. Open the exam from your invite email or the student dashboard.");
+        return;
+      }
+      if (!studentIdRef.current) {
+        setLoadError("Your account is not linked to a student record. Ask your exam administrator to link your registration number, then sign in again.");
+        return;
+      }
+
+      const seed = studentIdRef.current;
       const { exam, questions: rows, paper } = await loadPaperForStudent(EXAM_ID, seed);
       if (!active) return;
       if (!exam) {
@@ -651,7 +693,18 @@ export default function StudentExam() {
     if (supabaseConfigured && studentIdRef.current && !attemptStartedRef.current) {
       attemptStartedRef.current = true;
       void startAttempt({ examId: EXAM_ID, studentId: studentIdRef.current, total: questions.length, paper: paperRef.current }).then(id => {
-        if (id) setAttemptId(id);
+        if (id) {
+          setAttemptId(id);
+          // Persist the candidate's consent timestamp for audit purposes.
+          if (consentGiven) {
+            void import("../lib/examApi").then((m) =>
+              m.recordConsent(id, {
+                text: "Candidate consented to video/audio/screen monitoring, automated integrity analysis, and secure retention of recordings/snapshots for audit and result-review purposes.",
+                version: "1.0",
+              }),
+            );
+          }
+        }
       });
     }
     
@@ -737,13 +790,17 @@ export default function StudentExam() {
     toggleReview(q.id);
   }
 
-  if (loadError) {
+  const blockingError =
+    rollParamMismatch
+      ? "The roll number on this link does not match your signed-in account. Open the exam from your student dashboard instead."
+      : loadError;
+  if (blockingError) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-paper p-4 text-center">
         <div className="max-w-md border border-line bg-paper p-8 shadow-sm">
           <p className="font-mono text-[10px] uppercase tracking-widest text-alert">Assessment notice</p>
           <h1 className="mt-2 font-serif text-2xl font-semibold text-ink">Cannot Load Exam</h1>
-          <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{loadError}</p>
+          <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{blockingError}</p>
           <a
             href="/student/exams"
             className="mt-6 inline-block border border-maroon bg-maroon px-5 py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon/90"
@@ -888,7 +945,10 @@ export default function StudentExam() {
         sectionCount={Math.max(1, sections.length)}
         durationMin={durationMin}
         studentName={studentName}
+        studentRoll={STUDENT_ROLL}
         sections={sections.map((s) => ({ name: s.name, count: s.count }))}
+        consentGiven={consentGiven}
+        onConsentChange={setConsentGiven}
         onBack={() => setStep("register")}
         onStart={(idx) => {
           const target = Math.max(0, Math.min(idx, Math.max(0, sections.length - 1)));
@@ -944,7 +1004,7 @@ export default function StudentExam() {
           <div className="flex w-full max-w-xl items-start gap-3 border border-amber bg-amber px-4 py-3 text-paper shadow-2xl">
             <span className="mt-1 h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-paper" />
             <div className="flex-1">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">📢 {broadcast.sender} · broadcast</p>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">{broadcast.sender} · broadcast</p>
               <p className="mt-0.5 text-[14px] font-medium">{broadcast.body}</p>
             </div>
             <button onClick={() => setBroadcast(null)} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>

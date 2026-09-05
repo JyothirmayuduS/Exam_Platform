@@ -466,6 +466,10 @@ export type AttemptRecord = {
   answers: Record<string, unknown>;
   /** Per-student question snapshot (ordered DB question ids + shuffled options). */
   paper: unknown;
+  /** When the candidate accepted the recording/consent notice, if ever. */
+  consent_at: string | null;
+  /** The candidate's browser User-Agent at attempt start (device telemetry). */
+  user_agent: string | null;
 };
 
 export async function startAttempt(opts: {
@@ -473,6 +477,8 @@ export async function startAttempt(opts: {
   studentId: string;
   total: number;
   paper?: PaperSlot[];
+  /** Candidate browser User-Agent — device telemetry for the proctor roster. */
+  userAgent?: string;
 }): Promise<string | null> {
   const db = getSupabase();
   if (!db) return null;
@@ -488,7 +494,12 @@ export async function startAttempt(opts: {
     if (existing.state === "submitted") {
       return existing.id;
     }
-    const patch: Record<string, unknown> = { state: "in_progress", started_at: new Date().toISOString(), total: opts.total };
+    const patch: Record<string, unknown> = {
+      state: "in_progress",
+      started_at: new Date().toISOString(),
+      total: opts.total,
+      user_agent: opts.userAgent ?? null,
+    };
     if (opts.paper && opts.paper.length > 0) patch.paper = opts.paper;
     const { error } = await db.from("attempts").update(patch).eq("id", existing.id);
     if (error) return null;
@@ -504,11 +515,29 @@ export async function startAttempt(opts: {
       total: opts.total,
       started_at: new Date().toISOString(),
       paper: opts.paper ?? [],
+      user_agent: opts.userAgent ?? null,
     })
     .select("id")
     .maybeSingle();
   if (error) return null;
   return (data?.id as string) ?? null;
+}
+
+/** Records the candidate's consent to recording/proctoring on an attempt. */
+export async function recordConsent(
+  attemptId: string,
+  consent: { text: string; version: string },
+): Promise<boolean> {
+  const db = getSupabase();
+  if (!db) return false;
+  const { error } = await db
+    .from("attempts")
+    .update({
+      consent_at: new Date().toISOString(),
+      consent_text: consent.text.slice(0, 4000),
+    })
+    .eq("id", attemptId);
+  return !error;
 }
 
 /** Autosave the student's answers + progress. No-op-safe when offline. */
@@ -614,6 +643,8 @@ export type LiveAttempt = {
   started_at: string | null;
   submitted_at: string | null;
   auto_saved_at: string | null;
+  consent_at: string | null;
+  user_agent: string | null;
   student: { id: string; roll: string; full_name: string; email: string | null } | null;
   violations: ViolationEvent[];
 };
@@ -624,7 +655,7 @@ export async function listLiveAttempts(examId?: string | null): Promise<LiveAtte
   if (!db) return [];
   let query = db
     .from("attempts")
-    .select("id,exam_id,state,answered,total,minutes_used,score,answers,paper,started_at,submitted_at,auto_saved_at,student:students(id,roll,full_name,email)")
+    .select("id,exam_id,state,answered,total,minutes_used,score,answers,paper,started_at,submitted_at,auto_saved_at,consent_at,user_agent,student:students(id,roll,full_name,email)")
     .order("auto_saved_at", { ascending: false });
   if (examId) query = query.eq("exam_id", examId);
   const { data, error } = await query;
@@ -648,6 +679,8 @@ export async function listLiveAttempts(examId?: string | null): Promise<LiveAtte
           started_at: (r.started_at as string) ?? null,
           submitted_at: (r.submitted_at as string) ?? null,
           auto_saved_at: (r.auto_saved_at as string) ?? null,
+          consent_at: (r.consent_at as string | null) ?? null,
+          user_agent: (r.user_agent as string | null) ?? null,
           student: student
             ? {
                 id: String((student as Record<string, unknown>).id),
@@ -693,6 +726,8 @@ export async function listLiveAttempts(examId?: string | null): Promise<LiveAtte
             started_at: null,
             submitted_at: null,
             auto_saved_at: null,
+            consent_at: null,
+            user_agent: null,
             student: {
               id: String((st as Record<string, unknown>).id),
               roll: String((st as Record<string, unknown>).roll),

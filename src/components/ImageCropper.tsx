@@ -101,7 +101,7 @@ export default function ImageCropper({ blob, onCrop, onCancel }: ImageCropperPro
     [[c.x, c.y], [c.x + c.w - hs, c.y], [c.x, c.y + c.h - hs], [c.x + c.w - hs, c.y + c.h - hs]].forEach(([hx, hy]) => {
       ctx.fillRect(hx!, hy!, hs, hs);
     });
-  }, []); // ✅ no `crop` dep — reads cropRef.current instead
+  }, []); // [ok] no `crop` dep — reads cropRef.current instead
 
   // Init crop size after image loads
   useEffect(() => {

@@ -68,6 +68,7 @@ export default function TeacherDashboard() {
             mode: e.mode,
           }))
         );
+        void refreshTotals(dbExams.map((e) => ({ id: e.id, state: e.status })));
       }
       if (active) setLoadingExams(false);
     };
@@ -80,25 +81,41 @@ export default function TeacherDashboard() {
   const subSection = pathParts[2] || "";
   const examAction = pathParts[3] || "";
 
-  // Fetch live attempts for the active exam for the nav badges
-  const { data: attempts = [] } = useLiveAttempts("EXAM-2026-014");
+  // Aggregate roster totals across ALL of the teacher's exams (not one hardcoded
+  // demo exam), refreshed every 45s so nav badges and the overview stay live.
+  const [totals, setTotals] = useState({ live: 0, submitted: 0, flagged: 0, scored: 0, scoreSum: 0 });
 
-  const liveAttemptsCount = attempts.filter((a) => a.state !== "Submitted").length;
-  const submittedAttemptsCount = attempts.filter((a) => a.state === "Submitted").length;
-  const needsAttentionCount = attempts.filter(needsAttention).length;
+  const refreshTotals = async (examList: { id: string; state?: string }[]) => {
+    const t = { live: 0, submitted: 0, flagged: 0, scored: 0, scoreSum: 0 };
+    for (const ex of examList) {
+      if (ex.state === "draft" || ex.state === "Draft") continue;
+      const rows = await listLiveAttempts(ex.id);
+      for (const r of rows) {
+        if (r.state === "submitted") t.submitted += 1;
+        else if (r.state === "in_progress" || r.state === "paused" || r.state === "not_started") t.live += 1;
+        if ((r.violations ?? []).length > 0) t.flagged += 1;
+        if (typeof r.score === "number") { t.scored += 1; t.scoreSum += r.score; }
+      }
+    }
+    setTotals(t);
+  };
 
-  const nav = getTeacherNav(liveAttemptsCount, submittedAttemptsCount, needsAttentionCount, createdExams.length);
+  useEffect(() => {
+    if (!createdExams.length) return;
+    const t = window.setInterval(() => void refreshTotals(createdExams), 45000);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createdExams]);
 
-  // Real average score across attempts that carry a score (auto-graded/updated).
-  const scored = attempts.filter((a) => typeof a.score === "number");
-  const avgScore = scored.length
-    ? (scored.reduce((sum, a) => sum + (a.score as number), 0) / scored.length).toFixed(1)
-    : null;
+  const nav = getTeacherNav(totals.live, totals.submitted, totals.flagged, createdExams.length);
+
+  const avgScore =
+    totals.scored > 0 ? (totals.scoreSum / totals.scored).toFixed(1) : null;
 
   return (
     <>
       <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav}>
-        {section === "overview" && <Overview notify={notify} navigate={navigate} examsList={createdExams} loading={loadingExams} avgScore={avgScore} scoredCount={scored.length} stats={{ live: liveAttemptsCount, submitted: submittedAttemptsCount, flagged: needsAttentionCount }} />}
+        {section === "overview" && <Overview notify={notify} navigate={navigate} examsList={createdExams} loading={loadingExams} avgScore={avgScore} scoredCount={totals.scored} stats={{ live: totals.live, submitted: totals.submitted, flagged: totals.flagged }} />}
     {section === "exams" && subSection === "new" && <TeacherExams notify={notify} navigate={navigate} exams={createdExams} autoCreate onCreate={(exam) => setCreatedExams((current) => [{ id: exam.id, name: exam.name, batch: exam.batch, state: exam.status === "draft" ? "Draft" : exam.status === "scheduled" ? "Scheduled" : "Live", count: `${exam.pool_count} questions`, tone: exam.status === "draft" ? "text-amber" : "text-success", progress: exam.status === "draft" ? 18 : 100, schedule: exam.scheduled_at, duration: exam.duration_minutes, mode: exam.mode }, ...current])} />}
     {section === "exams" && subSection && subSection !== "new" && examAction === "settings" && <ExamSettings notify={notify} navigate={navigate} examId={subSection} examsList={createdExams} />}
     {section === "exams" && subSection && subSection !== "new" && examAction === "build" && <ExamStudio notify={notify} navigate={navigate} examId={subSection} onSaved={(exam) => setCreatedExams((current) => { const rest = current.filter((e) => e.id !== exam.id); return [{ id: exam.id, name: exam.name, batch: exam.batch, state: exam.status === "draft" ? "Draft" : exam.status === "scheduled" ? "Scheduled" : "Live", count: `${exam.pool_count} questions`, tone: exam.status === "draft" ? "text-amber" : "text-success", progress: exam.status === "draft" ? 18 : 100, schedule: exam.scheduled_at, duration: exam.duration_minutes, mode: exam.mode }, ...rest]; })} />}
@@ -323,7 +340,7 @@ function Reports({ notify }: { notify: (s: string) => void }) {
   const [exams, setExams] = useState<ExamRecord[]>([]);
   const [examId, setExamId] = useState<string>("");
   const [busy, setBusy] = useState(false);
-  const { data: liveAttempts = [] } = useLiveAttempts(examId || "EXAM-2026-014");
+  const { data: liveAttempts = [] } = useLiveAttempts(examId || "");
 
   useEffect(() => {
     let active = true;
@@ -404,7 +421,7 @@ function Reports({ notify }: { notify: (s: string) => void }) {
         <div className="flex flex-wrap items-center gap-2">
           <select value={examId} onChange={(e) => setExamId(e.target.value)} className="border border-line-strong bg-paper px-2 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
             {exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-            {exams.length === 0 && <option value="EXAM-2026-014">Data Structures & Algorithms</option>}
+            {exams.length === 0 && <option value="">No exams yet — create one first</option>}
           </select>
           <Button onClick={() => void releaseResults()}>{busy ? "Releasing…" : resultsPublished ? "✓ Results Released" : "Release Results"}</Button>
           <Button onClick={() => void publishAnswerKey()}>{answerKeyPublished ? "✓ Answer Key Published" : "Publish Answer Key"}</Button>
@@ -600,7 +617,11 @@ function SettingsPanel({ notify }: { notify: (s: string) => void }) {
   const sendTestEmail = async () => {
     const db = getSupabase();
     if (!db) { notify("Email service unavailable (offline)"); return; }
-    const { error } = await db.functions.invoke("send-reminder-email", { body: { examId: "EXAM-2026-014", studentEmail: email || profile?.email || null } });
+    // Send the reminder against a real exam of this teacher — never a demo id.
+    const exams = await listExamsForTeacher();
+    const examId = exams?.find((e) => e.status !== "draft")?.id;
+    if (!examId) { notify("Create and publish an exam first, then send a test reminder"); return; }
+    const { error } = await db.functions.invoke("send-reminder-email", { body: { examId, studentEmail: email || profile?.email || null } });
     notify(error ? `Test email failed: ${error.message}` : "Test email sent");
   };
   const b = (key: string) => settings[key] !== false;

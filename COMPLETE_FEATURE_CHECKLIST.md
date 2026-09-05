@@ -1,5 +1,27 @@
 # Exam Platform - Complete Feature Checklist & Missing Features
 
+> ## ⚠️ STATUS UPDATE (September 5, 2026)
+> This document is the original Sept 1 roadmap. The sections below marked ❌
+> **no longer reflect reality** — the vast majority of Phases 2.2-5 were built
+> since then. See the in-repo implementation list below; `README.md` and
+> `SETUP.md` are the current references.
+>
+> **Built since this checklist was written:** question palette/navigation, marks
+> & keyboard shortcuts, autosave + offline sync, subjective QR mobile upload,
+> results + appeals, teacher exam wizard (My tests → paper builder → publish),
+> reusable question bank with pools, batch enrolment + CSV import, live
+> submissions, evaluation (auto + manual, camera-monitored), grading
+> delegation/auto-assign, proctoring command centre (assessment selector,
+> fair-share allocation, video wall, voice, warning/pause/escalate), violation
+> DB + recording review with seek-bar markers, R2 retention, 14 edge functions,
+> native Tauri lockdown app, live proctor voice, realtime rosters, role-scoped
+> RLS + auth provisioning, consent audit trail, e2e + unit tests, Sentry.
+>
+> **Deliberately deferred / next:** server-side AI proctoring (face-swap,
+> second-person), durable video egress (today: per-second R2 snapshots),
+> retention-policy UI, load-testing at full-cohort scale, accessibility
+> pass, i18n beyond the current EN surface, dark mode.
+
 **Current Status:** Phase 2.1 Completed | Modules 2.2-5 Pending
 
 **Last Updated:** September 1, 2026

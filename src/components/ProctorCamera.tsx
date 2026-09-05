@@ -132,7 +132,7 @@ export default function ProctorCamera({
       cameraRecordRef.current = null;
       screenRecordRef.current = null;
     };
-  }, [room, identity]); // ✅ No eslint-disable needed — connectRef is stable
+  }, [room, identity]); // [ok] No eslint-disable needed — connectRef is stable
 
   // Auto-reconnect when camera dies
   useEffect(() => {

@@ -6,6 +6,7 @@ import { loadExamBundle, updateAttemptScore, listAttemptViolations, getAttemptEx
 import { type Attempt, type Flag } from "../data/examSession";
 import { questionsForPaper, remapAnswer, type PaperSlot } from "../lib/paperBuilder";
 import useLiveAttempts from "../hooks/useLiveAttempts";
+import useTeacherExams from "../hooks/useTeacherExams";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import ProctorAI from "../components/ProctorAI";
 import { RecordingReviewModal } from "../components/RecordingReview";
@@ -91,7 +92,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
   // The exam whose submitted papers are graded. When a candidate is opened from
   // Submissions (?review=<attemptId>) the attempt's own exam is resolved, so a
   // linked paper always grades against the right pool and snapshot.
-  const [examId, setExamId] = useState("EXAM-2026-014");
+  const [examId, setExamId] = useState<string | null>(null);
   useEffect(() => {
     const reviewId = searchParams.get("review");
     if (!reviewId) return;
@@ -102,15 +103,25 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     return () => { alive = false; };
   }, [searchParams]);
 
-  const { data: liveAttempts = [] } = useLiveAttempts(examId);
+  const scope = useTeacherExams();
+  const effectiveExamId = examId ?? scope.examId;
+  const effectiveExamName =
+    (examId ? scope.exams.find((e) => e.id === examId) : null)?.name ?? scope.exam?.name ?? "";
+  const selectExamForEval = (id: string) => {
+    setExamId(id);
+    scope.selectExam(id);
+  };
+
+  const { data: liveAttempts = [] } = useLiveAttempts(effectiveExamId ?? "", effectiveExamName);
 
   const liveAttemptsCount = liveAttempts.filter((a) => a.state !== "Submitted").length;
   const submittedAttemptsCount = liveAttempts.filter((a) => a.state === "Submitted").length;
   const nav = getTeacherNav(liveAttemptsCount, submittedAttemptsCount, 0);
 
   const { data: examBundle } = useQuery({
-    queryKey: ["examBundle", examId],
-    queryFn: () => loadExamBundle(examId),
+    queryKey: ["examBundle", effectiveExamId],
+    queryFn: () => (effectiveExamId ? loadExamBundle(effectiveExamId) : Promise.resolve({ exam: null, questions: [] })),
+    enabled: !!effectiveExamId,
   });
 
   const [roster, setRoster] = useState<Candidate[]>([]);
@@ -142,7 +153,6 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
 
   const [statusFilter, setStatusFilter] = useState<"All" | Status>("All");
   const [flaggedOnly, setFlaggedOnly] = useState(false);
-  const [subject, setSubject] = useState("All exams");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("Submission time");
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
@@ -162,14 +172,11 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     notify(n > 0 ? `Assigned ${delegateName} to ${n} candidate(s)` : "Could not assign — no valid attempts selected");
   };
 
-  const subjects = useMemo(() => ["All exams", ...Array.from(new Set(roster.map((c) => c.exam)))], [roster]);
-
   const preSort = useMemo(() => roster.filter((c) => {
     if (flaggedOnly && c.flags.length === 0) return false;
-    if (subject !== "All exams" && c.exam !== subject) return false;
     const q = search.trim().toLowerCase();
     return !q || `${c.name} ${c.roll}`.toLowerCase().includes(q);
-  }), [roster, flaggedOnly, subject, search]);
+  }), [roster, flaggedOnly, search]);
 
   const counts = useMemo(() => ({
     All: preSort.length,
@@ -321,7 +328,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
       <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_190px_190px]">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search candidate name or roll number" className="border border-line-strong bg-paper px-3 py-2.5 text-[13px] outline-none focus:border-forest" />
         <label className="sr-only" htmlFor="subj">Exam</label>
-        <select id="subj" value={subject} onChange={(e) => setSubject(e.target.value)} className="border border-line-strong bg-paper px-3 py-2.5 text-[13px] outline-none focus:border-forest">{subjects.map((s) => <option key={s}>{s}</option>)}</select>
+        <select id="subj" value={effectiveExamId ?? ""} onChange={(e) => selectExamForEval(e.target.value)} className="border border-line-strong bg-paper px-3 py-2.5 text-[13px] outline-none focus:border-forest">{scope.exams.filter((e) => e.status !== "draft").map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}{scope.exams.length === 0 && <option value="">No exams yet</option>}</select>
         <label className="sr-only" htmlFor="sort">Sort by</label>
         <select id="sort" value={sort} onChange={(e) => setSort(e.target.value)} className="border border-line-strong bg-paper px-3 py-2.5 text-[13px] outline-none focus:border-forest"><option>Submission time</option><option>Score</option><option>Roll number</option><option>Name</option></select>
       </div>
@@ -506,7 +513,7 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
     }
     void saveViolation(
       candidate.id,
-      candidate.examId ?? "EXAM-2026-014",
+      candidate.examId ?? "",
       candidate.studentId,
       "grading_moderation",
       `Answer paper of ${candidate.name} (${candidate.roll}) flagged for moderation by ${profileName}`,
@@ -569,16 +576,20 @@ function RecordingReviewBridge({ attemptId, roll, name, onClose }: {
   attemptId: string; roll: string; name: string; onClose: () => void;
 }) {
   const [violations, setViolations] = useState<ViolationEvent[]>([]);
-  const [examId, setExamId] = useState("EXAM-2026-014");
+  const [examId, setExamId] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    void listAttemptViolations(attemptId).then((vs) => {
+    void (async () => {
+      const vs = await listAttemptViolations(attemptId);
       if (!alive) return;
-      if (vs.length > 0) setExamId(vs[0].exam_id);
       setViolations(vs);
-    });
+      // Exam id comes from the attempt itself (real), never a demo constant.
+      const resolved = vs[0]?.exam_id ?? (await getAttemptExamId(attemptId));
+      if (alive && resolved) setExamId(resolved);
+    })();
     return () => { alive = false; };
   }, [attemptId]);
+  if (!examId) return null;
   return <RecordingReviewModal examId={examId} roll={roll} name={name} violations={violations} onClose={onClose} />;
 }
 

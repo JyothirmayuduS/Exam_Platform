@@ -122,8 +122,10 @@ export default function StudentExams() {
                     // Already inside the lockdown browser — go straight into the exam.
                     void navigate(`/student/exam?examId=${encodeURIComponent(r.id)}`);
                   } else {
-                    // Normal browser: instantly trigger the deep link to open the app
-                    window.location.href = `vignan-exam://open?exam=${encodeURIComponent(r.id)}&roll=${encodeURIComponent(profile && "roll" in profile ? profile.roll : "21BQ1A0501")}`;
+                    // Normal browser: instantly trigger the deep link to open the app.
+                    // The roll comes from the signed-in profile only — never fabricated.
+                    const profileRoll = profile && "roll" in profile ? profile.roll : "";
+                    window.location.href = `vignan-exam://open?exam=${encodeURIComponent(r.id)}${profileRoll ? `&roll=${encodeURIComponent(profileRoll)}` : ""}`;
                     // If it doesn't open (not installed), show the gate/modal fallback after a delay
                     setTimeout(() => {
                       setEnterModal(r.name);

@@ -81,7 +81,7 @@ export default function ProctorChatPanel({
           <div key={m.id} className={`flex gap-2 ${m.kind === "broadcast" ? "border border-amber/40 bg-amber/5 p-2" : ""}`}>
             <div className="min-w-0">
               <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">
-                {m.sender} · {m.sender_role}{m.kind === "broadcast" ? " · 📢 broadcast" : ""}
+                {m.sender} · {m.sender_role}{m.kind === "broadcast" ? " · Broadcast" : ""}
               </p>
               <p className="mt-0.5 text-[12px]">{m.body}</p>
               <p className="mt-0.5 font-mono text-[9px] text-ink-soft/70">
