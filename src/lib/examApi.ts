@@ -973,6 +973,35 @@ export async function bulkImportGlobalStudents(students: { roll: string; name: s
   return { count: data.length };
 }
 
+/**
+ * Provision real Supabase Auth logins for student rows (by roll) via the
+ * provision-student-accounts edge function. Each account is
+ * <roll>@student.vignan.ac.in with the configured default password.
+ */
+export async function provisionStudentLoginAccounts(
+  rolls: string[],
+  opts?: { sendEmail?: boolean },
+): Promise<{ ok: boolean; error?: string; created?: { roll: string; login: string }[]; already?: string[]; failed?: { roll: string; reason: string }[] }> {
+  const db = getSupabase();
+  if (!db) return { ok: false, error: "No DB connection" };
+  if (rolls.length === 0) return { ok: false, error: "No rolls selected" };
+  const { data, error } = await db.functions.invoke("provision-student-accounts", {
+    body: { rolls, sendEmail: opts?.sendEmail !== false },
+  });
+  if (error) return { ok: false, error: error.message };
+  const d = (data ?? {}) as {
+    created?: { roll: string; login: string }[];
+    alreadyProvisioned?: string[];
+    failed?: { roll: string; reason: string }[];
+  };
+  return {
+    ok: true,
+    created: d.created ?? [],
+    already: d.alreadyProvisioned ?? [],
+    failed: d.failed ?? [],
+  };
+}
+
 export async function removeStudentFromExam(examId: string, roll: string): Promise<{ error?: string }> {
   const db = getSupabase();
   if (!db) return { error: "No DB connection" };

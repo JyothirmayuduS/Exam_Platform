@@ -35,6 +35,7 @@ import useOfflineSync from "../hooks/useOfflineSync";
 import useCurrentProfile from "../hooks/useCurrentProfile";
 import { invoke } from "@tauri-apps/api/core";
 import { uploadExamRecords, startScreenshotCapture, type ScreenshotHandle, type ViolationSnap } from "../lib/examStorage";
+import { startServerProctorWatchdog, type ServerProctorHandle } from "../lib/serverProctor";
 import {
   DownloadGateScreen,
   InstalledScreen,
@@ -150,6 +151,11 @@ export default function StudentExam() {
   const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
   // Screenshot capture handle (startScreenshotCapture)
   const screenshotHandleRef = useRef<ScreenshotHandle | null>(null);
+  // Server-side proctor watchdog (downsampled frames -> proctor-ai-server fn)
+  const serverProctorRef = useRef<ServerProctorHandle | null>(null);
+  // Mirror the attempt id so long-lived effects always read the latest value.
+  const attemptIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => { attemptIdRef.current = attemptId; }, [attemptId]);
   // Real violation snapshot blobs (captured at violation moment), with the
   // offset in seconds from the exam start for the PDF + seek-bar timeline.
   const violationSnapshotsRef = useRef<ViolationSnap[]>([]);
@@ -259,11 +265,23 @@ export default function StudentExam() {
       });
       screenshotHandleRef.current.setVideo(hiddenVideoRef.current);
     }
+    // Server-side watchdog: same screen feed, downsampled, analysed server-side.
+    if (screenStreamRef.current) {
+      serverProctorRef.current = startServerProctorWatchdog({
+        stream: screenStreamRef.current,
+        examId: EXAM_ID,
+        attemptRef: () => attemptIdRef.current,
+      });
+    }
     // Stop when exam ends
     return () => {
       if (screenshotHandleRef.current) {
         screenshotHandleRef.current.stop();
         screenshotHandleRef.current = null;
+      }
+      if (serverProctorRef.current) {
+        serverProctorRef.current.stop();
+        serverProctorRef.current = null;
       }
     };
   }, [step]);

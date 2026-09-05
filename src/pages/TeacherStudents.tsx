@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
-import { FiDownload, FiChevronRight } from "react-icons/fi";
-import { getExamRoster, bulkEnrollStudents, removeStudentFromExam, getStudentsByBranchAndSection, bulkImportGlobalStudents, type Student as DBStudent } from "../lib/examApi";
+import { FiDownload, FiChevronRight, FiUserPlus, FiCheckCircle } from "react-icons/fi";
+import { getExamRoster, bulkEnrollStudents, removeStudentFromExam, getStudentsByBranchAndSection, bulkImportGlobalStudents, provisionStudentLoginAccounts, type Student as DBStudent } from "../lib/examApi";
 
 type Exam = { id: string; name: string; batch: string; state: string; tone: string };
 
@@ -79,6 +79,8 @@ export default function TeacherStudents({ exams, navigate, notify }: { exams: Ex
         onEnrolled={() => batch && loadRoster(batch.id)}
       />
 
+      <LoginProvisionPanel roster={roster} notify={notify} />
+
       <RosterTable loading={loading} visible={visible} total={roster.length} search={search} setSearch={setSearch} onRemove={remove} />
     </div>
   );
@@ -136,6 +138,87 @@ function StatChip({ label, value }: { label: string; value: string }) {
       <p className="font-serif text-[26px] leading-none text-ink">{value}</p>
       <p className="mt-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft">{label}</p>
     </div>
+  );
+}
+
+/**
+ * Bulk login provisioning — calls the provision-student-accounts edge function
+ * so every enrolled student gets a real Supabase Auth login
+ * (<roll>@student.vignan.ac.in) with the configured default password.
+ */
+function LoginProvisionPanel({ roster, notify }: { roster: Student[]; notify: (m: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{
+    created: number;
+    already: number;
+    failed: { roll: string; reason: string }[];
+  } | null>(null);
+
+  const provision = async () => {
+    const rolls = roster.map((r) => r.roll).filter(Boolean);
+    if (rolls.length === 0) {
+      notify("Enroll students first — there is nothing to provision");
+      return;
+    }
+    setBusy(true);
+    setResult(null);
+    const res = await provisionStudentLoginAccounts(rolls, { sendEmail: false });
+    setBusy(false);
+    if (!res.ok) {
+      notify("Provisioning failed: " + (res.error ?? "unknown error"));
+      return;
+    }
+    setResult({ created: (res.created ?? []).length, already: (res.already ?? []).length, failed: res.failed ?? [] });
+    if ((res.failed ?? []).length === 0) {
+      notify(`Login accounts ready — ${res.created?.length ?? 0} created, ${res.already?.length ?? 0} already existed`);
+    }
+  };
+
+  return (
+    <section className="border border-line bg-paper p-6">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+        <div className="max-w-2xl">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Candidate logins</p>
+          <h2 className="mt-1 font-serif text-xl font-semibold">Provision sign-in accounts</h2>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
+            Creates a real Supabase Auth account for each enrolled student. Candidates then sign in at{" "}
+            <span className="font-mono text-[11px] text-ink">/login</span> with their roll as username
+            (<span className="font-mono text-[11px] text-ink">roll@student.vignan.ac.in</span>) and the default password.
+            Already-provisioned students are skipped — this is safe to re-run after enrolling more students.
+          </p>
+        </div>
+        <button
+          onClick={() => void provision()}
+          disabled={busy || roster.length === 0}
+          className="inline-flex shrink-0 items-center gap-2 border border-forest bg-forest px-5 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <FiUserPlus aria-hidden /> {busy ? "Provisioning…" : `Provision ${roster.length} login${roster.length === 1 ? "" : "s"}`}
+        </button>
+      </div>
+
+      {result && (
+        <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-line pt-4 font-mono text-[11px]">
+          <span className="flex items-center gap-1.5 text-success"><FiCheckCircle aria-hidden /> {result.created} created</span>
+          <span className="text-ink-soft">{result.already} already existed</span>
+          {result.failed.length > 0 && (
+            <span className="text-alert">{result.failed.length} failed</span>
+          )}
+          {result.created > 0 && (
+            <span className="text-ink-soft">Sign-in: <span className="text-ink">roll@student.vignan.ac.in</span></span>
+          )}
+          {result.failed.length > 0 && (
+            <details className="text-[11px]">
+              <summary className="cursor-pointer uppercase tracking-wider text-alert">Why some failed</summary>
+              <ul className="mt-2 space-y-1">
+                {result.failed.map((f) => (
+                  <li key={f.roll}><span className="text-ink">{f.roll}</span> — {f.reason}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

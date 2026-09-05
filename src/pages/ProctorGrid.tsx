@@ -4,7 +4,7 @@ import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
 import { listLiveAttempts, subscribeToAttempts, saveViolation, setAttemptPaused, forceSubmitAttempt, sendProctorMessage, extendAttemptTime, listAssignedExamsForAuthUser, listExams, type LiveAttempt, type ViolationEvent } from "../lib/examApi";
 import { startProctorViewing, identityLabel, type RemoteFeed, type ViewerState } from "../lib/proctorViewer";
-import { FiDownload, FiPlay, FiMic, FiMicOff } from "react-icons/fi";
+import { FiDownload, FiPlay, FiMic, FiMicOff, FiMonitor, FiMaximize, FiVolume2, FiVolumeX } from "react-icons/fi";
 import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
 import RecordingReviewer from "../components/RecordingReview";
 import useCurrentProfile from "../hooks/useCurrentProfile";
@@ -422,7 +422,9 @@ export default function ProctorGrid() {
             </button>
             <span className="flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-alert" /> Session live</span>
           </div>
-          <span className="font-mono text-[9px] text-ink-soft tracking-wider">Ping: 12ms · Proctor FPS: 24</span>
+          <span className="font-mono text-[9px] text-ink-soft tracking-wider">
+            {tiles.length} candidate{tiles.length === 1 ? "" : "s"} · {feeds.length} live feed{feeds.length === 1 ? "" : "s"} · {viewerState === "connected" ? "feeds connected" : "feeds connecting"}
+          </span>
         </div>
       </div>
 
@@ -451,7 +453,7 @@ export default function ProctorGrid() {
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 font-mono text-[9px] uppercase text-ink-soft"><input type="checkbox" checked={autoFocus} onChange={e => setAutoFocus(e.target.checked)} className="accent-forest"/> Auto-focus violations</label>
-          <span className={`font-mono text-[10px] ${connTone}`}>● {connLabel}</span>
+          <span className={`inline-flex items-center gap-1.5 font-mono text-[10px] ${connTone}`}><span className={`h-1.5 w-1.5 rounded-full ${!live ? "bg-line-strong" : viewerState === "connected" ? "bg-success" : "bg-amber"}`} /> {connLabel}</span>
           <input type="text" placeholder="Search ID/Name..." value={search} onChange={e => setSearch(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] outline-none focus:border-forest w-32" />
           <select value={filter} onChange={(e) => setFilter(e.target.value as Filter)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider">
             <option value="all">All candidates</option>
@@ -519,7 +521,7 @@ function StatCard({ label, value, sub, alert = false }: { label: string; value: 
 
 // Renders a live <video> element (from LiveKit) into a holder, or an initials
 // placeholder when that feed isn't available yet.
-function FeedVideo({ el, initials, label }: { el: HTMLVideoElement | null; initials: string; label: string }) {
+function FeedVideo({ el, initials, label, isScreen = false }: { el: HTMLVideoElement | null; initials: string; label: string; isScreen?: boolean }) {
   const holderRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const holder = holderRef.current;
@@ -531,8 +533,8 @@ function FeedVideo({ el, initials, label }: { el: HTMLVideoElement | null; initi
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#1F231D]">
       <div ref={holderRef} className="absolute inset-0" />
-      {!el && <span className="font-serif text-2xl text-paper/30">{initials}</span>}
-      {el && <span className="absolute left-1.5 top-1.5 bg-ink/75 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper">● {label}</span>}
+      {!el && (isScreen ? <FiMonitor aria-hidden className="h-7 w-7 text-paper/30" /> : <span className="font-serif text-2xl text-paper/30">{initials}</span>)}
+      {el && <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 bg-ink/75 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper"><span className="h-1 w-1 rounded-full bg-alert" /> {label}</span>}
     </div>
   );
 }
@@ -544,10 +546,10 @@ function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; fee
       {view === "split" ? (
         <div className="grid grid-cols-2 gap-px bg-line">
           <div className="aspect-[4/3]"><FeedVideo el={feed?.camera ?? null} initials={tile.initials} label="CAM" /></div>
-          <div className="aspect-[4/3]"><FeedVideo el={feed?.screen ?? null} initials="⧉" label="SCREEN" /></div>
+          <div className="aspect-[4/3]"><FeedVideo el={feed?.screen ?? null} initials="" label="SCREEN" isScreen /></div>
         </div>
       ) : (
-        <div className="aspect-video"><FeedVideo el={view === "screen" ? feed?.screen ?? null : feed?.camera ?? null} initials={view === "screen" ? "⧉" : tile.initials} label={view === "screen" ? "SCREEN" : "CAM"} /></div>
+        <div className="aspect-video"><FeedVideo el={view === "screen" ? feed?.screen ?? null : feed?.camera ?? null} initials={view === "screen" ? "" : tile.initials} label={view === "screen" ? "SCREEN" : "CAM"} isScreen={view === "screen"} /></div>
       )}
       <div className="flex items-center justify-between gap-2 border-t border-line px-2.5 py-2">
         <div className="min-w-0">
@@ -585,7 +587,7 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
         </div>
         <div ref={feedRef} className="space-y-px bg-line p-px relative group">
           <div className="aspect-video bg-paper relative"><FeedVideo el={feed?.camera ?? null} initials={selected.initials} label="CAMERA" /></div>
-          <div className="aspect-video bg-paper relative"><FeedVideo el={feed?.screen ?? null} initials="⧉ screen" label="SCREEN SHARE" /></div>
+          <div className="aspect-video bg-paper relative"><FeedVideo el={feed?.screen ?? null} initials="" label="SCREEN SHARE" isScreen /></div>
           <div className="absolute top-2 right-2 flex gap-2">
             <button
               onClick={() => {
@@ -594,9 +596,9 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
                 if (document.fullscreenElement) void document.exitFullscreen();
                 else void el.requestFullscreen().catch(() => undefined);
               }}
-              className="bg-ink/80 text-paper px-2 py-1 font-mono text-[9px] hover:bg-ink transition-colors"
+              className="inline-flex items-center gap-1.5 bg-ink/80 text-paper px-2 py-1 font-mono text-[9px] hover:bg-ink transition-colors"
             >
-              {document.fullscreenElement ? "⛶ Exit" : "⛶ Fullscreen"}
+              {document.fullscreenElement ? <><FiMaximize aria-hidden /> Exit</> : <><FiMaximize aria-hidden /> Fullscreen</>}
             </button>
             <button
               onClick={() => {
@@ -607,9 +609,9 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
                 setAudioOn(next);
               }}
               disabled={!feed?.audioTrack}
-              className="bg-ink/80 text-paper px-2 py-1 font-mono text-[9px] hover:bg-ink transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 bg-ink/80 text-paper px-2 py-1 font-mono text-[9px] hover:bg-ink transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {audioOn ? "🔊 Audio on" : "🔇 Unmute Audio"}
+              {audioOn ? <><FiVolume2 aria-hidden /> Audio on</> : <><FiVolumeX aria-hidden /> Unmute Audio</>}
             </button>
           </div>
         </div>

@@ -10,7 +10,7 @@ import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
 import { downloadSessionReportPdf } from "../lib/sessionReport";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import { getTeacherNav } from "./TeacherDashboard";
-import { FiVideo, FiMonitor, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight, FiVolume2 } from "react-icons/fi";
+import { FiVideo, FiMonitor, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight, FiVolume2, FiVolumeX } from "react-icons/fi";
 import ProctoringAssessmentSelect from "../components/teacher/ProctoringAssessmentSelect";
 import { Button } from "../components/ui";
 import type { ProctorAssignment } from "../lib/examApi";
@@ -388,7 +388,7 @@ export default function TeacherProctoring() {
           Assign Proctors
         </button>
         <button onClick={exportReport} className="border border-line-strong px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Export Report</button>
-        <span className="border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert">● Session live</span>
+        <span className="inline-flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-alert" /> Session live</span>
       </div>
     </div>
     <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -403,7 +403,7 @@ export default function TeacherProctoring() {
         <strong>LiveKit Error:</strong> {viewerError}
       </div>
     )}
-    <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat{chatCount > 0 ? ` (${chatCount})` : ""}</button></div><div className="flex items-center gap-3"><span className={`font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}>● {live ? `${feedCount} feed(s) · DB live` : "Not connected"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
+    <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat{chatCount > 0 ? ` (${chatCount})` : ""}</button></div><div className="flex items-center gap-3"><span className={`inline-flex items-center gap-1.5 font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}><span className={`h-1.5 w-1.5 rounded-full ${live ? "bg-success" : "bg-line-strong"}`} /> {live ? `${feedCount} feed(s) · DB live` : "Not connected"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
     {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChatPanel examId={selectedExamId} senderName={profile?.full_name ?? "Teacher"} senderRole="teacher" onCountChange={setChatCount} maxHeight={420} />}
     <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
       <section className="border border-line bg-paper p-5 sm:p-6">
@@ -428,7 +428,7 @@ export default function TeacherProctoring() {
             ) : (
               <div className="relative mt-4 flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#D9D5CB]">
                 <FeedView feed={feedFor(selected)} initials={selected.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}/>
-                <span className="absolute bottom-2 left-2 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">● LIVE CAMERA</span>
+                <span className="absolute bottom-2 left-2 inline-flex items-center gap-1.5 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper"><span className="h-1 w-1 rounded-full bg-alert" /> Live camera</span>
               </div>
             )}
             <AudioPlayer track={feedFor(selected)?.audioTrack} />
@@ -835,7 +835,7 @@ function AudioPlayer({ track }: { track: any }) {
             className={`px-2 py-1 font-mono text-[9px] uppercase ${isMuted ? "text-alert hover:bg-alert/10" : "text-success hover:bg-success/10"} ${needsUserGesture ? "opacity-50" : ""}`}
             title={isMuted ? "Unmute (teacher only)" : "Mute (teacher only)"}
           >
-            {isMuted ? "🔇 Muted" : "🔊 Unmuted"}
+            {isMuted ? <><FiVolumeX aria-hidden /> Muted</> : <><FiVolume2 aria-hidden /> Unmuted</>}
           </button>
         </div>
       </div>
@@ -862,7 +862,7 @@ function AudioPlayer({ track }: { track: any }) {
 }
 
 function ActivityView({ visible, selected, onSelect }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void }) { return <section className="mt-6 border border-line"><div className="border-b border-line bg-paper-raised px-5 py-4"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Activity stream</p><h2 className="mt-1 font-serif text-xl font-semibold">Student activity by priority</h2></div><div className="divide-y divide-line">{visible.map((student) => <button key={student.roll} onClick={() => onSelect(student)} className={`flex w-full flex-col gap-3 px-5 py-4 text-left sm:flex-row sm:items-center sm:justify-between ${selected?.roll === student.roll ? "bg-success/5" : "hover:bg-paper-raised"}`}><div><p className="text-[13px] font-medium">{student.name} <span className="ml-2 font-mono text-[10px] text-ink-soft">{student.roll}</span></p><p className="mt-1 text-[11px] text-ink-soft">Last event: {student.violation || "Status updated recently"}</p></div><span className={`font-mono text-[10px] uppercase ${student.violation ? "text-alert" : "text-success"}`}>{student.violation ? <span className="inline-flex items-center gap-1">Review violation <FiChevronRight /></span> : "Monitoring clear"}</span></button>)}{visible.length === 0 && <div className="p-10 text-center font-mono text-[11px] text-ink-soft">No active candidates.</div>}</div></section>; }
-function ScreenRecording({ selected, feed }: { selected: Student; feed: RemoteFeed | null }) { const liveScreen = !!feed?.screenTrack; return <div className="mt-4"><div className="relative flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#252923]">{liveScreen ? <ScreenFeedView feed={feed}/> : <><div className="absolute inset-3 bg-ink/90 flex items-center justify-center text-paper font-mono text-[10px] uppercase">Screen feed unavailable</div></>}<span className="absolute bottom-2 left-2 z-10 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">{liveScreen ? "● LIVE SCREEN SHARE" : "○ SCREEN PREVIEW"}</span></div><p className="mt-3 text-[11px] text-ink-soft">{selected.name} · {liveScreen ? "Live screen share" : "Screen recording · awaiting feed"}</p></div>; }
+function ScreenRecording({ selected, feed }: { selected: Student; feed: RemoteFeed | null }) { const liveScreen = !!feed?.screenTrack; return <div className="mt-4"><div className="relative flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#252923]">{liveScreen ? <ScreenFeedView feed={feed}/> : <><div className="absolute inset-3 bg-ink/90 flex items-center justify-center text-paper font-mono text-[10px] uppercase">Screen feed unavailable</div></>}<span className="absolute bottom-2 left-2 z-10 inline-flex items-center gap-1.5 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper">{liveScreen ? <><span className="h-1 w-1 rounded-full bg-alert" /> Live screen share</> : <><span className="h-1 w-1 rounded-full border border-paper/60" /> Screen preview</>}</span></div><p className="mt-3 text-[11px] text-ink-soft">{selected.name} · {liveScreen ? "Live screen share" : "Screen recording · awaiting feed"}</p></div>; }
 function FeedView({ feed, initials }: { feed: RemoteFeed | null; initials: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {

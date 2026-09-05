@@ -20,7 +20,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. Provision auth users for seeded accounts (idempotent per email)
 -- ─────────────────────────────────────────────────────────────────────────────
-create extension if not exists pgcrypto;
+-- pgcrypto lives in the `extensions` schema on Supabase; install there and
+-- qualify every call so migrations never depend on the active search_path.
+create extension if not exists pgcrypto with schema extensions;
 
 do $$
 declare
@@ -40,7 +42,7 @@ begin
         email_change_token_new, email_change_token_current
       ) values (
         '00000000-0000-0000-0000-000000000000', u, 'authenticated', 'authenticated',
-        login_email, crypt('password123', gen_salt('bf')), now(),
+        login_email, extensions.crypt('password123', extensions.gen_salt('bf')), now(),
         jsonb_build_object('provider','email','providers',array['email']),
         '{}'::jsonb, now(), now(), '', '', '', ''
       );
@@ -67,7 +69,7 @@ begin
         email_change_token_new, email_change_token_current
       ) values (
         '00000000-0000-0000-0000-000000000000', u, 'authenticated', 'authenticated',
-        login_email, crypt('Vignan@123', gen_salt('bf')), now(),
+        login_email, extensions.crypt('Vignan@123', extensions.gen_salt('bf')), now(),
         jsonb_build_object('provider','email','providers',array['email']),
         '{}'::jsonb, now(), now(), '', '', '', ''
       );
@@ -259,13 +261,27 @@ create policy "ep attempts student" on public.attempts
 create policy "ep attempts staff" on public.attempts
   for all using (public.auth_is_staff()) with check (public.auth_is_staff());
 
--- proctor_sessions: student registers own room; staff manage all
+-- proctor_sessions: the student registers a room for their OWN attempt
+-- (sessions are keyed by attempt_id, which resolves back to the student);
+-- staff manage all sessions.
 alter table public.proctor_sessions enable row level security;
 drop policy if exists "ep psession student" on public.proctor_sessions;
 drop policy if exists "ep psession staff" on public.proctor_sessions;
 create policy "ep psession student" on public.proctor_sessions
-  for all using (student_id = public.current_student_id())
-  with check (student_id = public.current_student_id());
+  for all using (
+    exists (
+      select 1 from public.attempts a
+      where a.id = proctor_sessions.attempt_id
+        and a.student_id = public.current_student_id()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.attempts a
+      where a.id = proctor_sessions.attempt_id
+        and a.student_id = public.current_student_id()
+    )
+  );
 create policy "ep psession staff" on public.proctor_sessions
   for all using (public.auth_is_staff()) with check (public.auth_is_staff());
 
