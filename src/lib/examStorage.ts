@@ -12,16 +12,22 @@
 // recording or snapshot.
 //
 // Folder layout (kept identical between the exam side and the review side):
-//   ${examId}/${owner}/recordings/${name}.webm
-//   ${examId}/${owner}/screenshots/snap_${epochMs}.jpg
-//   ${examId}/${owner}/violations/${epochMs}_${type}.jpg
-//   ${examId}/${owner}/ai_evidence/${epochMs}_${type}.jpg
-//   ${examId}/${owner}/report/report_${epochMs}.pdf
+//   ${examFolder}/${owner}/recordings/${name}.webm
+//   ${examFolder}/${owner}/screenshots/snap_${epochMs}.jpg
+//   ${examFolder}/${owner}/violations/${epochMs}_${type}.jpg
+//   ${examFolder}/${owner}/ai_evidence/${epochMs}_${type}.jpg
+//   ${examFolder}/${owner}/report/report_${epochMs}.pdf
+//
+// ${examFolder} is a readable slug of the EXAM NAME (e.g. "Test-3") so the R2
+// bucket shows exams by name — NOT the opaque id — exactly like the teacher
+// console does. The exam id is used only as a fallback when the name is
+// missing. Old folders written under ${examId}/ stay readable: the list path
+// checks both prefixes and merges the results.
 
 import { jsPDF } from "jspdf";
 import { getSupabase } from "./supabase";
 import { supabaseConfigured } from "./env";
-import { r2List, r2PresignGet, r2PutBlob, type R2Kind } from "./r2Function";
+import { r2List, r2ListFolders, r2PresignGet, r2PutBlob, type R2Kind } from "./r2Function";
 
 // Storage policy: Cloudflare R2 is PRIMARY, Supabase Storage is the BACKUP.
 // Every artifact is written to R2 first; only when the R2 write fails (auth,
@@ -51,12 +57,12 @@ export type R2Artifact = {
 };
 
 function buildR2Path(
-  examId: string,
+  folder: string,
   roll: string,
   kind: ArtifactKind,
   filename: string,
 ): string {
-  return `${examId}/${roll}/${kind}/${filename}`;
+  return `${folder}/${roll}/${kind}/${filename}`;
 }
 
 /** Split a stored path (`exam/owner/kind/name`) into its parts. */
@@ -64,6 +70,55 @@ function splitPath(path: string): { examId: string; owner: string; kind: Artifac
   const parts = path.split("/");
   if (parts.length !== 4 || !parts[0] || !parts[1] || !parts[2] || !parts[3]) return null;
   return { examId: parts[0], owner: parts[1], kind: parts[2] as ArtifactKind, name: parts[3] };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exam folder segment — the top-level R2 folder for one exam's artifacts.
+//
+// The user-facing bucket must read like the console: "Test-3/<roll>/…" instead
+// of "EXAM-2026-84DE3570/<roll>/…". The segment is the EXAM NAME slugged down
+// to a safe, ASCII, folder-safe string (the store-artifact edge function only
+// accepts [A-Za-z0-9._/-] path segments), falling back to the exam id when the
+// name is empty or entirely non-ASCII.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function slugifyFolderSegment(name: string): string {
+  const s = name
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return s;
+}
+
+/** Deterministic top-level R2 folder for an exam: slug of the name, else id. */
+export function storageFolderSegment(examId: string, examName?: string | null): string {
+  const slug = examName ? slugifyFolderSegment(examName) : "";
+  return slug || examId;
+}
+
+// Resolved segment cache — one DB lookup per exam id, shared by every reader.
+const resolvedSegments = new Map<string, string>();
+
+/**
+ * Resolve the R2 folder segment for an exam id by looking up its CURRENT name
+ * in the DB (so review pages never hardcode a slug). Falls back to the exam id
+ * when the exam can't be read or has no name. Cached per exam id.
+ */
+export async function resolveExamStorageSegment(examId: string): Promise<string> {
+  const cached = resolvedSegments.get(examId);
+  if (cached) return cached;
+  let segment = examId;
+  try {
+    const { listExams } = await import("./api/exams");
+    const exams = await listExams();
+    const record = (exams ?? []).find((e) => e.id === examId);
+    if (record?.name) segment = storageFolderSegment(examId, record.name);
+  } catch {
+    /* offline / RLS — fall back to the exam id */
+  }
+  resolvedSegments.set(examId, segment);
+  return segment;
 }
 /** List the objects under one prefix (e.g. `EXAM-2026-014/21VGN0158/`). */
 export async function listR2Artifacts(prefix: string): Promise<R2Artifact[] | null> {
@@ -88,19 +143,108 @@ export async function listR2Artifacts(prefix: string): Promise<R2Artifact[] | nu
   }
 }
 
-/** List all artifacts for one exam + roll: `${examId}/${roll}/`. */
+/**
+ * List artifacts under ANY stored prefix (R2 first, Supabase backup second).
+ * The prefix is the STORED folder — never resolved through the DB — so the
+ * evidence archive can read exactly what the bucket holds, even when an exam
+ * was renamed after the exam or the DB is unreachable. Returns null only when
+ * EVERY tier fails; an empty array means nothing is stored.
+ */
+export async function listArtifactsByPrefix(prefix: string): Promise<R2Artifact[] | null> {
+  const clean = prefix.replace(/\/$/, "");
+  const merged = new Map<string, R2Artifact>();
+  let anyTierWorked = false;
+
+  if (r2Configured) {
+    const r2 = await listR2Artifacts(clean);
+    if (r2) {
+      anyTierWorked = true;
+      for (const a of r2) merged.set(a.key, a);
+    }
+  }
+  if (!anyTierWorked) {
+    const sb = await listSupabaseArtifacts(clean);
+    if (sb) {
+      anyTierWorked = true;
+      for (const a of sb) merged.set(a.key, a);
+    }
+  }
+  return anyTierWorked ? Array.from(merged.values()) : null;
+}
+
+/**
+ * Top-level R2 folders — one per exam. The segment is the slug of the exam
+ * NAME (or the exam id fallback), so the archive reads like the console:
+ * ["Test-3/", "Midterm-1/", …]. Best-effort; null when R2 is unavailable.
+ */
+export async function listR2ExamFolders(): Promise<string[] | null> {
+  if (!r2Configured) return null;
+  try {
+    return await r2ListFolders("");
+  } catch (err) {
+    console.warn("[examStorage] list exam folders failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Student folders under one exam folder (roll numbers — the owner segment the
+ * exam side wrote). Entries keep their trailing slash: ["21VGN0314/", …].
+ */
+export async function listR2StudentFolders(examFolder: string): Promise<string[] | null> {
+  if (!r2Configured) return null;
+  try {
+    const prefix = examFolder.endsWith("/") ? examFolder : `${examFolder}/`;
+    return await r2ListFolders(prefix);
+  } catch (err) {
+    console.warn(`[examStorage] list student folders failed (${examFolder}):`, err);
+    return null;
+  }
+}
+
+/**
+ * List all artifacts for one exam + roll: `${examFolder}/${roll}/`.
+ * Checks the current exam-name folder AND the legacy `${examId}/` folder and
+ * merges both, so recordings written before the name-based layout (and by the
+ * edge-function fallback) stay reviewable. Returns null only when EVERY tier
+ * fails; an empty array means nothing is stored.
+ */
 export async function listStudentArtifacts(
   examId: string,
   roll: string,
+  /** Exact stored exam folder (e.g. "Test-3") — skips DB name resolution.
+   *  Used by the evidence archive, which browses the bucket directly and must
+   *  read what was actually stored even if the exam was renamed since. */
+  folder?: string,
 ): Promise<R2Artifact[] | null> {
-  const prefix = `${examId}/${roll}/`;
+  const segment = folder?.replace(/\/+$/, "") || (await resolveExamStorageSegment(examId));
+  const prefixes = [`${segment}/${roll}/`];
+  if (!folder && segment !== examId) prefixes.push(`${examId}/${roll}/`); // legacy id folders
+
+  const merged = new Map<string, R2Artifact>();
+  let anyTierWorked = false;
+
   // Primary: Cloudflare R2. When R2 isn't configured / errors, fall back to the
   // Supabase backup bucket so artifacts are still reviewable.
   if (r2Configured) {
-    const r2 = await listR2Artifacts(prefix);
-    if (r2) return r2;
+    let r2Ok = false;
+    for (const prefix of prefixes) {
+      const r2 = await listR2Artifacts(prefix);
+      if (r2) {
+        r2Ok = true;
+        for (const a of r2) merged.set(a.key, a);
+      }
+    }
+    if (r2Ok) return Array.from(merged.values());
   }
-  return listSupabaseArtifacts(prefix);
+  for (const prefix of prefixes) {
+    const sb = await listSupabaseArtifacts(prefix);
+    if (sb) {
+      anyTierWorked = true;
+      for (const a of sb) merged.set(a.key, a);
+    }
+  }
+  return anyTierWorked ? Array.from(merged.values()) : null;
 }
 
 /** Backup tier listing: objects stored in Supabase Storage for a prefix. */
@@ -176,6 +320,8 @@ async function uploadToR2(path: string, blob: Blob): Promise<string | null> {
   }
   try {
     const key = await r2PutBlob({
+      // The edge function calls this field "examId" — it is just the top-level
+      // folder segment (slug of the exam name, or the exam id as fallback).
       examId: parts.examId,
       ownerSegment: parts.owner,
       kind: parts.kind,
@@ -227,6 +373,27 @@ async function storeArtifact(path: string, blob: Blob, contentType: string): Pro
   return sbKey ? { key: sbKey, provider: "supabase" } : null;
 }
 
+/**
+ * storeArtifact with retries for the big, irreplaceable blob (the merged
+ * recording). A flaky edge-function invocation or presigned-PUT handshake can
+ * fail once and then succeed on the next attempt — a recording is too
+ * important to give up after a single try.
+ */
+async function storeArtifactWithRetry(
+  path: string,
+  blob: Blob,
+  contentType: string,
+  attempts = 3,
+): Promise<StoredArtifact | null> {
+  let last: StoredArtifact | null = null;
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, 1200 * i));
+    last = await storeArtifact(path, blob, contentType);
+    if (last) return last;
+  }
+  return last;
+}
+
 /** Store an arbitrary blob (R2 primary → Supabase backup). */
 export async function uploadArtifactBlob(
   key: string,
@@ -245,6 +412,7 @@ export async function uploadArtifactBlob(
  */
 export async function uploadRecordingPart(opts: {
   examId: string;
+  examName?: string | null;
   roll: string;
   blob: Blob;
   seq: number;
@@ -252,7 +420,7 @@ export async function uploadRecordingPart(opts: {
   const name = `seg_${String(opts.seq).padStart(8, "0")}.webm`;
   try {
     return await r2PutBlob({
-      examId: opts.examId,
+      examId: storageFolderSegment(opts.examId, opts.examName),
       ownerSegment: opts.roll,
       kind: "recordings",
       name: `parts/${name}`,
@@ -267,13 +435,14 @@ export async function uploadRecordingPart(opts: {
 /** Store a flagged frame as a violation snapshot (used by the proctor console). */
 export async function storeViolationSnapshot(opts: {
   examId: string;
+  examName?: string | null;
   roll: string;
   label: string;
   blob: Blob;
 }): Promise<StoredArtifact | null> {
   const safeLabel = opts.label.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
   return storeArtifact(
-    buildR2Path(opts.examId, opts.roll, "violations", `${Date.now()}_${safeLabel}.jpg`),
+    buildR2Path(storageFolderSegment(opts.examId, opts.examName), opts.roll, "violations", `${Date.now()}_${safeLabel}.jpg`),
     opts.blob,
     "image/jpeg",
   );
@@ -332,10 +501,12 @@ export type ScreenshotHandle = {
 /** Capture a JPEG frame every second + a high-quality frame per violation. */
 export function startScreenshotCapture(opts: {
   examId: string;
+  examName?: string | null;
   roll: string;
   intervalMs?: number;
 }): ScreenshotHandle {
-  const { examId, roll, intervalMs = 2000 } = opts;
+  const { examId, examName, roll, intervalMs = 2000 } = opts;
+  const folder = storageFolderSegment(examId, examName);
   let video: HTMLVideoElement | null = null;
   let stopped = false;
   let busy = false;
@@ -349,7 +520,7 @@ export function startScreenshotCapture(opts: {
       const blob = captureFrame(video, 0.55, 1280);
       if (blob) {
         await storeArtifact(
-          buildR2Path(examId, roll, "screenshots", `snap_${Date.now()}.jpg`),
+          buildR2Path(folder, roll, "screenshots", `snap_${Date.now()}.jpg`),
           blob,
           "image/jpeg",
         );
@@ -375,7 +546,7 @@ export function startScreenshotCapture(opts: {
       if (!blob) return null;
       const safeType = violationType.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
       await storeArtifact(
-        buildR2Path(examId, roll, "violations", `${Date.now()}_${safeType}.jpg`),
+        buildR2Path(folder, roll, "violations", `${Date.now()}_${safeType}.jpg`),
         blob,
         "image/jpeg",
       );
@@ -390,19 +561,22 @@ export function startScreenshotCapture(opts: {
  */
 export async function uploadExamRecords(opts: {
   examId: string;
+  examName?: string | null;
   roll: string;
   studentName: string;
   videoBlob: Blob;
   violationSnapshots?: ViolationSnap[];
   durationSec?: number;
 }): Promise<{ recordingKey: string | null; pdfKey: string | null; snapshotKeys: string[] }> {
-  const { examId, roll, studentName, videoBlob, violationSnapshots = [], durationSec } = opts;
+  const { examId, examName, roll, studentName, videoBlob, violationSnapshots = [], durationSec } = opts;
+  const folder = storageFolderSegment(examId, examName);
   const uploaded = { recordingKey: null as string | null, pdfKey: null as string | null, snapshotKeys: [] as string[] };
 
   // 1. Recording → Cloudflare R2 (primary), Supabase Storage (backup).
+  //    Retried — the merged video is the artifact the teacher reviews first.
   const recFilename = `recording_${Date.now()}.webm`;
-  const rec = await storeArtifact(
-    buildR2Path(examId, roll, "recordings", recFilename),
+  const rec = await storeArtifactWithRetry(
+    buildR2Path(folder, roll, "recordings", recFilename),
     videoBlob,
     "video/webm",
   );
@@ -412,7 +586,7 @@ export async function uploadExamRecords(opts: {
   for (const snap of violationSnapshots) {
     const safeLabel = snap.label.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
     const stored = await storeArtifact(
-      buildR2Path(examId, roll, "violations", `${Date.now()}_${safeLabel}.jpg`),
+      buildR2Path(folder, roll, "violations", `${Date.now()}_${safeLabel}.jpg`),
       snap.blob,
       "image/jpeg",
     );
@@ -422,7 +596,8 @@ export async function uploadExamRecords(opts: {
   // 3. PDF report (generated locally with jsPDF).
   try {
     const pdfBlob = await generateProctorReport({
-      examId,
+      examId: folder,
+      examName,
       roll,
       studentName,
       violationSnapshots,
@@ -430,7 +605,7 @@ export async function uploadExamRecords(opts: {
       recordingKey: uploaded.recordingKey,
     });
     const pdf = await storeArtifact(
-      buildR2Path(examId, roll, "report", `report_${Date.now()}.pdf`),
+      buildR2Path(folder, roll, "report", `report_${Date.now()}.pdf`),
       pdfBlob,
       "application/pdf",
     );
@@ -469,13 +644,14 @@ function fmtClock(sec: number | null | undefined): string {
 
 async function generateProctorReport(opts: {
   examId: string;
+  examName?: string | null;
   roll: string;
   studentName: string;
   violationSnapshots?: ViolationSnap[];
   durationSec?: number;
   recordingKey?: string | null;
 }): Promise<Blob> {
-  const { examId, roll, studentName, violationSnapshots = [], durationSec, recordingKey } = opts;
+  const { examId, examName, roll, studentName, violationSnapshots = [], durationSec, recordingKey } = opts;
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
   const W = doc.internal.pageSize.getWidth(); // ~595
   const M = 40;
@@ -513,7 +689,7 @@ async function generateProctorReport(opts: {
   const details: [string, string][] = [
     ["Student", studentName],
     ["Roll / ID", roll],
-    ["Exam", examId],
+    ["Exam", examName || examId],
     ["Recording", recordingKey ?? "not uploaded"],
     ["Flags", violationSnapshots.length > 0 ? `${violationSnapshots.length} flagged moment(s)` : "None"],
   ];

@@ -27,6 +27,8 @@ import {
   type ExamRecord,
 } from "../lib/examApi";
 import { downloadSessionReportPdf, downloadCsv, type ReportRow } from "../lib/sessionReport";
+import { downloadExamEvidenceZip } from "../lib/zipExport";
+import EvidenceBrowser from "./EvidenceBrowser";
 import { getSupabase } from "../lib/supabase";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 
@@ -126,6 +128,7 @@ export default function TeacherDashboard() {
     {section === "bank" && <TeacherQuestionBank notify={notify} navigate={navigate} />}
     {section === "students" && <TeacherStudents notify={notify} navigate={navigate} exams={createdExams} />}
     {section === "submissions" && <TeacherSubmissions notify={notify} />}
+    {section === "evidence" && <EvidenceBrowser />}
     {section === "evaluate" && <TeacherEvaluation notify={notify} />}
     {section === "reports" && <Reports notify={notify} />}
         {section === "settings" && <SettingsPanel notify={notify} />}
@@ -332,6 +335,7 @@ export const getTeacherNav = (liveAttemptsCount: number, submittedAttemptsCount:
   { label: "Evaluate", to: "/teacher/evaluate", badge: String(submittedAttemptsCount) },
   { label: "Proctoring", to: "/teacher/proctoring", badge: String(needsAttentionCount) },
   { label: "Reports", to: "/teacher/reports" },
+  { label: "Evidence", to: "/teacher/evidence" },
   { label: "Settings", to: "/teacher/settings" },
 ];
 
@@ -388,6 +392,30 @@ function Reports({ notify }: { notify: (s: string) => void }) {
       liveAttempts.map((a) => [a.name, a.roll, a.state, a.answered, a.total, a.score ?? "", a.flags.length]),
     );
     notify(`Results CSV exported · ${liveAttempts.length} rows`);
+  };
+  const [zipping, setZipping] = useState(false);
+  const exportZip = async () => {
+    if (!examId || submitted.length === 0 || zipping) return;
+    setZipping(true);
+    try {
+      const res = await downloadExamEvidenceZip({
+        examId,
+        examName: selectedExam?.name ?? null,
+        students: submitted.map((a) => ({ roll: a.roll, name: a.name })),
+      });
+      if (res.fileCount === 0) {
+        notify("No recordings or screenshots found in storage for this exam.");
+      } else if (res.errors.length > 0) {
+        notify(`ZIP downloaded · ${res.fileCount} file(s) for ${res.studentCount} student(s) · ${res.errors.length} item(s) failed`);
+      } else {
+        notify(`ZIP downloaded · ${res.fileCount} file(s) for ${res.studentCount} student(s)`);
+      }
+    } catch (err) {
+      console.error("[Reports] evidence ZIP export failed:", err);
+      notify("ZIP export failed — storage may be unavailable.");
+    } finally {
+      setZipping(false);
+    }
   };
   const releaseResults = async () => {
     if (!examId) return;
@@ -469,8 +497,11 @@ function Reports({ notify }: { notify: (s: string) => void }) {
         <div className="mt-8 border border-line bg-paper">
           <div className="flex items-center justify-between border-b border-line bg-paper-raised px-5 py-3">
             <div><h2 className="font-serif text-lg font-semibold">Individual Student Reports</h2>
-            <p className="mt-1 font-mono text-[10px] text-ink-soft">Per-candidate session PDFs from the live roster.</p></div>
-            <Button onClick={() => { submitted.forEach((a) => downloadSessionReportPdf(selectedExam?.name ?? "Exam", `${examId}-${a.roll}`, [toReportRow(a)])); notify(`Exported ${submitted.length} PDF(s)`); }} disabled={submitted.length === 0}>Generate All PDFs</Button>
+            <p className="mt-1 font-mono text-[10px] text-ink-soft">Per-candidate PDFs plus a ZIP of every student's recordings (recording/) and screenshots (ss/).</p></div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Download Evidence ZIP"}</Button>
+              <Button onClick={() => { submitted.forEach((a) => downloadSessionReportPdf(selectedExam?.name ?? "Exam", `${examId}-${a.roll}`, [toReportRow(a)])); notify(`Exported ${submitted.length} PDF(s)`); }} disabled={submitted.length === 0}>Generate All PDFs</Button>
+            </div>
           </div>
           <div className="divide-y divide-line">
             {submitted.map((a) => (

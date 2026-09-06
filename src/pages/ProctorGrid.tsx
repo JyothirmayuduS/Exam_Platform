@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
 import { listLiveAttempts, subscribeToAttempts, saveViolation, setAttemptPaused, forceSubmitAttempt, sendProctorMessage, extendAttemptTime, listAssignedExamsForAuthUser, listExams, type LiveAttempt, type ViolationEvent } from "../lib/examApi";
 import { startProctorViewing, identityLabel, type RemoteFeed, type ViewerState } from "../lib/proctorViewer";
-import { FiDownload, FiPlay, FiMic, FiMicOff, FiMonitor, FiMaximize, FiVolume2, FiVolumeX } from "react-icons/fi";
+import { FiDownload, FiPlay, FiMic, FiMicOff, FiMonitor, FiMaximize, FiVolume2, FiVolumeX, FiFolder } from "react-icons/fi";
 import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
 import RecordingReviewer from "../components/RecordingReview";
 import useCurrentProfile from "../hooks/useCurrentProfile";
@@ -14,6 +14,7 @@ import {
   downloadSessionReportCsv,
   type ReportRow,
 } from "../lib/sessionReport";
+import { downloadExamEvidenceZip } from "../lib/zipExport";
 
 // Proctor console — a live monitoring dashboard for the exam the signed-in
 // proctor is assigned to (?exam=... overrides the pick). The roster comes from
@@ -238,15 +239,21 @@ export default function ProctorGrid() {
   // Map a tile → its live feed. LiveKit student identities are now always
   // `student:<roll>`, so match by roll first; fall back to the DB uuid in case
   // an identity came through as a uuid (older clients / unlinked accounts).
+  // Matching is CASE-INSENSITIVE: the LiveKit token function can resolve the
+  // roll from the student's email (lowercased), while the DB stores it in
+  // uppercase — an exact match would silently show an empty video tile.
   const feedFor: FeedLookup = useMemo(() => {
     const byId = new Map<string, RemoteFeed>();
     const byRoll = new Map<string, RemoteFeed>();
     for (const f of feeds) {
-      const key = identityLabel(f.identity);
+      const key = identityLabel(f.identity).toLowerCase();
       byId.set(key, f);
       byRoll.set(key, f);
     }
-    return (t: Tile) => (t.studentId ? byId.get(t.studentId) : null) ?? (t.roll ? byRoll.get(t.roll) : null) ?? null;
+    return (t: Tile) =>
+      (t.studentId ? byId.get(t.studentId.toLowerCase()) : null) ??
+      (t.roll && t.roll !== "—" ? byRoll.get(t.roll.toLowerCase()) : null) ??
+      null;
   }, [feeds]);
 
   const selected = (selectedId ? tiles.find((t) => t.id === selectedId) : null) ?? tiles[0];
@@ -363,6 +370,7 @@ export default function ProctorGrid() {
     }
     const stored = await storeViolationSnapshot({
       examId: examIdSafe,
+      examName: examName || undefined,
       roll: selected.roll,
       label: `proctor_screenshot_${selected.name.replace(/\s+/g, "_")}`,
       blob,
@@ -726,9 +734,12 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
 }
 
 function ProctorReports({ examId, examName, onShowRecordings }: { examId: string; examName: string; onShowRecordings: () => void }) {
+  const navigate = useNavigate();
   const [liveRows, setLiveRows] = useState<LiveAttempt[]>([]);
   const [exporting, setExporting] = useState<"pdf" | "csv" | null>(null);
   const [expandedRoll, setExpandedRoll] = useState<string | null>(null);
+  const [zipping, setZipping] = useState(false);
+  const [zipMsg, setZipMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabaseConfigured) return;
@@ -776,6 +787,34 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
       downloadSessionReportCsv(examId, reportRows);
       setExporting(null);
     }, 50);
+  };
+
+  const runExportZip = async () => {
+    if (zipping) return;
+    const students = reportRows
+      .map((r) => ({ roll: r.roll, name: r.name }))
+      .filter((s) => s.roll && s.roll !== "—");
+    if (students.length === 0) {
+      setZipMsg("No candidates with roll numbers yet.");
+      return;
+    }
+    setZipping(true);
+    setZipMsg(null);
+    try {
+      const res = await downloadExamEvidenceZip({ examId, examName, students });
+      if (res.fileCount === 0) {
+        setZipMsg("No recordings or screenshots found in storage for this exam.");
+      } else if (res.errors.length > 0) {
+        setZipMsg(`ZIP downloaded · ${res.fileCount} file(s) for ${res.studentCount} student(s) · ${res.errors.length} item(s) failed`);
+      } else {
+        setZipMsg(`ZIP downloaded · ${res.fileCount} file(s) for ${res.studentCount} student(s)`);
+      }
+    } catch (err) {
+      console.error("[ProctorReports] evidence ZIP export failed:", err);
+      setZipMsg("ZIP export failed — storage may be unavailable.");
+    } finally {
+      setZipping(false);
+    }
   };
 
   const liveByRoll = useMemo(() => new Map(liveRows.map((a) => [a.student?.roll ?? "", a])), [liveRows]);
@@ -860,11 +899,18 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
           <div className="border border-line bg-paper p-5">
             <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exports & Evidence</p>
             <div className="mt-4 grid gap-2">
+              <button onClick={() => void runExportZip()} disabled={zipping} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:cursor-not-allowed disabled:opacity-60">
+                <span>{zipping ? "Zipping recordings & screenshots…" : "Download Evidence ZIP"}</span> <FiDownload aria-hidden />
+              </button>
+              {zipMsg && <p className="px-1 font-mono text-[10px] text-ink-soft">{zipMsg}</p>}
               <button onClick={runExportPdf} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
                 <span>{exporting === "pdf" ? "Generating…" : "Session Report (PDF)"}</span> <FiDownload aria-hidden />
               </button>
               <button onClick={onShowRecordings} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
                 <span>Review recordings</span> <FiPlay aria-hidden />
+              </button>
+              <button onClick={() => navigate("/teacher/evidence")} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
+                <span>Evidence archive (all exams)</span> <FiFolder aria-hidden />
               </button>
               <button onClick={runExportCsv} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
                 <span>{exporting === "csv" ? "Exporting…" : "Proctor Activity Log (CSV)"}</span> <FiDownload aria-hidden />

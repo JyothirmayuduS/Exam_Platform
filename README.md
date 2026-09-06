@@ -118,9 +118,12 @@ npx playwright test # e2e (needs a running dev server + backend)
 ## Operational notes
 
 - **Recording retention:** per-second snapshots + recordings upload to R2 under
-  `EXAM-2026-XXX/<studentId>/{screenshots,recordings}/` via the
-  `store-artifact` function; define a lifecycle policy in the R2 bucket console
-  per the institution's data-retention rules.
+  `<ExamName>/<studentId>/{screenshots,recordings}/` (e.g. `Test-3/21VGN0314/…`
+  — the slug of the exam name, NOT the opaque id; legacy `EXAM-2026-XXX/…`
+  folders stay readable) via the `store-artifact` function; define a lifecycle
+  policy in the R2 bucket console per the institution's data-retention rules.
+  Deploy `store-artifact` with the R2 secrets and configure the bucket CORS
+  (see SETUP.md §4a) or recordings silently fall back to Supabase Storage.
 - **Consent:** the candidate accepts an explicit monitoring notice before the
   exam; the timestamp + wording snapshot are stored on `attempts.consent_at`
   / `consent_text` for audit.

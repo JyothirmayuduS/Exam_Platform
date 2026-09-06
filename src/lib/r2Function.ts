@@ -5,10 +5,13 @@
 // (JWT-gated, credentials in function secrets) and executed with a plain
 // fetch. Folder layout is shared with the review side:
 //
-//   ${examId}/${ownerSegment}/${kind}/${filename}
+//   ${examFolder}/${ownerSegment}/${kind}/${filename}
 //
-// `ownerSegment` is opaque to R2 — callers pass the candidate's roll number
-// or student uuid, and must use the same segment when reading back.
+// `${examFolder}` is the slug of the EXAM NAME (fallback: the exam id) — see
+// examStorage.storageFolderSegment — so the bucket reads like the console
+// ("Test-3/<roll>/recordings/…") instead of opaque ids. `ownerSegment` is
+// opaque to R2 — callers pass the candidate's roll number or student uuid,
+// and must use the same segment when reading back.
 
 import { getSupabase } from "./supabase";
 import { supabaseConfigured } from "./env";
@@ -42,6 +45,7 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T | null> {
 
 /** Presign a PUT for one object, then upload the blob with a plain fetch PUT. */
 export async function r2PutBlob(opts: {
+  /** Top-level R2 folder segment — slug of the exam name, or the exam id. */
   examId: string;
   ownerSegment: string;
   kind: R2Kind;
@@ -85,4 +89,15 @@ export async function r2PresignGet(key: string, expiresSec = 3600): Promise<stri
 export async function r2List(prefix: string): Promise<R2ListedObject[] | null> {
   const res = await invoke<{ objects: R2ListedObject[] }>({ op: "list", prefix });
   return res?.objects ?? null;
+}
+
+/**
+ * List the IMMEDIATE sub-folders under a prefix (R2 CommonPrefixes). Pass ""
+ * for the top-level exam folders, "<exam>/" for the students of one exam, or
+ * "<exam>/<roll>/" for the kind folders of one candidate. Entries include the
+ * trailing slash: ["Test-3/", "Midterm/"]. Returns null on failure.
+ */
+export async function r2ListFolders(prefix: string): Promise<string[] | null> {
+  const res = await invoke<{ folders: string[] }>({ op: "folders", prefix });
+  return res?.folders ?? null;
 }

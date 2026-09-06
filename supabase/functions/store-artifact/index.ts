@@ -17,6 +17,10 @@
 //       → { url: presigned PUT (5 min), key: `${examId}/${studentId}/${kind}/${name}` }
 //   op "get":  { key }                      → { url: presigned GET (default 1h) }
 //   op "list": { prefix }                   → { objects: [{key,name,size,lastModified}] }
+//   op "folders": { prefix }                → { folders: ["<exam>/"|"<exam>/<roll>/…"] }
+//       Lists ONLY the immediate sub-folders under a prefix (R2 CommonPrefixes
+//       with delimiter "/") — used by the evidence archive to browse the
+//       bucket by exam → student without needing the DB to have attempts.
 //
 // Kinds match the folder segments used by the app:
 //   screenshots | recordings | violations | report | ai_evidence
@@ -180,6 +184,44 @@ Deno.serve(async (req: Request) => {
     } catch (err) {
       console.error("[store-artifact] list error:", err);
       return json({ error: "failed to list" }, 500);
+    }
+  }
+
+  // ── op "folders": list immediate sub-folders (CommonPrefixes) ─────────────
+  // prefix may be "" (top-level exam folders) or "<exam>/" / "<exam>/<roll>/…"
+  // (drill-down). Each returned entry is the full prefix INCLUDING the trailing
+  // slash, e.g. "Test-3/" or "Test-3/21VGN0314/".
+  if (op === "folders") {
+    const rawPrefix = String(body.prefix ?? "").trim();
+    if (rawPrefix.length > 128) return json({ error: "prefix too long" }, 400);
+    // Every non-empty segment must pass the same path-safety rules as put/list.
+    if (rawPrefix !== "") {
+      const segs = rawPrefix.split("/").filter(Boolean);
+      if (segs.some((s) => !safeSegment(s)) || rawPrefix.includes("..") || rawPrefix.includes("//")) {
+        return json({ error: "invalid prefix" }, 400);
+      }
+    }
+    const qs = `list-type=2&delimiter=%2F${rawPrefix ? `&prefix=${encodeURIComponent(rawPrefix)}` : ""}`;
+    try {
+      const signed = await aws.sign(
+        new Request(`${endpoint}/${bucket}?${qs}`, { method: "GET" }),
+        { aws: { signQuery: false } },
+      );
+      const res = await fetch(signed);
+      if (!res.ok) return json({ error: `R2 folders list failed: ${res.status}` }, 502);
+      const xml = await res.text();
+      const folders: string[] = [];
+      const re = /<CommonPrefixes>([\s\S]*?)<\/CommonPrefixes>/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(xml)) !== null) {
+        const pm = m[1].match(/<Prefix>([\s\S]*?)<\/Prefix>/);
+        const prefix = pm ? pm[1].trim() : null;
+        if (prefix && !folders.includes(prefix)) folders.push(prefix);
+      }
+      return json({ folders });
+    } catch (err) {
+      console.error("[store-artifact] folders list error:", err);
+      return json({ error: "failed to list folders" }, 500);
     }
   }
 

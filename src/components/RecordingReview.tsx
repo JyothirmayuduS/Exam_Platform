@@ -6,8 +6,9 @@
 //   • violations: violation_events rows (offset_seconds = seconds into the
 //     exam; when a marker appears before the recording duration is known the
 //     position is estimated from the recording file time instead)
-//   • artifacts: ${examId}/${roll}/recordings + /violations + /report listed
-//     from Cloudflare R2 (examStorage.listStudentArtifacts)
+//   • artifacts: ${examFolder}/${roll}/recordings + /violations + /report listed
+//     from Cloudflare R2 (examStorage.listStudentArtifacts), where examFolder is
+//     the slug of the exam NAME (legacy ${examId}/ folders are read too).
 //
 // Two playback modes:
 //   • "file"  — a finished recording_….webm exists (normal submitted exam).
@@ -19,7 +20,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FiDownload, FiUploadCloud } from "react-icons/fi";
-import { listStudentArtifacts, getArtifactObjectUrl, uploadArtifactBlob } from "../lib/examStorage";
+import { listStudentArtifacts, getArtifactObjectUrl, uploadArtifactBlob, resolveExamStorageSegment } from "../lib/examStorage";
 import type { ViolationEvent } from "../lib/examApi";
 
 function clock(sec: number | null | undefined): string {
@@ -48,7 +49,7 @@ type LoadingArtifacts = {
   status: "loading" | "ready" | "empty" | "error";
 };
 
-function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0): LoadingArtifacts {
+function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, folderOverride?: string): LoadingArtifacts {
   const [state, setState] = useState<LoadingArtifacts>({
     recordingUrl: null,
     parts: [],
@@ -68,7 +69,7 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0): Loa
     setState((s) => ({ ...s, status: "loading", recordingUrl: null, parts: [], snapshotUrls: [], reportUrl: null }));
     void (async () => {
       try {
-        const arts = await listStudentArtifacts(examId, roll);
+        const arts = await listStudentArtifacts(examId, roll, folderOverride);
         if (cancelled) return;
         if (!arts || arts.length === 0) {
           setState((s) => ({ ...s, status: "empty" }));
@@ -131,7 +132,7 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0): Loa
       }
     })();
     return () => { cancelled = true; };
-  }, [examId, roll, reloadKey]);
+  }, [examId, roll, reloadKey, folderOverride]);
 
   return state;
 }
@@ -156,14 +157,18 @@ export default function RecordingReviewer({
   roll,
   name,
   violations,
+  /** Exact stored exam folder (e.g. "Test-3") — skips DB name resolution so the
+   *  reviewer reads the artifacts the evidence archive actually found. */
+  folderOverride,
 }: {
   examId: string;
   roll: string;
   name: string;
   violations: ViolationEvent[];
+  folderOverride?: string;
 }) {
   const [reloadKey, setReloadKey] = useState(0);
-  const artifacts = useRecordingArtifacts(examId, roll, reloadKey);
+  const artifacts = useRecordingArtifacts(examId, roll, reloadKey, folderOverride);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [current, setCurrent] = useState(0);
@@ -204,6 +209,10 @@ export default function RecordingReviewer({
   }, [partMode, artifacts.parts, bump]);
 
   // When the mode changes (different recording loaded) reset playback state.
+  // IMPORTANT: never strip the src and leave it empty — React diffs props and
+  // will NOT re-write an unchanged `src`, so the element would sit at
+  // NETWORK_EMPTY forever and the recording would never play. Re-apply the
+  // current source explicitly, then load().
   useEffect(() => {
     setDuration(null);
     setCurrent(0);
@@ -212,7 +221,17 @@ export default function RecordingReviewer({
     setPartIdx(0);
     durationsRef.current = [];
     const el = videoRef.current;
-    if (el) { el.currentTime = 0; el.removeAttribute("src"); el.load(); }
+    if (el) {
+      el.currentTime = 0;
+      const next = partMode ? artifacts.parts[partIdx]?.url : artifacts.recordingUrl;
+      if (next) {
+        if (el.getAttribute("src") !== next) el.src = next;
+        el.load();
+      } else {
+        el.removeAttribute("src");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifacts.recordingUrl, partMode]);
 
   const visibleDuration = partMode ? (partTotal ?? duration) : duration;
@@ -309,7 +328,8 @@ export default function RecordingReviewer({
       }
       const merged = new Blob(chunks, { type: "video/webm" });
       setMergeMsg("Uploading full recording to Cloudflare R2…");
-      const key = `${examId}/${roll}/recordings/recording_rebuilt_${Date.now()}.webm`;
+      const folder = await resolveExamStorageSegment(examId);
+      const key = `${folder}/${roll}/recordings/recording_rebuilt_${Date.now()}.webm`;
       const stored = await uploadArtifactBlob(key, merged, "video/webm");
       if (!stored) throw new Error("Cloudflare upload did not confirm");
       setSaveDone(true);
@@ -343,8 +363,29 @@ export default function RecordingReviewer({
             preload="metadata"
             className="h-full w-full object-contain"
             onLoadedMetadata={(e) => {
-              const d = e.currentTarget.duration;
-              if (Number.isFinite(d)) recordDuration(d);
+              const el = e.currentTarget;
+              const d = el.duration;
+              if (Number.isFinite(d) && d > 0) {
+                recordDuration(d);
+              } else {
+                // MediaRecorder .webm chunks often ship without a duration
+                // header (duration = NaN/Infinity). Probe once: seek to a huge
+                // time — the browser clamps to the real end and fires
+                // durationchange with a finite value, giving us the total for
+                // the seek bar + violation markers.
+                let probed = false;
+                const onDur = () => {
+                  if (probed || !Number.isFinite(el.duration) || el.duration <= 0) return;
+                  probed = true;
+                  el.removeEventListener("durationchange", onDur);
+                  const real = el.duration;
+                  recordDuration(real);
+                  // The probe seek landed at the end — rewind to the start.
+                  el.currentTime = 0;
+                };
+                el.addEventListener("durationchange", onDur);
+                try { el.currentTime = Number.MAX_SAFE_INTEGER; } catch { /* ignore */ }
+              }
               setLoadError(false);
               if (partMode) {
                 // Apply a pending cross-segment seek, then play.
