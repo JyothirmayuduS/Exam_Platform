@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FiCheck } from "react-icons/fi";
+import { FiCheck, FiPaperclip, FiAlertTriangle } from "react-icons/fi";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { loadExamBundle, updateAttemptScore, listAttemptViolations, getAttemptExamId, saveViolation, addGradingComment, listGradingComments, listFaculty, assignGradingDelegates, type ViolationEvent, type GradingComment } from "../lib/examApi";
@@ -12,6 +12,7 @@ import ProctorAI from "../components/ProctorAI";
 import AIIntegrityCard from "../components/AIIntegrityCard";
 import { RecordingReviewModal } from "../components/RecordingReview";
 import { uploadArtifactBlob, getArtifactObjectUrl } from "../lib/examStorage";
+import { compressImage } from "../lib/subjectiveUpload";
 import { getTeacherNav } from "./TeacherDashboard";
 import { getSupabase } from "../lib/supabase";
 
@@ -776,11 +777,44 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
     : null;
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(uploadedMatch ? uploadedMatch[1] : null);
 
-  // Grading comments (inline text + voice notes) — persisted in grading_comments.
+  // Grading comments (inline text + voice notes + image attachments) — persisted in grading_comments.
   const [comments, setComments] = useState<GradingComment[]>([]);
   const [recording, setRecording] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const [attaching, setAttaching] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Teacher-side image attachment for a subjective answer (reference sheet,
+  // evidence photo, model answer…). Stored like the student's scanned sheet,
+  // with the storage KEY encoded in the comment so the signed URL is resolved
+  // fresh at render time (mirrors the voice-note pattern, no schema change).
+  const handleAttachImage = async (file: File) => {
+    setAttaching(true);
+    setAttachError(null);
+    try {
+      const compressed = await compressImage(file, { maxWidth: 1600, maxHeight: 2000, quality: 0.85 });
+      const key = `grading/images/${cid}_${q.id}_${Date.now()}.jpg`;
+      const stored = await uploadArtifactBlob(key, compressed, "image/jpeg");
+      if (!stored) {
+        setAttachError("Upload failed — storage unavailable");
+        return;
+      }
+      const ok = await addGradingComment({
+        attemptId: cid,
+        questionId: String(q.id),
+        comment: `[Image-key: ${stored.key}]`,
+      });
+      if (ok) loadComments();
+      else setAttachError("Image uploaded but the comment could not be saved");
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setAttaching(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  };
 
   const loadComments = () => {
     void listGradingComments(cid).then((rows) =>
@@ -903,18 +937,38 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
       </div>
       <div className="mt-3 relative">
         <textarea value={fb} onChange={(e) => setFeedback(q.id, e.target.value)} rows={3} placeholder="Feedback for this answer (optional)…" className="block w-full resize-y border border-line-strong bg-paper px-3 py-2 pb-10 text-[13px] outline-none focus:border-forest" />
-        <div className="absolute bottom-2 left-2 flex gap-2">
+        <div className="absolute bottom-2 left-2 flex flex-wrap items-center gap-2">
           <button onClick={() => void addInlineComment()} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Inline Text Comment</button>
           <button onClick={() => void toggleVoice()} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">
             {recording ? "■ Stop recording" : "Voice Comment"}
           </button>
+          <button
+            onClick={() => imageInputRef.current?.click()}
+            disabled={attaching}
+            className="flex items-center gap-1 border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink disabled:opacity-60"
+            title="Attach an image to this answer"
+          >
+            <FiPaperclip aria-hidden /> {attaching ? "Uploading…" : "Attach Image"}
+          </button>
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleAttachImage(f); }}
+          />
         </div>
       </div>
+      {attachError && <p className="mt-1 flex items-center gap-1.5 text-[12px] text-alert"><FiAlertTriangle aria-hidden /> {attachError}</p>}
       {comments.length > 0 && (
         <div className="mt-2 space-y-1.5">
           {comments.map((c) => (
             <div key={c.id} className="flex flex-wrap items-center gap-2 border-l-2 border-forest bg-forest/5 px-3 py-2 text-[12px]">
-              <span className="min-w-0 flex-1 text-ink">{c.comment || "Voice note"}</span>
+              {c.comment.startsWith("[Image-key:") ? (
+                <TeacherImageThumb comment={c.comment} />
+              ) : (
+                <span className="min-w-0 flex-1 text-ink">{c.comment || "Voice note"}</span>
+              )}
               {c.voice_key && <VoicePlayButton voiceKey={c.voice_key} />}
               <span className="font-mono text-[9px] text-ink-soft">
                 {new Date(c.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -925,6 +979,31 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
       )}
 
     </div>
+  );
+}
+
+function TeacherImageThumb({ comment }: { comment: string }) {
+  const keyMatch = comment.match(/^\[Image-key:\s*(.+?)\s*\]$/);
+  const storageKey = keyMatch ? keyMatch[1] : null;
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (storageKey) {
+      void getArtifactObjectUrl(storageKey).then((u) => { if (alive && u) setUrl(u); });
+    }
+    return () => { alive = false; };
+  }, [storageKey]);
+  if (!storageKey) return <span className="min-w-0 flex-1 text-ink">{comment}</span>;
+  return (
+    <span className="min-w-0 flex-1">
+      {url ? (
+        <a href={url} target="_blank" rel="noopener noreferrer" title="Open full size">
+          <img src={url} alt="Teacher-attached image" className="max-h-40 w-auto border border-line bg-paper object-contain" />
+        </a>
+      ) : (
+        <span className="font-mono text-[10px] text-ink-soft">loading image…</span>
+      )}
+    </span>
   );
 }
 

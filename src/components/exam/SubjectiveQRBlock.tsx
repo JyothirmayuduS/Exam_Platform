@@ -59,6 +59,8 @@ export default function SubjectiveQRBlock({
   });
   const [status, setStatus] = useState<string>("WAITING");
   const [sessionError, setSessionError] = useState<string | null>(null);
+  // Bumping this re-runs the session-creation effect (retry button).
+  const [retryNonce, setRetryNonce] = useState(0);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
 
   // Direct desktop browser upload (no QR needed)
@@ -84,13 +86,18 @@ export default function SubjectiveQRBlock({
       const expiresAt = new Date(Date.now() + 1000 * 60 * 60).toISOString(); // 1 hr
       const effectiveAttemptId = attemptId || `pending_${studentId}`;
 
+      // NOTE: `question_index` is deliberately NOT written here — the column
+      // does not exist in the documented schema, and referencing it makes the
+      // upsert fail, which in turn makes every QR scan return
+      // "Invalid or expired token" (no session row = no token match). The
+      // mobile-upload edge function falls back to question_id for the PDF
+      // header, so the question number survives without the column.
       const { error } = await db.from("mobile_upload_sessions").upsert({
         attempt_id: effectiveAttemptId,
         question_id: String(questionId),
         student_id: studentId,
         token_hash: token,
         expires_at: expiresAt,
-        question_index: questionIndex,
       }, { onConflict: "token_hash" });
 
       if (error) {
@@ -135,7 +142,7 @@ export default function SubjectiveQRBlock({
       active = false;
       if (channel) db.removeChannel(channel);
     };
-  }, [examId, studentId, attemptId, questionId, questionIndex, token, onAnswerUploaded]);
+  }, [examId, studentId, attemptId, questionId, questionIndex, token, onAnswerUploaded, retryNonce]);
 
 
   // Direct desktop image upload (no QR/phone required)
@@ -186,13 +193,6 @@ export default function SubjectiveQRBlock({
         </button>
       </div>
 
-      {sessionError && (
-        <div className="mb-3 border border-alert/40 bg-alert/5 px-4 py-2.5 text-[12px] text-alert">
-          <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider"><FiAlertTriangle className="text-amber" aria-hidden /> Session: </span>
-          {sessionError}
-        </div>
-      )}
-
       {isLocalhost && !pdfUrl && (
         <div className="mb-4 border border-amber/50 bg-amber/10 px-4 py-2.5 text-[12px]">
           <p className="font-mono text-[10px] uppercase tracking-wider text-amber font-bold mb-1">
@@ -206,7 +206,25 @@ export default function SubjectiveQRBlock({
 
 
 
-      {status === "COMPLETED" && pdfUrl ? (
+      {sessionError ? (
+        <div className="border border-alert/40 bg-alert/5 px-4 py-3 text-[12px] text-alert">
+          <p className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider font-bold">
+            <FiAlertTriangle className="text-amber" aria-hidden /> Upload session could not be created
+          </p>
+          <p className="mt-1 text-ink">{sessionError}</p>
+          <p className="mt-1 text-[11px] text-ink-soft">
+            The QR code is disabled until this is fixed — scanning it would just fail with
+            “Invalid or expired token”. You can still use “Upload from Desktop” below, or retry
+            creating the session.
+          </p>
+          <button
+            onClick={() => setRetryNonce((n) => n + 1)}
+            className="mt-3 border border-alert px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/10"
+          >
+            ↻ Retry creating session
+          </button>
+        </div>
+      ) : status === "COMPLETED" && pdfUrl ? (
         <div className="space-y-4">
           <div className="flex h-12 items-center gap-3 bg-success/10 px-4 text-success border border-success/20">
             <span className="text-xl">✓</span>

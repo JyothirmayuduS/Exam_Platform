@@ -22,6 +22,8 @@ serve(async (req) => {
     }
 
     const token = formData.get("token") as string;
+    // Human question number forwarded from the QR URL (falls back to question_id).
+    const qId = (formData.get("qId") as string | null) || null;
     const imageFiles: File[] = [];
     
     let i = 0;
@@ -48,14 +50,30 @@ serve(async (req) => {
     );
 
     // 1. Verify Token
+    // NOTE: we deliberately do NOT select `question_index` and do NOT embed
+    // `attempts(exam_id)` here — both were silently breaking every scan:
+    //  - `question_index` is not part of the documented schema, so referencing
+    //    it makes the whole query error and every upload returned the
+    //    misleading "Invalid or expired token".
+    //  - `attempt_id` became TEXT (the `pending_<studentId>` placeholder), so
+    //    the FK-based embed fails for those rows.
+    // question_id is used for the PDF header instead, and exam_id is resolved
+    // separately below.
     const { data: session, error: sessionError } = await supabaseAdmin
       .from("mobile_upload_sessions")
-      .select("id, attempt_id, question_id, student_id, status, expires_at, question_index, attempts(exam_id)")
+      .select("id, attempt_id, question_id, student_id, status, expires_at")
       .eq("token_hash", token)
       .maybeSingle();
 
-    if (sessionError || !session) {
-      return new Response(JSON.stringify({ error: "Invalid or expired token" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (sessionError) {
+      // The lookup itself failed (schema mismatch, RLS, network…) — surface the
+      // real reason instead of masking it as a bad token.
+      console.error("[mobile-upload] session lookup failed:", sessionError);
+      return new Response(JSON.stringify({ error: `Upload session lookup failed: ${sessionError.message}` }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    if (!session) {
+      return new Response(JSON.stringify({ error: "Invalid or expired token — scan a fresh QR code for this question" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (session.status !== "WAITING") {
@@ -70,8 +88,15 @@ serve(async (req) => {
     // 2. Mark session as processing
     await supabaseAdmin.from("mobile_upload_sessions").update({ status: "PROCESSING", used_at: new Date().toISOString() }).eq("id", session.id);
 
-    // @ts-ignore
-    const examId = session.attempts?.exam_id;
+    // Resolve the exam id from the attempt when it is a real uuid (the
+    // `pending_<studentId>` placeholder has no exam yet). Never via an embed.
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let examId: string | null = null;
+    if (session.attempt_id && UUID_RE.test(session.attempt_id)) {
+      const { data: att } = await supabaseAdmin.from("attempts").select("exam_id").eq("id", session.attempt_id).maybeSingle();
+      examId = att?.exam_id ?? null;
+    }
+    const examFolder = examId ?? "no-exam"; // upload still succeeds when the attempt is still pending
     const bucketName = Deno.env.get("SUPABASE_BUCKET_NAME") || "exam-records";
     const ts = Date.now();
 
@@ -81,7 +106,9 @@ serve(async (req) => {
     try {
       // Fetch student and exam details
       const { data: student } = await supabaseAdmin.from("students").select("full_name, roll").eq("id", session.student_id).maybeSingle();
-      const { data: exam } = await supabaseAdmin.from("exams").select("name").eq("id", examId).maybeSingle();
+      const { data: exam } = examId
+        ? await supabaseAdmin.from("exams").select("name").eq("id", examId).maybeSingle()
+        : { data: null } as { data: { name?: string } | null };
 
       const studentName = student?.full_name || session.student_id;
       const studentRoll = student?.roll || "UNKNOWN ROLL";
@@ -97,7 +124,7 @@ serve(async (req) => {
         const imageArrayBuffer = await imageFile.arrayBuffer();
         
         // 3. Store Original Image
-        const originalPath = `${examId}/${session.student_id}/subjective/q${session.question_id}_${ts}_p${i+1}_original.jpg`;
+        const originalPath = `${examFolder}/${session.student_id}/subjective/q${session.question_id}_${ts}_p${i+1}_original.jpg`;
         if (i === 0) firstOriginalPath = originalPath;
         
         await supabaseAdmin.storage.from(bucketName).upload(originalPath, imageArrayBuffer, {
@@ -147,7 +174,7 @@ serve(async (req) => {
           color: rgb(0, 0, 0),
         });
 
-        page.drawText(`QUESTION NO: ${session.question_index || session.question_id}`, {
+        page.drawText(`QUESTION NO: ${qId || session.question_id}`, {
           x: leftX,
           y: startY - 50,
           size: 14,
@@ -201,7 +228,7 @@ serve(async (req) => {
       }
 
       const pdfBytes = await pdfDoc.save();
-      pdfPath = `${examId}/${session.student_id}/subjective/q${session.question_id}_${ts}.pdf`;
+      pdfPath = `${examFolder}/${session.student_id}/subjective/q${session.question_id}_${ts}.pdf`;
       
       await supabaseAdmin.storage.from(bucketName).upload(pdfPath, pdfBytes, {
         contentType: "application/pdf",

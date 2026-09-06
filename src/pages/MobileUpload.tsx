@@ -88,6 +88,9 @@ export default function MobileUpload() {
     try {
       const formData = new FormData();
       formData.append("token", token);
+      // The QR URL already carries the human question number (qId) — forward it
+      // so the PDF header can show "QUESTION NO: 3" without a DB column.
+      formData.append("qId", qId);
       pages.forEach((p, i) => formData.append(`image_${i}`, p.blob, `page_${i}.jpg`));
 
       const db = getSupabase();
