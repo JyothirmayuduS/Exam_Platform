@@ -186,7 +186,7 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
   );
 }
 
-export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId }: {
+export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId, uploadState, uploadDetail, submitFailed }: {
   answeredCount: number;
   totalQuestions: number;
   studentName: string;
@@ -194,6 +194,11 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
   violationsCount: number;
   examId: string;
   attemptId?: string | null;
+  /** Where the exam recording/evidence landed after submit (storage status). */
+  uploadState?: "uploading" | "stored" | "partial" | "failed";
+  uploadDetail?: string;
+  /** True when the final answer-submit DB write failed (answers saved locally). */
+  submitFailed?: boolean;
 }) {
   // Real attempt id from the DB (short-displayed). Falls back to the exam id
   // when the attempt row hasn't been created yet — never a random fake.
@@ -230,6 +235,25 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
         <h1 className="mt-6 font-serif text-3xl font-semibold text-success">Exam Complete</h1>
         <p className="mt-2 text-[13.5px] text-ink-soft">Your answers have been securely submitted.</p>
         
+        {submitFailed && (
+          <div className="mt-6 border border-alert/40 bg-alert/5 px-4 py-3 text-left text-[12px] text-alert">
+            <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Answers not yet stored</p>
+            <p className="mt-1">Your answers were saved on this device and will upload automatically when the connection returns. Please keep this window open, or tell the invigilator before leaving.</p>
+          </div>
+        )}
+
+        {uploadState && (
+          <div className={`mt-6 border px-4 py-3 text-left text-[12px] ${uploadState === "stored" ? "border-success/40 bg-success/5 text-success" : uploadState === "uploading" ? "border-amber/40 bg-amber/5 text-amber" : uploadState === "partial" ? "border-amber/40 bg-amber/5 text-amber" : "border-alert/40 bg-alert/5 text-alert"}`}>
+            <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Recording storage</p>
+            <p className="mt-1">
+              {uploadState === "stored" && <>Stored in Cloudflare R2 under <span className="font-mono text-[11px]">{uploadDetail}</span></>}
+              {uploadState === "uploading" && <>{uploadDetail ?? "Uploading recording and evidence…"}</>}
+              {uploadState === "partial" && <>{uploadDetail ?? "Recording partially stored — the invigilator can still replay it from crash-safe segments."}</>}
+              {uploadState === "failed" && <>{uploadDetail ?? "Recording could not be uploaded — please tell the invigilator before leaving."}</>}
+            </p>
+          </div>
+        )}
+
         <div className="mt-8 border border-line bg-paper-raised text-left font-mono text-[11px] text-ink-soft">
           <div className="border-b border-line px-5 py-3">
             <span className="block uppercase tracking-widest text-[9px] mb-1">Candidate</span>

@@ -123,6 +123,10 @@ export default function StudentExam() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loadError, setLoadError] = useState("");
   const [examName, setExamName] = useState("");
+  // Mirror the exam name for long-lived upload closures (recording parts,
+  // screenshot loop) so they always write under the exam-name R2 folder.
+  const examNameRef = useRef("");
+  useEffect(() => { examNameRef.current = examName; }, [examName]);
   // Real student identity: preferred from the email link (?name=&email=&roll=),
   // otherwise resolved from the students table once the session is known.
   const urlName = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("name") : null;
@@ -166,6 +170,12 @@ export default function StudentExam() {
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(!!document.fullscreenElement);
+  // Where the exam recording actually landed after submit — surfaced on the
+  // submitted screen so a silently lost recording can't happen unnoticed.
+  const [artifactStatus, setArtifactStatus] = useState<{ state: "uploading" | "stored" | "partial" | "failed"; detail?: string } | null>(null);
+  // True when the final submitAttempt write failed (answers stayed local and
+  // will retry on reconnect) — the submitted screen warns instead of faking it.
+  const [submitFailed, setSubmitFailed] = useState(false);
 
   // AI proctoring state
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
@@ -210,6 +220,7 @@ export default function StudentExam() {
           try {
             ok = (await uploadRecordingPart({
               examId: EXAM_ID,
+              examName: examNameRef.current,
               roll: STUDENT_ROLL,
               blob: item.blob,
               seq: item.seq,
@@ -229,6 +240,77 @@ export default function StudentExam() {
     if (!supabaseConfigured || !EXAM_ID || !STUDENT_ROLL) return;
     partsQueueRef.current.push({ seq: (partsSeqRef.current += 1), blob });
     void drainRecordingParts();
+  };
+
+  /**
+   * Start (or restart) the exam MediaRecorder on the given stream. Called once
+   * at exam start and again if the screen-share track dies mid-exam — a dead
+   * display track keeps producing BLACK frames, so we fail over to the live
+   * camera stream instead of recording a black video. WebM chunks from both
+   * sessions concatenate into one continuous timeline (the crash-part rebuild
+   * in RecordingReview works the same way), so the merged video stays intact.
+   */
+  function startExamRecorder(stream: MediaStream) {
+    try {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        // stop() flushes the final chunk (last real frames) into the list
+        // before the new recorder starts.
+        mediaRecorderRef.current.stop();
+      }
+      const mime =
+        [
+          "video/webm;codecs=vp9,opus",
+          "video/webm;codecs=vp8,opus",
+          "video/webm",
+        ].find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm";
+      const mr = new MediaRecorder(stream, {
+        mimeType: mime,
+        // Cap the bitrate so a long exam doesn't saturate the student's
+        // upload link (which is what made the live feeds lag) — ~1.6 Mbps is
+        // plenty readable for review at 720p-class quality.
+        videoBitsPerSecond: 1_600_000,
+      });
+      mr.ondataavailable = (e) => {
+        if (e.data.size <= 0) return;
+        // 1) Local accumulation → merged full video at submit (unchanged).
+        recordedChunksRef.current.push(e.data);
+        // 2) Live upload of this chunk → crash-proof parts in R2.
+        queueRecordingPart(e.data);
+      };
+      mr.start(10_000); // 10 s chunk cadence (final video is identical)
+      mediaRecorderRef.current = mr;
+    } catch (e) {
+      console.warn("Failed to start MediaRecorder", e);
+    }
+  }
+
+  /**
+   * Fired when the OS/browser ends the screen share mid-exam (student clicks
+   * “Stop sharing”, the picker is dismissed, the OS revokes the capture). A
+   * MediaRecorder that keeps recording an ended display track writes BLACK
+   * frames for the rest of the exam — the black-screen video symptom. This
+   * fails the recorder AND the screenshot source over to the live camera
+   * stream so the evidence keeps capturing real frames.
+   */
+  const handleScreenTrackEnded = () => {
+    setScreen("denied");
+    flag("Screen sharing stopped — recording continues with camera feed");
+    screenStreamRef.current = null;
+    const cam = cameraStreamRef.current;
+    if (!cam) return;
+    const camLive = cam.getVideoTracks().some((t) => t.readyState === "live");
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      if (camLive) startExamRecorder(cam);
+      else mediaRecorderRef.current.stop();
+    } else if (camLive) {
+      startExamRecorder(cam);
+    }
+    // Point the screenshot frame source at the camera too (it was the screen).
+    const el = hiddenVideoRef.current;
+    if (el && el.srcObject !== cam) {
+      el.srcObject = cam;
+      void el.play().catch(() => {});
+    }
   };
 
   // Explicit consent to recording/proctoring (required before the exam starts;
@@ -320,6 +402,7 @@ export default function StudentExam() {
       void el.play().catch(() => {});
       screenshotHandleRef.current = startScreenshotCapture({
         examId: EXAM_ID,
+        examName: examNameRef.current,
         roll: STUDENT_ROLL,
         // ~12 frames/min keeps the Cloudflare record readable without flooding
         // the bucket (R2 lifecycle clears everything after 90 days).
@@ -598,6 +681,7 @@ export default function StudentExam() {
       answers: answers as Record<string, unknown>,
       answered: answeredCount,
       minutesUsed,
+      total: questions.length,
     });
 
     if (!success) {
@@ -757,8 +841,7 @@ export default function StudentExam() {
           screenStreamRef.current = disp;
           setScreen("granted");
           disp.getVideoTracks()[0]?.addEventListener("ended", () => {
-            setScreen("denied");
-            flag("Screen sharing stopped");
+            handleScreenTrackEnded();
           });
         } else {
           setScreen("denied");
@@ -803,39 +886,26 @@ export default function StudentExam() {
             );
           }
         }
+      }).catch((err) => {
+        // Never leave the attempt silently uncreated: autosave/submit now
+        // self-heal (see upsertAttemptPatch), so answers still land even if
+        // this first insert fails — but log it so the failure is visible.
+        console.error("[StudentExam] startAttempt failed (autosave will self-heal):", err);
       });
     }
     
-    // Start Recording and Screenshots
-    const targetStream = screenStreamRef.current || cameraStreamRef.current;
-    if (targetStream) {
-      try {
-        const mime =
-          [
-            "video/webm;codecs=vp9,opus",
-            "video/webm;codecs=vp8,opus",
-            "video/webm",
-          ].find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm";
-        const mr = new MediaRecorder(targetStream, {
-          mimeType: mime,
-          // Cap the bitrate so a long exam doesn't saturate the student's
-          // upload link (which is what made the live feeds lag) — ~1.6 Mbps is
-          // plenty readable for review at 720p-class quality.
-          videoBitsPerSecond: 1_600_000,
-        });
-        mr.ondataavailable = (e) => {
-          if (e.data.size <= 0) return;
-          // 1) Local accumulation → merged full video at submit (unchanged).
-          recordedChunksRef.current.push(e.data);
-          // 2) Live upload of this chunk → crash-proof parts in R2.
-          queueRecordingPart(e.data);
-        };
-        mr.start(10_000); // 10 s chunk cadence (final video is identical)
-        mediaRecorderRef.current = mr;
-      } catch (e) {
-        console.warn("Failed to start MediaRecorder", e);
-      }
-    }
+    // Start Recording and Screenshots. Record the screen stream only while its
+    // video track is actually LIVE — a dead/ended display track records BLACK
+    // frames (the black-screen video symptom). Fall back to the camera stream,
+    // which always has real frames.
+    const liveVideo = (ms?: MediaStream | null) =>
+      !!ms && ms.getVideoTracks().some((t) => t.readyState === "live");
+    const targetStream = liveVideo(screenStreamRef.current)
+      ? screenStreamRef.current
+      : liveVideo(cameraStreamRef.current)
+        ? cameraStreamRef.current
+        : null;
+    if (targetStream) startExamRecorder(targetStream);
 
     setStep("exam");
   }
@@ -844,6 +914,7 @@ export default function StudentExam() {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
+    setArtifactStatus({ state: "uploading", detail: "Uploading recording and evidence to Cloudflare…" });
     // Stop per-second screenshot capture
     if (screenshotHandleRef.current) {
       screenshotHandleRef.current.stop();
@@ -858,9 +929,13 @@ export default function StudentExam() {
         answers: answers as Record<string, unknown>,
         answered: answeredCount,
         minutesUsed,
+        total: questions.length,
       });
 
       if (!success) {
+        // The answers did NOT land in the DB — keep them queued for the
+        // reconnect retry AND tell the candidate instead of a fake success.
+        setSubmitFailed(true);
         try {
           localStorage.setItem(`pending_sync_${EXAM_ID}`, JSON.stringify({
             answers,
@@ -886,15 +961,31 @@ export default function StudentExam() {
         const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
         const result = await uploadExamRecords({
           examId: EXAM_ID,
+          examName: examNameRef.current,
           roll: STUDENT_ROLL,
           studentName: studentName,
           videoBlob,
           violationSnapshots: violationSnapshotsRef.current,
           durationSec: Math.max(0, Math.round(durationMin * 60 - secondsLeft)),
         });
-        console.log("[StudentExam] artifacts stored in R2:", result);
+        console.log("[StudentExam] artifacts stored:", result);
+        // Tell the submitted screen what actually landed so the student (and
+        // invigilator) can see storage worked instead of silently losing a
+        // recording. Parts uploaded live during the exam are the crash fallback.
+        if (result.recordingKey) {
+          setArtifactStatus({
+            state: "stored",
+            detail: `${result.recordingKey.replace(/\/[^/]+\/[^/]+$/, "")}`,
+          });
+        } else {
+          setArtifactStatus({
+            state: "partial",
+            detail: "Full video upload failed — crash-safe segments were still uploaded live and can be replayed by the invigilator.",
+          });
+        }
       } catch (err) {
         console.error("Failed to upload recording:", err);
+        setArtifactStatus({ state: "failed", detail: "Recording upload failed — contact the invigilator." });
       }
     })();
 
@@ -1090,6 +1181,9 @@ export default function StudentExam() {
         violationsCount={violations.length}
         examId={EXAM_ID}
         attemptId={attemptId ?? null}
+        uploadState={artifactStatus?.state}
+        uploadDetail={artifactStatus?.detail}
+        submitFailed={submitFailed}
       />
     );
   }
@@ -1263,6 +1357,7 @@ export default function StudentExam() {
               room={ROOM}
               identity={STUDENT_ROLL}
               examId={EXAM_ID}
+              examName={examName}
               studentId={STUDENT_ROLL}
               screenStream={screenStream}
               initialStream={cameraStream}

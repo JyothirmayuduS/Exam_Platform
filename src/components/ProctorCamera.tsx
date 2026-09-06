@@ -7,6 +7,7 @@ export default function ProctorCamera({
   room,
   identity,
   examId,
+  examName,
   studentId,
   screenStream,
   /** Camera+mic stream already acquired at the device gate (phone/desktop). When
@@ -20,6 +21,7 @@ export default function ProctorCamera({
   room: string;
   identity: string;
   examId?: string;
+  examName?: string | null;
   studentId?: string;
   screenStream?: MediaStream | null;
   initialStream?: MediaStream | null;
@@ -225,6 +227,7 @@ export default function ProctorCamera({
           cameraRecordRef.current = startVideoRecording({
             stream: video.srcObject,
             examId,
+            examName,
             roll: studentId,
             kind: "camera",
           });
@@ -239,9 +242,20 @@ export default function ProctorCamera({
           screenRecordRef.current = startVideoRecording({
             stream: screenStream,
             examId,
+            examName,
             roll: studentId,
             kind: "screen",
           });
+          // A MediaRecorder left running on an ENDED display track writes black
+          // frames — stop the moment the OS/browser ends the share so a black
+          // screen_*.webm never lands in R2.
+          const screenTrack = screenStream.getVideoTracks()[0];
+          const stopScreenRec = () => {
+            screenRecordRef.current?.stop();
+            screenRecordRef.current = null;
+            screenTrack?.removeEventListener("ended", stopScreenRec);
+          };
+          screenTrack?.addEventListener("ended", stopScreenRec);
           console.debug("[ProctorCamera] screen recording started");
         } catch (err) {
           console.error("[ProctorCamera] screen recording failed to start", err);
@@ -272,7 +286,7 @@ export default function ProctorCamera({
       console.debug("[ProctorCamera] recording cleanup — streams released", { examId, studentId });
 
     };
-  }, [examId, studentId, screenStream]);
+  }, [examId, examName, studentId, screenStream]);
 
   // Issue #10: sync internal violation state and track elapsed time.
   // Auto-clear after 5 minutes if the parent never sends violationActive=false.

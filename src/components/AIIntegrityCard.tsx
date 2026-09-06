@@ -4,6 +4,12 @@
 // violation timeline, cached in ai_reports) and renders the verdict: risk
 // score, summary and the key incidents. Degrades gracefully when the report
 // backend is not configured yet (LLM_API_KEY secret unset).
+//
+// supabase-js collapses every non-2xx response into the same generic message
+// ("Edge Function returned a non-2xx status code"); the real status and body
+// live on error.context (a Response). classifyReportError() reads those so the
+// card can tell "not deployed" (404) from "no LLM key" (503) from a genuine
+// crash — instead of showing one useless line.
 
 import { useEffect, useState } from "react";
 import { getSupabase } from "../lib/supabase";
@@ -16,6 +22,65 @@ type Report = {
 
 type Tone = "text-success" | "text-amber" | "text-alert";
 
+/**
+ * Pull the real status + body out of a functions.invoke error. supabase-js
+ * attaches the raw Response to error.context, but the .message is always the
+ * generic "Edge Function returned a non-2xx status code", so without this the
+ * card can't distinguish deployment problems from configuration problems.
+ */
+async function classifyReportError(
+  error: unknown,
+): Promise<{ kind: "unconfigured" | "notdeployed" | "server" | "network"; message: string }> {
+  const err = error as { name?: string; context?: unknown; message?: string };
+  const ctx = err?.context as { status?: number; text?: () => Promise<string> } | undefined;
+  const status =
+    typeof ctx?.status === "number"
+      ? ctx.status
+      : (ctx as { response?: { status?: number } } | undefined)?.response?.status;
+
+  let bodyText = "";
+  try {
+    const res = ctx as { text?: () => Promise<string>; response?: { text?: () => Promise<string> } } | undefined;
+    if (typeof res?.text === "function") bodyText = await res.text();
+    else if (typeof res?.response?.text === "function") bodyText = await res.response.text();
+  } catch { /* body already consumed */ }
+
+  const bodyJson = (() => {
+    try {
+      const parsed = JSON.parse(bodyText);
+      return typeof parsed === "object" && parsed ? parsed : {};
+    } catch {
+      return {};
+    }
+  })() as Record<string, unknown>;
+  const bodyMsg = String(
+    bodyJson.error ?? bodyJson.msg ?? bodyJson.message ?? (bodyText.trim() ? bodyText : ""),
+  ).trim();
+
+  const name = err?.name ?? "";
+  if (!status || name === "FunctionsFetchError") {
+    return {
+      kind: "network",
+      message:
+        bodyMsg ||
+        "Could not reach the proctor-ai-report function (network error) — check your connection and the Supabase URL in .env.local.",
+    };
+  }
+  if (status === 404) {
+    return {
+      kind: "notdeployed",
+      message:
+        bodyMsg ||
+        "The proctor-ai-report Edge Function is not deployed on this Supabase project (404). Run: supabase functions deploy proctor-ai-report",
+    };
+  }
+  if (status === 503 || /not configured/i.test(bodyMsg) || /LLM_API_KEY/i.test(bodyMsg)) {
+    return { kind: "unconfigured", message: bodyMsg || "AI report backend not configured." };
+  }
+  const label = status ? `(${status})` : "";
+  return { kind: "server", message: `${bodyMsg || "Unknown error"} ${label}`.trim() };
+}
+
 function toneFor(verdict?: string, score?: number): { tone: Tone; label: string; chip: string } {
   const v = verdict ?? (score != null ? (score >= 75 ? "flagged" : score >= 30 ? "review" : "clean") : "review");
   if (v === "clean") return { tone: "text-success", label: "Clean", chip: "border-success/40 bg-success/5 text-success" };
@@ -26,7 +91,7 @@ function toneFor(verdict?: string, score?: number): { tone: Tone; label: string;
 export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(false);
-  const [state, setState] = useState<"idle" | "error" | "unconfigured">("idle");
+  const [state, setState] = useState<"idle" | "error" | "unconfigured" | "notdeployed">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
   const load = async (regenerate = false) => {
@@ -39,12 +104,14 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
         body: { attemptId, regenerate },
       });
       if (error) {
-        const msg = String(error.message ?? "");
-        if (/not configured/i.test(msg) || /503/i.test(msg)) {
-          setState("unconfigured");
+        const { kind, message } = await classifyReportError(error);
+        if (kind === "unconfigured") setState("unconfigured");
+        else if (kind === "notdeployed") {
+          setState("notdeployed");
+          setErrorMsg(message);
         } else {
           setState("error");
-          setErrorMsg(msg);
+          setErrorMsg(message);
         }
         setLoading(false);
         return;
@@ -100,9 +167,15 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
 
         {!loading && state === "unconfigured" && (
           <p className="text-[12px] leading-relaxed text-ink-soft">
-            AI integrity report is not configured on this deployment. Set the{" "}
+            AI integrity report is not configured on this deployment. Deploy it and set the{" "}
             <code className="font-mono text-[11px] text-ink">LLM_API_KEY</code> secret on the{" "}
-            <code className="font-mono text-[11px] text-ink">proctor-ai-report</code> function to enable it.
+            <code className="font-mono text-[11px] text-ink">proctor-ai-report</code> function (see SETUP.md §4b).
+          </p>
+        )}
+        {!loading && state === "notdeployed" && (
+          <p className="text-[12px] leading-relaxed text-alert">
+            <span className="font-medium">Report unavailable:</span> {errorMsg}
+            <span className="mt-1 block text-ink-soft">Deploy it once with <code className="font-mono text-[11px]">supabase functions deploy proctor-ai-report</code> (see SETUP.md §4b).</span>
           </p>
         )}
         {!loading && state === "error" && (

@@ -8,6 +8,7 @@ import ProctorChatPanel from "../components/ProctorChatPanel";
 import { startProctorViewing, identityLabel, type RemoteFeed } from "../lib/proctorViewer";
 import { startVoiceBroadcast, voiceRoom } from "../lib/proctorVoice";
 import { downloadSessionReportPdf } from "../lib/sessionReport";
+import { downloadExamEvidenceZip } from "../lib/zipExport";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import { getTeacherNav } from "./TeacherDashboard";
 import { FiVideo, FiMonitor, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight, FiVolume2, FiVolumeX } from "react-icons/fi";
@@ -241,13 +242,15 @@ export default function TeacherProctoring() {
     const byId = new Map<string, RemoteFeed>();
     const byRoll = new Map<string, RemoteFeed>();
     for (const f of feeds) {
-      const key = identityLabel(f.identity);
+      // Case-insensitive: the LiveKit token function may resolve a student's
+      // roll from their email (lowercased) while the DB stores it uppercase.
+      const key = identityLabel(f.identity).toLowerCase();
       byId.set(key, f);
       byRoll.set(key, f);
     }
     return (s: Student) =>
-      (s.studentId ? byId.get(s.studentId) : null) ??
-      (s.roll && s.roll !== "—" ? byRoll.get(s.roll) : null) ??
+      (s.studentId ? byId.get(s.studentId.toLowerCase()) : null) ??
+      (s.roll && s.roll !== "—" ? byRoll.get(s.roll.toLowerCase()) : null) ??
       null;
   }, [feeds]);
 
@@ -266,6 +269,40 @@ export default function TeacherProctoring() {
   const submittedAttemptsCount = students.filter(s => s.status === "Submitted").length;
   const needsAttentionCount = students.filter(s => s.violation !== "").length;
   const nav = getTeacherNav(liveAttemptsCount, submittedAttemptsCount, needsAttentionCount);
+
+  const [zipping, setZipping] = useState(false);
+  const [zipMsg, setZipMsg] = useState<string | null>(null);
+  const exportZip = async () => {
+    if (zipping) return;
+    const rows = students
+      .map((s) => ({ roll: s.roll, name: s.name }))
+      .filter((s) => s.roll && s.roll !== "—");
+    if (rows.length === 0) {
+      setZipMsg("No candidates with roll numbers yet.");
+      return;
+    }
+    setZipping(true);
+    setZipMsg(null);
+    try {
+      const res = await downloadExamEvidenceZip({
+        examId: selectedExamId,
+        examName: examList.find((e) => e.id === selectedExamId)?.name || null,
+        students: rows,
+      });
+      if (res.fileCount === 0) {
+        setZipMsg("No recordings or screenshots found in storage for this exam.");
+      } else if (res.errors.length > 0) {
+        setZipMsg(`ZIP downloaded · ${res.fileCount} file(s) for ${res.studentCount} student(s) · ${res.errors.length} item(s) failed`);
+      } else {
+        setZipMsg(`ZIP downloaded · ${res.fileCount} file(s) for ${res.studentCount} student(s)`);
+      }
+    } catch (err) {
+      console.error("[TeacherProctoring] evidence ZIP export failed:", err);
+      setZipMsg("ZIP export failed — storage may be unavailable.");
+    } finally {
+      setZipping(false);
+    }
+  };
 
   const exportReport = () => {
     const examName = examList.find((e) => e.id === selectedExamId)?.name || selectedExamId;
@@ -433,8 +470,10 @@ export default function TeacherProctoring() {
         >
           Assign Proctors
         </button>
+        <button onClick={() => void exportZip()} disabled={zipping} className="border border-forest px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-forest/5 disabled:cursor-not-allowed disabled:opacity-60">{zipping ? "Zipping…" : "Download Evidence ZIP"}</button>
         <button onClick={exportReport} className="border border-line-strong px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Export Report</button>
         <span className="inline-flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-alert" /> Session live</span>
+        {zipMsg && <span className="inline-flex items-center px-2 py-2 font-mono text-[10px] text-ink-soft">{zipMsg}</span>}
       </div>
     </div>
     <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

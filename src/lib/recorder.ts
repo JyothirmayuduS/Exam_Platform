@@ -3,29 +3,34 @@
 // Edge Function (lib/r2Function.ts) — the browser never holds R2 credentials.
 //
 // Recordings land under:
-//   ${examId}/${roll}/recordings/${kind}_${timestamp}.webm
+//   ${examFolder}/${roll}/recordings/${kind}_${timestamp}.webm
+//
+// where ${examFolder} is the slug of the exam NAME (fallback: exam id).
 //
 // R2 primary; falls back to Supabase Storage when R2 is unavailable.
 
 import { getSupabase } from "./supabase";
 import { supabaseConfigured } from "./env";
 import { r2PutBlob } from "./r2Function";
+import { storageFolderSegment } from "./examStorage";
 
 export type RecorderHandle = { stop: () => void };
 
 async function putRecording(opts: {
   examId: string;
+  examName?: string | null;
   roll: string;
   kind: "camera" | "screen";
   blob: Blob;
 }): Promise<string | null> {
-  const { examId, roll, kind, blob } = opts;
-  const key = `${examId}/${roll}/recordings/${kind}_${Date.now()}.webm`;
+  const { examId, examName, roll, kind, blob } = opts;
+  const folder = storageFolderSegment(examId, examName);
+  const key = `${folder}/${roll}/recordings/${kind}_${Date.now()}.webm`;
 
   // Primary: Cloudflare R2 via the server-signed PUT path.
   try {
     const r2key = await r2PutBlob({
-      examId,
+      examId: folder,
       ownerSegment: roll,
       kind: "recordings",
       name: `${kind}_${Date.now()}.webm`,
@@ -65,13 +70,15 @@ async function putRecording(opts: {
 export function startVideoRecording(opts: {
   stream: MediaStream;
   examId: string;
+  examName?: string | null;
   roll: string;
   kind: "camera" | "screen";
   chunkDurationMs?: number;
   /** Upload each chunk to R2 live (crash-proof parts). Default true. */
   liveParts?: boolean;
 }): RecorderHandle {
-  const { stream, examId, roll, kind, chunkDurationMs = 10_000, liveParts = true } = opts;
+  const { stream, examId, examName, roll, kind, chunkDurationMs = 10_000, liveParts = true } = opts;
+  const folder = storageFolderSegment(examId, examName);
 
   const mimeType =
     [
@@ -107,7 +114,7 @@ export function startVideoRecording(opts: {
         try {
           partSeq += 1;
           await r2PutBlob({
-            examId,
+            examId: folder,
             ownerSegment: roll,
             kind: "recordings",
             name: `parts/${kind}_${String(partSeq).padStart(8, "0")}.webm`,
@@ -126,7 +133,7 @@ export function startVideoRecording(opts: {
       console.warn(`[recorder] ${kind} recording is empty, skipping R2 upload`);
       return;
     }
-    void putRecording({ examId, roll, kind, blob });
+    void putRecording({ examId, examName, roll, kind, blob });
   };
 
   start();

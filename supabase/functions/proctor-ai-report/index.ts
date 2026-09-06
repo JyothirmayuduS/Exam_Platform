@@ -115,19 +115,21 @@ Deno.serve(async (req: Request) => {
     return json({ error: "not your attempt" }, 403);
   }
 
+  // The violation_events table timestamps events with `created_at` (the
+  // normalize migration explicitly drops the legacy `timestamp`/`resolved_at`
+  // columns), so select the real schema — a fresh database has no `timestamp`.
   const { data: violations } = await admin
     .from("violation_events")
-    .select("violation_type, severity, description, timestamp, source, resolved_at")
+    .select("violation_type, severity, description, created_at, source")
     .eq("attempt_id", attemptId)
-    .order("timestamp", { ascending: true });
+    .order("created_at", { ascending: true });
 
   const timeline = (violations ?? []).map((v) => ({
     type: (v as Record<string, unknown>).violation_type,
     severity: (v as Record<string, unknown>).severity,
     description: (v as Record<string, unknown>).description,
     source: (v as Record<string, unknown>).source,
-    at: (v as Record<string, unknown>).timestamp,
-    resolved: (v as Record<string, unknown>).resolved_at != null,
+    at: (v as Record<string, unknown>).created_at,
   }));
 
   if (!LLM_KEY) {
