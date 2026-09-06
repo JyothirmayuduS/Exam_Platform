@@ -3,6 +3,7 @@ import { FiCamera } from "react-icons/fi";
 import { useParams, useSearchParams } from "react-router-dom";
 import ImageCropper from "../components/ImageCropper";
 import { getSupabase } from "../lib/supabase";
+import { invokeMobileUploadWithRetry, type InvokeError } from "../lib/mobileUploadInvoke";
 import {
   compressImage,
   autoCropWhiteEdges,
@@ -28,6 +29,8 @@ export default function MobileUpload() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<{ message: string; raw?: unknown } | null>(null);
+  const [retryNote, setRetryNote] = useState<string | null>(null);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [rotation, setRotation] = useState<0 | 90 | 180 | 270>(0);
@@ -84,6 +87,8 @@ export default function MobileUpload() {
     setStep("uploading");
     setProgress(0);
     setErrorMsg(null);
+    setLastError(null);
+    setRetryNote(null);
 
     try {
       const formData = new FormData();
@@ -97,22 +102,27 @@ export default function MobileUpload() {
       if (!db) throw new Error("Database not connected");
 
       setProgress(50);
-      const { data, error } = await db.functions.invoke("mobile-upload", {
-        body: formData,
+      const attempt = await invokeMobileUploadWithRetry(db, formData, 3, (n, total) => {
+        setRetryNote(n > 1 ? `Retrying… (attempt ${n} of ${total})` : null);
       });
       setProgress(100);
 
-      if (error) {
-        let errMessage = error.message;
-        if (error.context && typeof error.context.json === 'function') {
-          try {
-            const errBody = await error.context.json();
-            if (errBody && errBody.error) errMessage = errBody.error;
-          } catch (e) {}
-        } else if (typeof error.message === 'string' && error.message.includes('{')) {
-           try { errMessage = JSON.parse(error.message).error || error.message; } catch(e) {}
+      if (!attempt.ok) {
+        const { status, message } = attempt.error;
+        let friendly = message || "Upload failed";
+        if (status === 403) {
+          if (/invalid or expired token/i.test(message)) {
+            friendly = "This upload link is no longer valid — go back to the exam and scan a fresh QR code for the question.";
+          } else if (/already used/i.test(message)) {
+            friendly = "This question was already uploaded — check the exam tab for your submitted answer.";
+          } else if (/expired/i.test(message)) {
+            friendly = "This upload link expired — scan a fresh QR code for the question.";
+          }
+        } else if (status === 500 && /lookup failed/i.test(message)) {
+          friendly = "The upload server could not verify this session (a configuration problem). Show the technical details below to your teacher.";
         }
-        throw new Error(errMessage || "Upload failed");
+        setLastError({ message, raw: attempt.error.body });
+        throw new Error(friendly);
       }
 
       setUploadedUrl(pages[0].url); // just preview the first page
@@ -328,6 +338,7 @@ export default function MobileUpload() {
                 />
               </div>
               <p className="font-mono text-[10px] text-ink-soft">{progress}%</p>
+              {retryNote && <p className="mt-2 font-mono text-[10px] text-amber">{retryNote}</p>}
             </div>
           )}
 
@@ -364,6 +375,13 @@ export default function MobileUpload() {
               <div>
                 <p className="font-mono text-[12px] uppercase tracking-wider font-bold text-alert">Upload failed</p>
                 <p className="mt-2 text-[13px] text-ink-soft">{errorMsg || "An error occurred. Please try again."}</p>
+                {lastError && (
+                  <details className="mt-3 border border-line bg-paper-raised px-4 py-3 text-left">
+                    <summary className="cursor-pointer font-mono text-[9px] uppercase tracking-wider text-ink-soft">Technical details</summary>
+                    <p className="mt-2 break-all font-mono text-[10px] leading-relaxed text-ink-soft">{lastError.message}</p>
+                    {typeof lastError.raw === "string" && <pre className="mt-1 whitespace-pre-wrap font-mono text-[9px] text-ink-soft/70">{lastError.raw}</pre>}
+                  </details>
+                )}
               </div>
               <div className="flex gap-3 justify-center">
                 <button

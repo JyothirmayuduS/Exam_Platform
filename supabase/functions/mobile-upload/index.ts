@@ -61,7 +61,7 @@ serve(async (req) => {
     // separately below.
     const { data: session, error: sessionError } = await supabaseAdmin
       .from("mobile_upload_sessions")
-      .select("id, attempt_id, question_id, student_id, status, expires_at")
+      .select("id, attempt_id, question_id, student_id, status, expires_at, used_at")
       .eq("token_hash", token)
       .maybeSingle();
 
@@ -77,7 +77,18 @@ serve(async (req) => {
     }
 
     if (session.status !== "WAITING") {
-      return new Response(JSON.stringify({ error: "Session already used or processing" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // A crashed phone or failed attempt can leave a session stuck in
+      // PROCESSING. If it has been stale long enough, recover it so the
+      // student's retry works instead of a permanent "already used" dead-end.
+      // COMPLETED sessions are never reset.
+      const staleProcessing =
+        session.status === "PROCESSING" &&
+        !!session.used_at &&
+        Date.now() - new Date(session.used_at).getTime() > 10 * 60 * 1000;
+      if (!staleProcessing) {
+        return new Response(JSON.stringify({ error: "Session already used or processing — go back and refresh the exam page to generate a fresh upload link" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      await supabaseAdmin.from("mobile_upload_sessions").update({ status: "WAITING", used_at: null }).eq("id", session.id);
     }
 
     if (new Date(session.expires_at) < new Date()) {
@@ -259,6 +270,21 @@ serve(async (req) => {
 
   } catch (err: any) {
     console.error(err);
+    // Self-heal: a failed attempt must not permanently burn the token. If no
+    // submission row was recorded yet, reset the session to WAITING so the
+    // student's retry (client-side backoff or manual) can actually run.
+    if (session?.id) {
+      try {
+        const { count } = await supabaseAdmin
+          .from("question_submissions")
+          .select("id", { count: "exact", head: true })
+          .eq("attempt_id", session.attempt_id)
+          .eq("question_id", session.question_id);
+        if (!count) {
+          await supabaseAdmin.from("mobile_upload_sessions").update({ status: "WAITING", used_at: null }).eq("id", session.id);
+        }
+      } catch { /* best effort — leave the session as-is */ }
+    }
     return new Response(JSON.stringify({ 
       error: err instanceof Error ? err.message : "Internal Server Error",
       stack: err.stack,
