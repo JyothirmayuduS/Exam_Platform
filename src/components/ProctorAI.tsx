@@ -1,26 +1,44 @@
-// ProctorAI.tsx – Real-time AI proctoring for the Vignan Lockdown Exam
+// ProctorAI.tsx — real-time AI proctoring for the Vignan Lockdown Exam
 //
-// Runs entirely in the browser using:
-//   • MediaPipe FaceDetector   → face count (no-face / multi-person)
-//   • MediaPipe FaceLandmarker → head-pose gaze estimation (left/right/up/down)
-//   • MediaPipe ObjectDetector → phone / cell-phone detection
-//   • Web Audio API            → voice / unexpected-sound detection
+// This component is now a THIN CONTROLLER. All decision logic lives in the
+// modular engine under src/proctoring/ (unit-tested, no DOM):
 //
-// All models load from the MediaPipe CDN as WASM to avoid bundling ~30 MB of
-// binary assets. The component is invisible: it renders a hidden <video> that
-// receives the camera stream and emits violation events to the parent.
+//   models (MediaPipe)     → loaded here (same-origin first, CDN fallback)
+//   face / gaze / audio    → read here from the shared camera <video>
+//   raw object detections  → classified (labels.ts), identity-tracked and
+//                            temporally confirmed (ObjectTracker.ts)
+//   phone + head-pose      → fused (fusion.ts) — "head down" NEVER claims a
+//                            phone by itself; "possible phone use" requires
+//                            BOTH a confirmed phone AND a sustained head-down
+//   dedupe / risk          → ViolationGate + RiskEngine
+//   diagnostics            → diag sink read by ProctorDebugOverlay (dev only)
+//
+// The component renders an invisible <video> receiving the camera stream and
+// emits violation events to the parent — its public props are unchanged.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  CADENCE,
+  PHONE_ACK_MS,
+  GAZE,
+  FACE,
+  OBJECT,
+  AUDIO,
+  ObjectTracker,
+  RiskEngine,
+  ViolationGate,
+  classifyObject,
+  decideObjectEvent,
+  gazeLabel,
+  pushObjectSample,
+  proctorDiag,
+} from "../proctoring";
+import type { Detection, ProctorCategory, RiskLevel } from "../proctoring";
+import { env } from "../lib/env";
+import ProctorDebugOverlay from "./ProctorDebugOverlay";
 
-// ── Public types ─────────────────────────────────────────────────────────────
-export type AIViolationType =
-  | "no_face"         // camera feed shows no face
-  | "multiple_faces"  // more than one person in frame
-  | "gaze_away"       // head turned / eyes off screen
-  | "phone_detected"  // mobile phone visible in camera
-  | "laptop_detected" // external electronic gadgets
-  | "audio_detected"  // unexpected voice / ambient sound
-  | "partial_face";   // face is partially cut off or out of frame
+// ── Public types (kept for back-compat; machine ids now come from the engine) ─
+export type AIViolationType = ProctorCategory;
 
 export interface AIViolation {
   type: AIViolationType;
@@ -41,6 +59,9 @@ export interface AIStatus {
   phoneDetected: boolean;
   voiceLevel: number;     // 0-1 RMS amplitude
   voiceSpeaking: boolean;
+  /** Risk engine (0..100) — set when it changes. */
+  riskScore?: number;
+  riskLevel?: RiskLevel;
 }
 
 interface Props {
@@ -52,51 +73,39 @@ interface Props {
   onStatus?: (s: AIStatus) => void;
 }
 
-// ── Tuning constants ─────────────────────────────────────────────────────────
-// Minimum ms between back-to-back flags of the same type (avoids log spam).
-const COOL: Record<AIViolationType, number> = {
-  no_face:        8_000,
-  multiple_faces: 8_000,
-  gaze_away:      6_000,
-  phone_detected: 8_000,
-  laptop_detected: 10_000,
-  audio_detected: 8_000,
-  partial_face:   8_000,
-};
+// ── Timing / cadence (all tunable in src/proctoring/config.ts) ──────────────
+const GAZE_MS    = CADENCE.GAZE_MS;
+const FACE_MS    = CADENCE.FACE_MS;
+const OBJECT_MS  = CADENCE.OBJECT_MS;
+const AUDIO_MS   = CADENCE.AUDIO_MS;
 
-// Deviation (in nose/eye-ratio units) from the student's OWN calibrated
-// neutral that counts as looking away. 0.10 ≈ a clearly visible head turn.
-const GAZE_DEVIATION  = 0.10;
-// A condition must persist for this many consecutive samples before it is
-// reported, so a single frame of jitter never fires a flag.
-const SUSTAIN_SAMPLES = 4;      // gaze / face checks run every GAZE_MS
-const SUSTAIN_FACE    = 6;      // ~3 s of no-face at FACE_MS=500
-const SUSTAIN_AUDIO   = 4;      // ~1.6 s of sustained sound at AUDIO_MS=400
-const CLEAR_SAMPLES   = 6;      // samples back in range before a flag can re-arm
+// ── Asset loading: SAME-ORIGIN FIRST, CDN fallback ─────────────────────────
+// The WASM runtime and the three model files are vendored into the app bundle
+// (public/ai/…) and loaded from the app's OWN origin, so the AI engine works
+// even when Google's model CDN (storage.googleapis.com) or jsDelivr is blocked
+// or flaky on the candidate's network — the classic "AI never detects" failure
+// in the field. The CDN URLs are kept as automatic fallbacks and each source
+// is retried with backoff before giving up.
+//
+// BASE_URL keeps the paths correct under sub-path deployments and the Tauri
+// asset protocol (Vite base is `/` in dev and on Vercel).
+const APP_BASE = import.meta.env.BASE_URL || "/";
+const MP_WASM = `${APP_BASE}ai/wasm`;
 
-const VOICE_RMS        = 0.05;  // RMS amplitude above which we flag speaking
-const FACE_MS          = 500;   // face-count detection interval
-const GAZE_MS          = 250;   // gaze estimation interval (MediaPipe head pose)
-const PHONE_MS         = 2_500; // phone detection interval (heavy model — slow it down)
-const AUDIO_MS         = 400;   // audio RMS check interval
-const PHONE_MIN_CONF   = 0.45;  // object detector confidence before flagging a phone
-const LAPTOP_MIN_CONF  = 0.55;  // and for "other electronics" (laptop/tv/monitor only)
-const FACE_MIN_CONF    = 0.6;   // face-detector confidence gate
-
-// Landmarker outputs the facial transformation matrix — used to confirm a real
-// face pose before we trust the 2-D gaze ratio.
-const LANDMARK_MIN_CONF = 0.45;
-
-// CDN base for MediaPipe WASM (pinned minor version for reproducibility)
-const MP_WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
-
-// Model URLs (Google's MediaPipe model CDN)
-const MODEL_FACE_DET =
+// Google's model CDN (fallback when the same-origin copy is unreachable).
+const MODEL_FACE_DET_CDN =
   "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
-const MODEL_FACE_LM =
+const MODEL_FACE_LM_CDN =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
-const MODEL_OBJ_DET =
-  "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float32/1/efficientdet_lite0.tflite";
+const MODEL_OBJ_DET_CDN =
+  "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite";
+
+// Order matters: same-origin (guaranteed by the app's own hosting) first, then
+// the CDN mirror. The SDK fetches modelAssetPath internally; createFromOptions
+// throws when a source is unreachable, so we walk the list on failure.
+const MODEL_FACE_DET_SOURCES = [`${APP_BASE}ai/models/blaze_face_short_range.tflite`, MODEL_FACE_DET_CDN];
+const MODEL_FACE_LM_SOURCES  = [`${APP_BASE}ai/models/face_landmarker.task`, MODEL_FACE_LM_CDN];
+const MODEL_OBJ_DET_SOURCES  = [`${APP_BASE}ai/models/efficientdet_lite0.tflite`, MODEL_OBJ_DET_CDN];
 
 // ── Singleton WASM resolver (shared across mounts) ───────────────────────────
 function dataUrlToBlob(dataUrl: string): Blob | undefined {
@@ -182,7 +191,7 @@ function freshGaze(): GazeTracker {
 // loop can flag, and update it only while the head is plausibly neutral.
 function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number): void {
   if (t.calibrated) {
-    if (dev < GAZE_DEVIATION * 0.8) {
+    if (dev < GAZE.DEVIATION * 0.8) {
       const k = 0.05;
       t.pitch += k * (g.pitch - t.pitch);
       t.yaw   += k * (g.yaw - t.yaw);
@@ -192,6 +201,39 @@ function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number): void {
     t.yaw = g.yaw;
     t.calibrated = true;
   }
+}
+
+/** Raw MediaPipe detection → normalized, confidence-gated engine Detections. */
+function toDetections(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  result: any,
+): Detection[] {
+  const out: Detection[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const d of result?.detections ?? []) {
+    for (const c of d?.categories ?? []) {
+      const kind = classifyObject(String(c.categoryName ?? ""));
+      const score = Number(c.score ?? 0);
+      if (!kind || !d.boundingBox) continue;
+      const box = d.boundingBox;
+      const minConf = kind === "phone" ? OBJECT.PHONE_MIN_CONF : OBJECT.LAPTOP_MIN_CONF;
+      if (score < minConf) continue; // gate here — the model threshold stays low
+      const width = Math.max(0, Number(box.width ?? 0));
+      const height = Math.max(0, Number(box.height ?? 0));
+      out.push({
+        kind,
+        label: String(c.categoryName),
+        score,
+        bbox: {
+          x: Math.max(0, Math.min(1, Number(box.originX ?? 0))),
+          y: Math.max(0, Math.min(1, Number(box.originY ?? 0))),
+          width: Math.min(1, width),
+          height: Math.min(1, height),
+        },
+      });
+    }
+  }
+  return out;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -206,6 +248,27 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const objDetRef   = useRef<any>(null);
 
+  // Engine singletons (stable for the component's lifetime; created once in an
+  // effect so refs are never touched during render). They survive active/pause
+  // cycles — only a true unmount (leaving the exam) discards risk + cooldowns.
+  const trackerRef = useRef<ObjectTracker | null>(null);
+  const gateRef    = useRef<ViolationGate | null>(null);
+  const riskRef    = useRef<RiskEngine | null>(null);
+  const riskShown  = useRef<string>("");
+
+  useEffect(() => {
+    trackerRef.current ??= new ObjectTracker();
+    gateRef.current ??= new ViolationGate();
+    riskRef.current ??= new RiskEngine();
+  }, []);
+
+  // Latest gaze state, consumed by fusion when an object confirms.
+  const gazeFusion = useRef<{ headDown: boolean; headDownSince: number | null; direction: "center" | "left" | "right" | "up" | "down" }>({
+    headDown: false,
+    headDownSince: null,
+    direction: "center",
+  });
+
   // Audio analysis
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -217,7 +280,11 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   const tGaze    = useRef(0);
   const tPhone   = useRef(0);
   const tAudio   = useRef(0);
-  const lastFlag = useRef<Partial<Record<AIViolationType, number>>>({});
+  const lastAck  = useRef(0);
+  const frameDims = useRef(""); // diag: log the frame size once per change
+  // rAF fps measurement (diagnostics)
+  const fpsFrames = useRef(0);
+  const fpsAt     = useRef(0);
 
   const [status, setStatus] = useState<AIStatus>({
     loading: true,
@@ -250,16 +317,40 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     }
   }, []);
 
-  // Violation emitter with per-type cooldown + attached evidence frame
+  // Push the current risk state to React only when it actually changed
+  // (keeps the parent from re-rendering on every tick).
+  const syncRisk = useCallback(() => {
+    const risk = riskRef.current;
+    if (!risk) return;
+    const s = risk.state;
+    const key = `${s.score}:${s.level}`;
+    if (key === riskShown.current) return;
+    riskShown.current = key;
+    proctorDiag.risk = s;
+    setStatus((prev) => ({ ...prev, riskScore: s.score, riskLevel: s.level }));
+  }, []);
+
+  // Violation emitter: cooldown gate (dedupe) → risk → evidence frame → parent.
   const emit = useCallback(
-    (type: AIViolationType, label: string, confidence: number) => {
+    (category: ProctorCategory, label: string, confidence: number) => {
       const now = Date.now();
-      if (now - (lastFlag.current[type] ?? 0) < COOL[type]) return;
-      lastFlag.current[type] = now;
-      onViolation({ type, label, confidence, at: now, evidenceBlob: captureEvidence() });
+      const gate = gateRef.current;
+      const risk = riskRef.current;
+      if (!gate || !risk) return;
+      if (!gate.allows(category, now)) return;
+      gate.markFired(category, now);
+      risk.add(category, now);
+      syncRisk();
+      onViolation({ type: category, label, confidence, at: now, evidenceBlob: captureEvidence() });
     },
-    [onViolation, captureEvidence]
+    [onViolation, captureEvidence, syncRisk]
   );
+
+  // Reset identity tracking when the camera stream changes (new session /
+  // resolution) so stale boxes never follow the wrong candidate.
+  useEffect(() => {
+    trackerRef.current?.reset();
+  }, [cameraStream]);
 
   // Feed camera stream into hidden video element
   useEffect(() => {
@@ -293,9 +384,9 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
       recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = false;
-      
+
       const stopwords = new Set(["the", "is", "at", "which", "on", "a", "an", "and", "in", "it"]);
-      
+
       recognition.onresult = (event: any) => {
         const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
         const words = transcript.split(/\s+/).filter((w: string) => !stopwords.has(w) && w.length > 2);
@@ -303,7 +394,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           emit("audio_detected", `Speech detected: "${words.join(" ")}"`, 0.95);
         }
       };
-      
+
       try { recognition.start(); } catch { /* ignore */ }
     }
 
@@ -321,6 +412,10 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   // Every model is created with the GPU delegate first, and automatically
   // falls back to CPU when the GPU is unsupported (iOS Safari / many phones
   // throw on WebGL GPU delegates — previously AI silently never started there).
+  //
+  // Each model also tries its SOURCE LIST (same-origin copy first, CDN mirror
+  // second) with retry + backoff, so a flaky or blocked network can't leave
+  // the AI engine half-loaded — the root cause of "proctoring never detects".
   useEffect(() => {
     if (!active) return;
     let alive = true;
@@ -336,52 +431,86 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
       }
     };
 
+    // Try each asset source (same-origin → CDN) with 2 retries + backoff so a
+    // transient network failure on a big file doesn't kill the model.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const withRetry = async (make: (source: string) => Promise<any>, sources: string[], step: string): Promise<any> => {
+      let lastErr: unknown = null;
+      for (const source of sources) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) {
+            setStatus(s => ({ ...s, loadStep: `${step} — retry ${attempt}/2…` }));
+            await new Promise(r => setTimeout(r, 800 * attempt));
+          }
+          try {
+            return await make(source);
+          } catch (err) {
+            lastErr = err;
+            console.warn(`[ProctorAI] ${step} failed (${source}, attempt ${attempt + 1}):`, err);
+          }
+        }
+      }
+      throw lastErr ?? new Error(`${step} failed`);
+    };
+
     void (async () => {
       try {
-        setStatus(s => ({ ...s, loadStep: "Downloading AI models (first run ~10 s)…" }));
+        setStatus(s => ({ ...s, loadStep: "Loading AI engine (first run ~10 s)…" }));
         const vision = await getVision();
         if (!alive) return;
 
         const { FaceDetector, FaceLandmarker, ObjectDetector } = await import("@mediapipe/tasks-vision");
 
         if (!faceDetRef.current) {
-          faceDetRef.current = await createWithFallback(
-            (delegate) =>
-              FaceDetector.createFromOptions(vision, {
-                baseOptions: { modelAssetPath: MODEL_FACE_DET, delegate },
-                runningMode: "VIDEO",
-                minDetectionConfidence: 0.5,
-              }),
-            "Loading face detector…",
+          faceDetRef.current = await withRetry(
+            (source) => createWithFallback(
+              (delegate) =>
+                FaceDetector.createFromOptions(vision, {
+                  baseOptions: { modelAssetPath: source, delegate },
+                  runningMode: "VIDEO",
+                  minDetectionConfidence: 0.5,
+                }),
+              "Loading face detector…",
+            ),
+            MODEL_FACE_DET_SOURCES,
+            "face detector",
           );
         }
         if (!alive) return;
 
         if (!landmarkRef.current) {
-          landmarkRef.current = await createWithFallback(
-            (delegate) =>
-              FaceLandmarker.createFromOptions(vision, {
-                baseOptions: { modelAssetPath: MODEL_FACE_LM, delegate },
-                runningMode: "VIDEO",
-                numFaces: 3,
-                outputFaceBlendshapes: false,
-                outputFacialTransformationMatrixes: false,
-              }),
-            "Loading gaze tracker…",
+          landmarkRef.current = await withRetry(
+            (source) => createWithFallback(
+              (delegate) =>
+                FaceLandmarker.createFromOptions(vision, {
+                  baseOptions: { modelAssetPath: source, delegate },
+                  runningMode: "VIDEO",
+                  numFaces: 3,
+                  outputFaceBlendshapes: false,
+                  outputFacialTransformationMatrixes: false,
+                }),
+              "Loading gaze tracker…",
+            ),
+            MODEL_FACE_LM_SOURCES,
+            "gaze tracker",
           );
         }
         if (!alive) return;
 
         if (!objDetRef.current) {
-          objDetRef.current = await createWithFallback(
-            (delegate) =>
-              ObjectDetector.createFromOptions(vision, {
-                baseOptions: { modelAssetPath: MODEL_OBJ_DET, delegate },
-                runningMode: "VIDEO",
-                scoreThreshold: 0.20,
-                maxResults: 6,
-              }),
-            "Loading object detector…",
+          objDetRef.current = await withRetry(
+            (source) => createWithFallback(
+              (delegate) =>
+                ObjectDetector.createFromOptions(vision, {
+                  baseOptions: { modelAssetPath: source, delegate },
+                  runningMode: "VIDEO",
+                  scoreThreshold: OBJECT.SCORE_THRESHOLD,
+                  maxResults: OBJECT.MAX_RESULTS,
+                }),
+              "Loading object detector…",
+            ),
+            MODEL_OBJ_DET_SOURCES,
+            "object detector",
           );
         }
         if (!alive) return;
@@ -389,7 +518,10 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         setStatus(s => ({ ...s, loading: false, loadStep: "AI proctor active" }));
       } catch (err) {
         console.error("[ProctorAI] model load error:", err);
-        if (alive) setStatus(s => ({ ...s, loading: false, error: true, loadStep: "AI unavailable — manual review only" }));
+        if (alive) {
+          proctorDiag.engineError = err instanceof Error ? err.message : String(err);
+          setStatus(s => ({ ...s, loading: false, error: true, loadStep: "AI unavailable — manual review only" }));
+        }
       }
     })();
 
@@ -399,6 +531,8 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   // Main detection loop. Every decision is gated on a SUSTAINED condition (a
   // single jitter frame never flags) and — for gaze — on deviation from the
   // student's own calibrated neutral pose, which removes camera-angle bias.
+  // Object events additionally require TEMPORAL CONFIRMATION (ObjectTracker)
+  // and are fused with the head pose (fusion.ts).
   useEffect(() => {
     if (!active || status.loading) return;
     let running = true;
@@ -408,10 +542,25 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     let audioStreak = 0;
     let landmarksVisible = false;
 
+    // 1 Hz risk decay — clean behavior steadily lowers the score.
+    const decayId = window.setInterval(() => {
+      riskRef.current?.advance();
+      syncRisk();
+    }, 1_000);
+
     const tick = () => {
       if (!running) return;
       const now   = Date.now();
       const video = videoRef.current;
+
+      // Diagnostics: fps (only needed for the dev overlay — cheap math).
+      if (fpsAt.current === 0) fpsAt.current = now;
+      fpsFrames.current += 1;
+      if (now - fpsAt.current >= 1_000) {
+        proctorDiag.fps = Math.round((fpsFrames.current * 1_000) / (now - fpsAt.current));
+        fpsFrames.current = 0;
+        fpsAt.current = now;
+      }
 
       if (!video || video.readyState < 2) {
         rafRef.current = requestAnimationFrame(tick);
@@ -435,7 +584,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
                 break;
               }
             }
-            if (outOfBounds && gaze.awayStreak >= SUSTAIN_SAMPLES) {
+            if (outOfBounds && gaze.awayStreak >= GAZE.SUSTAIN_SAMPLES) {
               emit("partial_face", "Face partially out of frame — centre yourself in the camera", 0.85);
             }
 
@@ -446,33 +595,45 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
             updateGazeBaseline(gaze, g, dev);
 
             if (gaze.calibrated) {
-              const neutral = dev < GAZE_DEVIATION;
+              const neutral = dev < GAZE.DEVIATION;
               if (neutral) {
                 gaze.awayStreak = Math.max(0, gaze.awayStreak - 1);
                 gaze.clearStreak += 1;
-                if (gaze.clearStreak >= CLEAR_SAMPLES) gaze.awayStreak = 0;
+                if (gaze.clearStreak >= GAZE.CLEAR_SAMPLES) gaze.awayStreak = 0;
               } else {
                 gaze.clearStreak = 0;
                 gaze.awayStreak += 1;
               }
 
               let dir: AIStatus["gazeDirection"] = "center";
-              if (gaze.awayStreak >= SUSTAIN_SAMPLES) {
+              if (gaze.awayStreak >= GAZE.SUSTAIN_SAMPLES) {
                 if (devYaw >= devPitch) dir = g.yaw < gaze.yaw ? "left" : "right";
                 else dir = g.pitch < gaze.pitch ? "up" : "down";
-                const conf = Math.min(1, dev / (GAZE_DEVIATION * 3));
-                if (gaze.awayStreak === SUSTAIN_SAMPLES || gaze.awayStreak % 12 === 0) {
-                  const dirLabel: Record<string, string> = {
-                    left:  "Head turned left / looking away from the screen",
-                    right: "Head turned right / looking away from the screen",
-                    up:    "Looking up — away from the screen",
-                    down:  "Head tilted down — check for phone / notes use",
-                  };
-                  emit("gaze_away", dirLabel[dir] ?? "Looking away from the screen", conf);
+                const conf = Math.min(1, dev / (GAZE.DEVIATION * 3));
+                if (gaze.awayStreak === GAZE.SUSTAIN_SAMPLES || gaze.awayStreak % 24 === 0) {
+                  emit("gaze_away", gazeLabel(dir), conf);
                 }
               }
-              setStatus(s => ({ ...s, gazeDirection: dir, gazeScore: Math.max(0, Math.min(1, 1 - dev / (GAZE_DEVIATION * 3))) }));
+
+              // Feed the fusion layer: sustained head-down state + direction.
+              const wasDown = gazeFusion.current.headDown;
+              gazeFusion.current.direction = dir;
+              if (dir === "down" && gaze.awayStreak >= GAZE.SUSTAIN_SAMPLES) {
+                if (!wasDown) gazeFusion.current.headDownSince = now;
+                gazeFusion.current.headDown = true;
+              } else {
+                gazeFusion.current.headDown = false;
+                gazeFusion.current.headDownSince = null;
+              }
+
+              setStatus(s => ({ ...s, gazeDirection: dir, gazeScore: Math.max(0, Math.min(1, 1 - dev / (GAZE.DEVIATION * 3))) }));
             }
+          } else {
+            // No landmarks — head state is unknown, so fusion must not treat
+            // stale "head down" as ongoing.
+            gazeFusion.current.headDown = false;
+            gazeFusion.current.headDownSince = null;
+            gazeFusion.current.direction = "center";
           }
         } catch { /* model busy */ }
       }
@@ -482,60 +643,86 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         tFace.current = now;
         try {
           const { detections } = faceDetRef.current.detectForVideo(video, now) as { detections: Array<{ categories: Array<{ score: number }> }> };
-          const confident = detections.filter(d => d.categories[0]?.score >= FACE_MIN_CONF).length;
+          const confident = detections.filter(d => d.categories[0]?.score >= FACE.MIN_CONF).length;
           if (confident === 0 && !landmarksVisible) noFaceStreak += 1;
           else noFaceStreak = 0;
           if (confident > 1) multiFaceStreak += 1;
           else multiFaceStreak = 0;
 
-          if (noFaceStreak === SUSTAIN_FACE) {
+          if (noFaceStreak === FACE.SUSTAIN) {
             emit("no_face", "No face visible — camera may be covered or the student left", 0.9);
-          } else if (noFaceStreak > SUSTAIN_FACE && noFaceStreak % 6 === 0) {
+          } else if (noFaceStreak > FACE.SUSTAIN && noFaceStreak % 6 === 0) {
             emit("no_face", "Still no face visible in the camera", 0.9);
           }
-          if (multiFaceStreak === SUSTAIN_FACE) {
+          if (multiFaceStreak === FACE.SUSTAIN) {
             emit("multiple_faces", `${confident} people detected — only one person is allowed`, 0.9);
-          } else if (multiFaceStreak > SUSTAIN_FACE && multiFaceStreak % 6 === 0) {
+          } else if (multiFaceStreak > FACE.SUSTAIN && multiFaceStreak % 6 === 0) {
             emit("multiple_faces", `${confident} people still in frame`, 0.9);
           }
           setStatus(s => ({ ...s, faceCount: landmarksVisible ? Math.max(confident, 1) : confident }));
         } catch { /* model busy */ }
       }
 
-      // ── Phone / object detection (slow cadence — heavy model) ───────────
-      if (objDetRef.current && now - tPhone.current > PHONE_MS) {
+      // ── Object detection: track + confirm, then fuse with head pose ─────
+      // (slow cadence — the heaviest model; raw frames never become events)
+      if (objDetRef.current && now - tPhone.current > OBJECT_MS) {
         tPhone.current = now;
         try {
-          const { detections } = objDetRef.current.detectForVideo(video, now) as {
-            detections: Array<{ categories: Array<{ categoryName: string; score: number }> }>
-          };
-          const phoneHit = detections.find(d =>
-            d.categories.some(c => {
-              const n = c.categoryName.toLowerCase();
-              return (n.includes("cell phone") || n.includes("mobile phone")) && c.score >= PHONE_MIN_CONF;
-            })
-          );
-          if (phoneHit) {
-            const conf = phoneHit.categories[0].score;
-            emit("phone_detected", `Mobile phone detected in view (${Math.round(conf * 100)}% conf)`, conf);
-            setStatus(s => ({ ...s, phoneDetected: true }));
-          } else {
-            setStatus(s => ({ ...s, phoneDetected: false }));
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const result: any = objDetRef.current.detectForVideo(video, now);
+          const dets = toDetections(result);
+
+          // Diagnostics: log EVERY raw detection the model returns — benign
+          // objects, sub-threshold phones, low scores included — plus the
+          // frame size once, so a missing phone can be traced to the model
+          // output (label / index / confidence / box), never guessed at.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const raw = (result?.detections ?? []) as Array<{
+            categories?: Array<{ categoryName?: string; score?: number; index?: number }>;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            boundingBox?: any;
+          }>;
+          const vw = video.videoWidth || 0;
+          const vh = video.videoHeight || 0;
+          if (frameDims.current !== `${vw}x${vh}`) {
+            frameDims.current = `${vw}x${vh}`;
+            pushObjectSample(`frame ${vw}x${vh}`);
+          }
+          if (raw.length === 0) pushObjectSample("(no objects)");
+          for (const d of raw) {
+            const c = d.categories?.[0];
+            if (!c) continue;
+            const b = d.boundingBox ?? {};
+            const box = [Number(b.originX ?? 0).toFixed(2), Number(b.originY ?? 0).toFixed(2), Number(b.width ?? 0).toFixed(2), Number(b.height ?? 0).toFixed(2)].join(",");
+            pushObjectSample(`${c.categoryName ?? "?"} ${Math.round((c.score ?? 0) * 100)}% idx=${c.index ?? "?"} box=(${box})`);
           }
 
-          // Only clear "other electronics" — laptop/tv/monitor — and only at
-          // high confidence. Headphones/earbuds/pads are dropped: a student
-          // wearing earbuds is not an exam violation by itself.
-          const electronicsHit = detections.find(d =>
-            d.categories.some(c => {
-              const n = c.categoryName.toLowerCase();
-              return (n.includes("laptop") || n.includes("tv") || n.includes("monitor")) && c.score >= LAPTOP_MIN_CONF;
-            })
-          );
-          if (electronicsHit) {
-            const conf = electronicsHit.categories[0].score;
-            emit("laptop_detected", `Electronic device visible: ${electronicsHit.categories[0].categoryName} (${Math.round(conf * 100)}% conf)`, conf);
+          const tracker = trackerRef.current;
+          if (tracker) {
+            const fresh = tracker.update(dets, now);
+            for (const track of fresh) {
+              const outcome = decideObjectEvent(track, gazeFusion.current, now);
+              if (outcome.fired) emit(outcome.category, outcome.label, outcome.confidence);
+              if (track.kind === "phone") lastAck.current = now; // fresh confirm — reset the heartbeat
+            }
           }
+
+          // Slow re-acknowledgement while a CONFIRMED phone stays in view.
+          const liveConfirmed = tracker?.live.some(
+            (t) => t.kind === "phone" && t.confirmed && now - t.lastSeen <= 4_000
+          );
+          if (liveConfirmed && now - lastAck.current >= PHONE_ACK_MS) {
+            lastAck.current = now;
+            const track = tracker?.live.find(
+              (t) => t.kind === "phone" && t.confirmed && now - t.lastSeen <= 4_000
+            );
+            if (track) {
+              const outcome = decideObjectEvent(track, gazeFusion.current, now);
+              if (outcome.fired) emit(outcome.category, outcome.label, outcome.confidence);
+            }
+          }
+
+          setStatus(s => ({ ...s, phoneDetected: liveConfirmed === true }));
         } catch { /* skip */ }
       }
 
@@ -547,12 +734,12 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           audioBufRef.current.reduce((acc, v) => acc + v * v, 0) / audioBufRef.current.length
         );
         const voiceLevel    = Math.min(1, rms / 0.08);
-        const voiceSpeaking = rms > VOICE_RMS;
+        const voiceSpeaking = rms > AUDIO.VOICE_RMS;
         if (voiceSpeaking) audioStreak += 1;
         else audioStreak = Math.max(0, audioStreak - 1);
-        if (audioStreak === SUSTAIN_AUDIO) {
+        if (audioStreak === AUDIO.SUSTAIN) {
           emit("audio_detected", "Sustained voice or unexpected audio detected", voiceLevel);
-        } else if (audioStreak > SUSTAIN_AUDIO && audioStreak % 12 === 0) {
+        } else if (audioStreak > AUDIO.SUSTAIN && audioStreak % 12 === 0) {
           emit("audio_detected", "Voice/audio still detected", voiceLevel);
         }
         setStatus(s => ({ ...s, voiceLevel, voiceSpeaking: voiceSpeaking && audioStreak >= 2 }));
@@ -564,20 +751,37 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     rafRef.current = requestAnimationFrame(tick);
     return () => {
       running = false;
+      window.clearInterval(decayId);
       cancelAnimationFrame(rafRef.current);
     };
-  }, [active, status.loading, emit]);
+  }, [active, status.loading, emit, syncRisk]);
 
   // Propagate status to parent
   useEffect(() => { onStatus?.(status); }, [status, onStatus]);
+
+  // Mirror live status + tracks into the diag sink for the dev overlay. The
+  // sink lives outside React so the AI loop itself never triggers renders.
+  useEffect(() => {
+    proctorDiag.loadStep = status.loadStep;
+    proctorDiag.faceCount = status.faceCount;
+    proctorDiag.gazeDirection = status.gazeDirection;
+    proctorDiag.gazeScore = status.gazeScore;
+    proctorDiag.phoneDetected = status.phoneDetected;
+    proctorDiag.voiceLevel = status.voiceLevel;
+    proctorDiag.voiceSpeaking = status.voiceSpeaking;
+    proctorDiag.tracks = trackerRef.current?.live ?? [];
+  }, [status]);
 
   // The analysis <video> must stay in the document at a REAL (painted) size:
   // iOS Safari stops decoding frames for 0x0 / display:none video elements, so
   // detection silently never fires on phones. It renders transparent at the
   // bottom corner — invisible to the student, but WebKit keeps advancing frames.
   return (
-    <div className="pointer-events-none fixed bottom-1 left-1 z-[-1] h-[180px] w-[240px] opacity-0">
-      <video ref={videoRef} autoPlay playsInline muted className="h-full w-full" />
-    </div>
+    <>
+      <div className="pointer-events-none fixed bottom-1 left-1 z-[-1] h-[180px] w-[240px] opacity-0">
+        <video ref={videoRef} autoPlay playsInline muted className="h-full w-full" />
+      </div>
+      <ProctorDebugOverlay enabled={env.proctorDebug} />
+    </>
   );
 }
