@@ -85,34 +85,95 @@ export async function recordConsent(
   return !error;
 }
 
-/** Autosave the student's answers + progress. No-op-safe when offline. */
+/**
+ * Apply a patch to the student's attempt row, CREATING the row when it doesn't
+ * exist yet. This closes the silent-data-loss bug where autosave/submit ran a
+ * blind UPDATE keyed by exam_id+student_id: PostgREST reports no error when the
+ * filter matches zero rows, so if startAttempt hadn't created the row (network
+ * hiccup, slow first query, RLS hiccup) every "saved" and even the final
+ * submit wrote NOTHING while the UI cheerfully reported success.
+ *
+ * Flow: update → verify a row matched (select id) → if zero rows, insert a
+ * minimal in_progress row → re-apply the patch. A unique(exam_id, student_id)
+ * violation on the insert only means a concurrent writer created the row, so
+ * we simply retry the update.
+ */
+async function upsertAttemptPatch(opts: {
+  examId: string;
+  studentId: string;
+  total?: number;
+  patch: Record<string, unknown>;
+}): Promise<boolean> {
+  const db = getSupabase();
+  if (!db || !opts.examId || !opts.studentId) return false;
 
+  // 1. Try the update first and VERIFY it actually matched a row.
+  const { data: hit, error: upErr } = await db
+    .from("attempts")
+    .update(opts.patch)
+    .eq("exam_id", opts.examId)
+    .eq("student_id", opts.studentId)
+    .select("id")
+    .maybeSingle();
+  if (!upErr && hit?.id) return true;
 
+  // 2. No row matched (or the update failed) — try to create the row, then
+  //    re-apply the patch so the answers/progress land in the same write.
+  const now = new Date().toISOString();
+  const { error: insErr } = await db.from("attempts").insert({
+    exam_id: opts.examId,
+    student_id: opts.studentId,
+    state: "in_progress",
+    total: opts.total ?? 0,
+    started_at: now,
+    auto_saved_at: now,
+    answers: {},
+    answered: 0,
+    minutes_used: 0,
+  });
+  if (!insErr) {
+    const { error: reErr } = await db
+      .from("attempts")
+      .update(opts.patch)
+      .eq("exam_id", opts.examId)
+      .eq("student_id", opts.studentId);
+    return !reErr;
+  }
+
+  // 3. Insert raced (unique violation) or the row exists after all — retry the
+  //    update once. If THIS fails too the write genuinely can't land (RLS/
+  //    network) and the caller reports a failure instead of a silent "saved".
+  const { error: retryErr } = await db
+    .from("attempts")
+    .update(opts.patch)
+    .eq("exam_id", opts.examId)
+    .eq("student_id", opts.studentId);
+  return !retryErr;
+}
+
+/** Autosave the student's answers + progress. Self-heals a missing attempt row. */
 export async function saveAnswers(opts: {
   examId: string;
   studentId: string;
   answers: Record<string, unknown>;
   answered: number;
   minutesUsed: number;
+  total?: number;
 }): Promise<boolean> {
-  const db = getSupabase();
-  if (!db) return false;
-  const { error } = await db
-    .from("attempts")
-    .update({
+  return upsertAttemptPatch({
+    examId: opts.examId,
+    studentId: opts.studentId,
+    total: opts.total,
+    patch: {
       answers: opts.answers,
       answered: opts.answered,
       minutes_used: opts.minutesUsed,
       auto_saved_at: new Date().toISOString(),
-    })
-    .eq("exam_id", opts.examId)
-    .eq("student_id", opts.studentId);
-  return !error;
+    },
+  });
 }
 
 /** Final submit — marks the attempt submitted and records the answers. */
-
-
 export async function submitAttempt(opts: {
   examId: string;
   studentId: string;
@@ -120,22 +181,21 @@ export async function submitAttempt(opts: {
   answered: number;
   minutesUsed: number;
   score?: number | null;
+  total?: number;
 }): Promise<boolean> {
-  const db = getSupabase();
-  if (!db) return false;
-  const { error } = await db
-    .from("attempts")
-    .update({
+  return upsertAttemptPatch({
+    examId: opts.examId,
+    studentId: opts.studentId,
+    total: opts.total,
+    patch: {
       state: "submitted",
       answers: opts.answers,
       answered: opts.answered,
       minutes_used: opts.minutesUsed,
       score: opts.score ?? null,
       submitted_at: new Date().toISOString(),
-    })
-    .eq("exam_id", opts.examId)
-    .eq("student_id", opts.studentId);
-  return !error;
+    },
+  });
 }
 
 /** Register the LiveKit proctor session for an attempt (best-effort). */
