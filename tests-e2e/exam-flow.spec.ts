@@ -22,7 +22,7 @@ test.describe('Student Exam Flow', () => {
     // Attempt to go to dashboard without login
     await page.goto('/student');
     
-    // Should be redirected to landing
-    await expect(page).toHaveURL(/.*\/$/);
+    // Should be redirected to the sign-in page
+    await expect(page).toHaveURL(/.*\/login/);
   });
 });

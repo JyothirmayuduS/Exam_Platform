@@ -37,7 +37,7 @@ export default function Landing() {
               V
             </div>
             <div className="leading-none">
-              <p className="font-serif text-[19px] font-semibold tracking-tight">Vignan Lockdown OS</p>
+              <h1 className="font-serif text-[19px] font-semibold tracking-tight">Vignan Lockdown OS</h1>
               <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft">
                 Secure Examination Platform
               </p>

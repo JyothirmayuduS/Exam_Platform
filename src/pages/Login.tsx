@@ -1,11 +1,14 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { getSupabase } from "../lib/supabase";
+import { supabaseConfigured } from "../lib/env";
+import { useAuth } from "../lib/auth";
 
 type LoginMode = "student" | "teacher" | "proctor";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { signInDemo } = useAuth();
   const [searchParams] = useSearchParams();
   const queryRole = searchParams.get("role") as LoginMode | null;
 
@@ -212,6 +215,30 @@ export default function Login() {
               Forgot password?
             </Link>
           </p>
+
+          {!supabaseConfigured && (
+            <div className="mt-6 border border-dashed border-amber/60 bg-amber/5 p-4">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-amber font-bold">Demo mode — no backend configured</p>
+              <p className="mt-1 text-[12px] leading-relaxed text-ink-soft">
+                Sign in with a demo identity to explore the console without a database.
+              </p>
+              <div className="mt-3 grid gap-2">
+                {(["student", "teacher", "proctor"] as const).map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => {
+                      signInDemo(role);
+                      navigate(role === "proctor" ? "/proctor" : role === "teacher" ? "/teacher" : "/student");
+                    }}
+                    className="border border-line bg-paper px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink hover:bg-paper-raised hover:border-forest hover:text-forest"
+                  >
+                    Continue as {role.charAt(0).toUpperCase() + role.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
         </div>
       </div>
