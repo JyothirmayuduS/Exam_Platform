@@ -222,3 +222,64 @@ export async function updateExam(
   const { error } = await db.from("exams").update(row).eq("id", examId);
   return !error;
 }
+
+// ── Exam deletion (guarded) ─────────────────────────────────────────────────
+
+export type ExamDeletionSafety = {
+  /** Attempts currently being taken — deletion MUST be blocked. */
+  inProgress: number;
+  /** Finished attempts — permanent student records; deletion is blocked. */
+  submitted: number;
+  /** Not-started attempts (enrolled but never opened the paper). */
+  notStarted: number;
+  /** True when the database is unreachable (offline/demo mode). */
+  unavailable: boolean;
+};
+
+/**
+ * Check whether an exam is safe to delete. Conditions:
+ *  - anyone currently taking the exam  → BLOCK (they'd be dumped mid-exam)
+ *  - any submitted attempt             → BLOCK (permanent student records)
+ *  - only not-started enrollments      → allowed (roster rows cascade away)
+ */
+export async function getExamDeletionSafety(examId: string): Promise<ExamDeletionSafety> {
+  const db = getSupabase();
+  if (!db || !examId) return { inProgress: 0, submitted: 0, notStarted: 0, unavailable: !db };
+  const { data, error } = await db
+    .from("attempts")
+    .select("state")
+    .eq("exam_id", examId);
+  if (error) return { inProgress: 0, submitted: 0, notStarted: 0, unavailable: true };
+  const counts = { inProgress: 0, submitted: 0, notStarted: 0 };
+  for (const row of (data ?? []) as { state?: string }[]) {
+    if (row.state === "in_progress" || row.state === "paused") counts.inProgress += 1;
+    else if (row.state === "submitted") counts.submitted += 1;
+    else counts.notStarted += 1;
+  }
+  return { ...counts, unavailable: false };
+}
+
+export type DeleteExamResult = { ok: true } | { ok: false; error: string; blocked?: boolean };
+
+/**
+ * Delete an exam permanently. Refuses (blocked: true) when any attempt exists
+ * that is in progress or submitted — enrollments/question links cascade away
+ * with the exam row; question-bank rows created outside this exam survive.
+ */
+export async function deleteExam(examId: string): Promise<DeleteExamResult> {
+  const db = getSupabase();
+  if (!db || !examId) return { ok: false, error: "Database not connected." };
+
+  const safety = await getExamDeletionSafety(examId);
+  if (safety.unavailable) return { ok: false, error: "Could not verify attempts for this exam — deletion aborted for safety." };
+  if (safety.inProgress > 0) {
+    return { ok: false, blocked: true, error: `${safety.inProgress} student(s) are taking this exam right now. The exam cannot be deleted while it is live.` };
+  }
+  if (safety.submitted > 0) {
+    return { ok: false, blocked: true, error: `${safety.submitted} submission(s) are recorded for this exam. Delete would destroy student answer records — exams with submissions cannot be deleted.` };
+  }
+
+  const { error } = await db.from("exams").delete().eq("id", examId);
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}

@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { getSupabase } from "../../lib/supabase";
 import { publishExam, type ExamRecord } from "../../lib/examApi";
+import { NumberField } from "../ui";
 
 const PURPOSES = ["Academic exam", "Campus placement", "Skill / certification", "Mock test", "Other"];
 
@@ -87,6 +88,7 @@ export default function CreateTestModal({
         photoId: false,
         violationLimit: 3,
         violationAction: "submit",
+        violationLimitEnabled: false,
         releaseDate: "",
         ipWhitelist: "",
         sections: false,
@@ -173,7 +175,7 @@ export default function CreateTestModal({
           {assessmentType === "timed" ? (
             <label className="block text-[12px] text-ink-soft">
               <span className="font-medium text-ink">Duration (minutes)</span>
-              <input type="number" min={5} max={300} step={5} value={duration} onChange={(e) => setDuration(Math.max(5, Math.min(300, Number(e.target.value) || 45)))} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest" />
+              <NumberField value={duration} onChange={setDuration} min={5} max={300} fallback={duration} aria-label="Duration in minutes" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest" />
             </label>
           ) : (
             <label className="block text-[12px] text-ink-soft">

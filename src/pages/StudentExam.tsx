@@ -27,6 +27,7 @@ import {
   type PaperSlot,
 } from "../lib/examApi";
 import { lockdownReady, isTauri, downloadUrl, osLabel, detectOS, probeInstaller } from "../lib/platform";
+import { defaultWatermarkText, renderWatermarkTemplate } from "../lib/watermark";
 import useExamState from "../hooks/useExamState";
 import useExamTimer from "../hooks/useExamTimer";
 import useAutosave from "../hooks/useAutosave";
@@ -130,6 +131,9 @@ export default function StudentExam() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loadError, setLoadError] = useState("");
   const [examName, setExamName] = useState("");
+  // Test Options for THIS exam (watermark tokens, flag-limit action, …) —
+  // captured when the paper loads and read by the exam-step UI/effects.
+  const [examSettings, setExamSettings] = useState<Record<string, unknown>>({});
   // Mirror the exam name for long-lived upload closures (recording parts,
   // screenshot loop) so they always write under the exam-name R2 folder.
   const examNameRef = useRef("");
@@ -574,6 +578,7 @@ export default function StudentExam() {
       Sentry.setTag("route", "/student/exam");
 
       setExamName(`${exam.name}`);
+      setExamSettings((exam.settings ?? {}) as Record<string, unknown>);
       if (exam.duration_minutes) {
         setDurationMin(exam.duration_minutes);
       }
@@ -610,6 +615,46 @@ export default function StudentExam() {
     active: step === "exam" && !proctorPaused,
     onTimeUp: () => void doSubmit(),
   });
+
+  // ── Flag-limit action (Test Options → Security & access) ──────────────────
+  // When the teacher enabled "Take action after a number of proctoring flags",
+  // crossing the limit either warns the candidate ONCE or auto-submits the
+  // exam ONCE. Without the toggle, flags are recorded but never trigger
+  // anything — that knob is exactly what the checkbox controls.
+  const flagThresholdFiredRef = useRef(false);
+  const [flagThresholdWarning, setFlagThresholdWarning] = useState("");
+  useEffect(() => {
+    if (step !== "exam" || flagThresholdFiredRef.current) return;
+    if (!examSettings.violationLimitEnabled) return;
+    const limit = Math.max(1, Number(examSettings.violationLimit ?? 3) || 3);
+    if (violations.length < limit) return;
+    const action = examSettings.violationAction === "warn" ? "warn" : "submit";
+    flagThresholdFiredRef.current = true;
+    if (action === "warn") {
+      flag(`Flag limit reached (${violations.length}/${limit}) — candidate warned`);
+      setFlagThresholdWarning(
+        `You have raised ${violations.length} proctoring flags (limit ${limit}). Any further misconduct can auto-submit your exam.`,
+      );
+    } else {
+      flag(`Flag limit reached (${violations.length}/${limit}) — exam auto-submitted`);
+      void doSubmit();
+    }
+  }, [step, examSettings, violations.length, flag]);
+
+  // ── Watermark line tiled across the exam screen ───────────────────────────
+  // Test Options accepts placeholders ({registration number}, {name}, …) that
+  // resolve to THIS candidate's details; empty template → classic fallback.
+  const watermarkLine = (() => {
+    const template = String(examSettings.watermarkText ?? "").trim();
+    if (!template) return defaultWatermarkText({ name: studentName, roll: STUDENT_ROLL });
+    return renderWatermarkTemplate(template, {
+      name: studentName,
+      roll: STUDENT_ROLL,
+      email: studentEmail,
+      examName,
+      examId: EXAM_ID,
+    });
+  })();
 
   // Live broadcasts from the proctor/teacher console (proctor_messages,
   // kind = broadcast) shown as a toast while the exam is running.
@@ -1200,12 +1245,13 @@ export default function StudentExam() {
   // ---------- Step: exam (kiosk mode) ----------
   return (
     <div className="min-h-screen bg-paper text-ink">
-      {/* Watermark (matches the reference "<name>-<id>" backdrop) */}
+      {/* Watermark — custom template from Test Options with this candidate's
+          tokens substituted, or the classic "name · roll" backdrop */}
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-        <div className="flex flex-wrap content-start opacity-[0.05]">
+        <div className="flex flex-wrap content-start opacity-[0.08]">
           {Array.from({ length: 44 }).map((_, i) => (
             <span key={i} className="w-1/2 shrink-0 py-2 pr-2 text-right font-mono text-[11px] uppercase tracking-widest text-ink">
-              {studentName} · {STUDENT_ROLL}
+              {watermarkLine}
             </span>
           ))}
         </div>
@@ -1233,6 +1279,18 @@ export default function StudentExam() {
               <p className="mt-0.5 text-[14px] font-medium">{broadcast.body}</p>
             </div>
             <button onClick={() => setBroadcast(null)} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
+          </div>
+        </div>
+      )}
+      {flagThresholdWarning && (
+        <div className="fixed inset-x-0 top-0 z-[64] flex justify-center px-4 py-3">
+          <div className="flex w-full max-w-xl items-start gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl" role="alert">
+            <FiAlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <div className="flex-1">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">Proctoring warning</p>
+              <p className="mt-0.5 text-[14px] font-medium">{flagThresholdWarning}</p>
+            </div>
+            <button onClick={() => setFlagThresholdWarning("")} aria-label="Dismiss warning" className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
           </div>
         </div>
       )}

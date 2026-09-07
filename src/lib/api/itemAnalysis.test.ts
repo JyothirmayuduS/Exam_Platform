@@ -26,8 +26,12 @@ describe("itemAnalysis", () => {
   });
 
   it("getItemAnalysis returns empty when no supabase", async () => {
+    // vi.doMock only affects modules imported AFTER it runs, so reset the
+    // module registry and re-import the module under the null-DB mock.
+    vi.resetModules();
     vi.doMock("../supabase", () => ({ getSupabase: () => null }));
-    const stats = await getItemAnalysis("e1");
+    const { getItemAnalysis: getItemAnalysisNoDb } = await import("./itemAnalysis");
+    const stats = await getItemAnalysisNoDb("e1");
     expect(stats).toEqual([]);
   });
 });

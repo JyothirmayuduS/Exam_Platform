@@ -2,7 +2,7 @@
 // Formal editorial style: 2px corners, forest primary, mono labels, clear
 // hover/pressed/focus affordances on every interactive control.
 
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 import { FiArrowRight, FiArrowLeft, FiPlus, FiUpload, FiX, FiMoreHorizontal } from "react-icons/fi";
 
 /* ── Buttons ───────────────────────────────────────────────────────────── */
@@ -166,5 +166,74 @@ export function Segmented<T extends string>({
         </button>
       ))}
     </div>
+  );
+}
+
+// ── NumberField ──────────────────────────────────────────────────────────────
+//
+// A number input the user can actually CLEAR. The naive pattern
+//   onChange={(e) => setN(Math.max(5, Number(e.target.value) || 45))}
+// snaps the field back to the fallback the moment backspace empties it, so
+// "45" can never be deleted digit-by-digit ("4" → "" → instantly "45").
+// NumberField keeps the RAW text while focused (empty is allowed mid-edit),
+// commits a clamped value on every valid keystroke, and settles clamped
+// fallback-or-value on blur.
+export function NumberField({
+  value,
+  onChange,
+  min = 1,
+  max = 600,
+  fallback,
+  className,
+  ...rest
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  min?: number;
+  max?: number;
+  /** Committed when the field is cleared or left invalid (defaults to min). */
+  fallback?: number;
+  className?: string;
+} & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "min" | "max" | "className">) {
+  const [text, setText] = useState(String(value));
+  const focusedRef = useRef(false);
+  const clamp = (n: number) => Math.max(min, Math.min(max, n));
+
+  // Sync external value changes (modal re-open, saved record) while not editing.
+  useEffect(() => {
+    if (!focusedRef.current) setText(String(value));
+  }, [value]);
+
+  return (
+    <input
+      type="number"
+      inputMode="numeric"
+      min={min}
+      max={max}
+      value={text}
+      className={className}
+      {...rest}
+      onFocus={(e) => {
+        focusedRef.current = true;
+        rest.onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        focusedRef.current = false;
+        const n = Number(text);
+        const committed =
+          text.trim() === "" || !Number.isFinite(n) ? (fallback ?? min) : clamp(n);
+        onChange(committed);
+        setText(String(committed));
+        rest.onBlur?.(e);
+      }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setText(raw);
+        if (raw.trim() !== "") {
+          const n = Number(raw);
+          if (Number.isFinite(n)) onChange(clamp(n));
+        }
+      }}
+    />
   );
 }

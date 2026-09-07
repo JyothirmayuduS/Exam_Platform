@@ -35,12 +35,12 @@ export default function App() {
       <Route path="/student/exams" element={<ProtectedRoute allowedRole="student"><StudentExams /></ProtectedRoute>} />
       <Route path="/student/exams/:examId" element={<ProtectedRoute allowedRole="student"><StudentExamDetail /></ProtectedRoute>} />
       <Route path="/student/exams/:examId/practice" element={<ProtectedRoute allowedRole="student"><PracticeModeExam /></ProtectedRoute>} />
-      <Route path="/student/exams/:examId/system-check" element={<ProtectedRoute allowedRole="student"><SystemCheckPage /></ProtectedRoute>} />
+      <Route path="/student/exams/:examId/system-check" element={<SystemCheckPage />} />
       <Route path="/student/results" element={<ProtectedRoute allowedRole="student"><StudentResults /></ProtectedRoute>} />
       <Route path="/student/results/:resultId" element={<ProtectedRoute allowedRole="student"><StudentResultDetail /></ProtectedRoute>} />
       <Route path="/student/help" element={<ProtectedRoute allowedRole="student"><StudentHelp /></ProtectedRoute>} />
       <Route path="/student/exam" element={<ProtectedRoute allowedRole="student"><StudentExam /></ProtectedRoute>} />
-      <Route path="/system-check" element={<ProtectedRoute allowedRole="student"><SystemCheckPage /></ProtectedRoute>} />
+      <Route path="/system-check" element={<SystemCheckPage />} />
       <Route path="/student/practice" element={<ProtectedRoute allowedRole="student"><PracticeModeExam /></ProtectedRoute>} />
       <Route path="/mobile-upload/:token" element={<MobileUpload />} />
       <Route path="/mobile-upload" element={<MobileUpload />} />

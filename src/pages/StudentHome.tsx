@@ -142,6 +142,12 @@ export default function StudentHome() {
               >
                 Practice mode
               </Link>
+              <Link
+                to={`/student/exams/${row.id}/system-check`}
+                className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink"
+              >
+                System check
+              </Link>
               {row.status === "live" ? (
                 <Link
                   to={`/student/exam?examId=${encodeURIComponent(row.id)}`}

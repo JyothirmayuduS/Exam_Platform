@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FiArrowLeft, FiArrowRight, FiCheck, FiUpload, FiEdit3, FiEye, FiSettings, FiLink, FiSearch, FiX, FiChevronDown, FiChevronRight, FiClock, FiLock, FiMail } from "react-icons/fi";
-import { Button, Badge } from "../components/ui";
+import { Button, Badge, NumberField } from "../components/ui";
 import {
   listExamsForTeacher,
   listQuestionsForExam,
@@ -26,7 +26,7 @@ type S = {
   perStudent: number; randomSelect: boolean; shuffleOrder: boolean; shuffleOptions: boolean;
   autoSubmit: boolean; mode: "practice" | "lockdown"; attempts: number;
   negative: boolean; calculator: boolean; instantFeedback: boolean;
-  photoId: boolean; violationLimit: number; violationAction: "warn" | "submit";
+  photoId: boolean; violationLimitEnabled: boolean; violationLimit: number; violationAction: "warn" | "submit";
   releaseDate: string; ipWhitelist: string; sections: boolean; sectionTiming: boolean;
   autoClose: boolean; durationLock: boolean;
   language?: string; purpose?: string; assessmentType?: "timed" | "deadline"; deadline?: string;
@@ -39,7 +39,7 @@ type S = {
 const DEFAULTS: S = {
   perStudent: 5, randomSelect: true, shuffleOrder: true, shuffleOptions: true, autoSubmit: true,
   mode: "lockdown", attempts: 1, negative: false, calculator: false, instantFeedback: false,
-  photoId: false, violationLimit: 3, violationAction: "submit", releaseDate: "", ipWhitelist: "",
+  photoId: false, violationLimitEnabled: false, violationLimit: 3, violationAction: "submit", releaseDate: "", ipWhitelist: "",
   sections: false, sectionTiming: false, autoClose: false, durationLock: true,
   language: "English", purpose: "Academic exam", assessmentType: "timed", deadline: "",
   showReportToTaker: false, commentsMandatory: false, skipFeedback: false, redirectAfter: "",
@@ -245,7 +245,7 @@ export default function ExamStudio({
           <div className="flex flex-wrap items-end gap-3">
             <label className="block text-[12px] text-ink-soft">
               <span className="font-medium text-ink">Test duration (min)</span>
-              <input type="number" min={1} max={600} step={5} value={duration} onChange={(e) => setDuration(Math.max(1, Math.min(600, Number(e.target.value) || 1)))} className={`mt-1 block w-28 ${inputCls}`} />
+              <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Test duration in minutes" className={`mt-1 block w-28 ${inputCls}`} />
             </label>
             <Button size="sm" variant="secondary" icon={<FiEye />} onClick={() => setPreviewOpen(true)}>Preview</Button>
             <div className="relative">
@@ -437,7 +437,7 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
               </Group>
               <Group label="Duration">
                 <label className="mt-2 block text-[12px] text-ink-soft">Minutes
-                  <input type="number" min={1} max={600} step={5} value={duration} onChange={(e) => setDuration(Math.max(1, Math.min(600, Number(e.target.value) || 1)))} className="mt-1 block w-28 border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                  <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Minutes" className="mt-1 block w-28 border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                 </label>
               </Group>
               <Group label="Test options">
@@ -453,7 +453,10 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
                 <Check label="Make comments mandatory for manual evaluation" detail="Evaluators must leave a comment when grading descriptive answers." checked={!!s.commentsMandatory} onChange={(v) => patch("commentsMandatory", v)} />
                 <Check label="Don't ask for feedback post test completion" checked={!!s.skipFeedback} onChange={(v) => patch("skipFeedback", v)} />
                 <label className="mt-3 block text-[12px] text-ink-soft">Custom watermark text (optional)
-                  <input value={s.watermarkText ?? ""} onChange={(e) => patch("watermarkText", e.target.value)} placeholder="e.g. Vignan Internal — do not share" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                  <input value={s.watermarkText ?? ""} onChange={(e) => patch("watermarkText", e.target.value)} placeholder="e.g. {registration number} · {name} — do not share" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                  <span className="mt-1.5 block text-[11px] leading-snug text-ink-soft">
+                    Placeholders are filled with each candidate's own details and tiled across their exam screen. Supported: <code className="bg-paper-raised px-1">{"{"}name{"}"}</code> <code className="bg-paper-raised px-1">{"{"}registration number{"}"}</code> <code className="bg-paper-raised px-1">{"{"}email{"}"}</code> <code className="bg-paper-raised px-1">{"{"}exam{"}"}</code> <code className="bg-paper-raised px-1">{"{"}date{"}"}</code>. Example: <code className="bg-paper-raised px-1">{"{"}registration number{"}"} {"{"}name{"}"}</code> → <span className="whitespace-nowrap">221FA12345 · Ravi Teja</span>.
+                  </span>
                 </label>
                 <label className="mt-3 block text-[12px] text-ink-soft">Redirect test-takers after finish (optional URL)
                   <input value={s.redirectAfter ?? ""} onChange={(e) => patch("redirectAfter", e.target.value)} placeholder="https://…" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
@@ -461,9 +464,15 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
               </Group>
               <Group label="Security & access">
                 <Check label="Require Photo ID verification" detail="Students capture their face and ID card before starting." checked={!!s.photoId} onChange={(v) => patch("photoId", v)} />
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <Check
+                  label="Take action after a number of proctoring flags"
+                  detail="Off: flags are only recorded. On: when a candidate crosses the flag limit below, warn them or auto-submit the exam."
+                  checked={!!s.violationLimitEnabled}
+                  onChange={(v) => patch("violationLimitEnabled", v)}
+                />
+                <div className={`mt-3 grid gap-3 sm:grid-cols-2 ${s.violationLimitEnabled ? "" : "pointer-events-none opacity-40"}`} aria-disabled={!s.violationLimitEnabled}>
                   <label className="block text-[12px] text-ink-soft">Max flags before action
-                    <input type="number" min={1} max={20} value={s.violationLimit} onChange={(e) => patch("violationLimit", Math.max(1, Math.min(20, Number(e.target.value) || 3)))} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                    <NumberField value={Number(s.violationLimit) || 3} onChange={(n) => patch("violationLimit", n)} min={1} max={20} fallback={Number(s.violationLimit) || 3} aria-label="Max flags before action" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                   </label>
                   <label className="block text-[12px] text-ink-soft">When threshold is met
                     <select value={s.violationAction} onChange={(e) => patch("violationAction", e.target.value as S["violationAction"])} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest">
@@ -471,15 +480,15 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
                     </select>
                   </label>
                 </div>
+                {!s.violationLimitEnabled && <p className="mt-2 text-[11px] text-ink-soft">Tick the checkbox above to enable the flag limit — until then proctoring flags are logged but never trigger an action.</p>}
               </Group>
             </>
           )}
 
           {dialog === "sections" && (
             <>
-              <Group label="Question delivery">
-                <label className="mt-2 block text-[12px] text-ink-soft">Questions per student
-                  <input type="number" min={1} value={s.perStudent} onChange={(e) => patch("perStudent", Math.max(1, Number(e.target.value) || 1))} className="mt-1 block w-28 border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+              <Group label="Question delivery">                  <label className="mt-2 block text-[12px] text-ink-soft">Questions per student
+                  <NumberField value={Number(s.perStudent) || 1} onChange={(n) => patch("perStudent", n)} min={1} max={500} fallback={Number(s.perStudent) || 1} aria-label="Questions per student" className="mt-1 block w-28 border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                 </label>
                 <Check label="Randomly select questions" detail="Each candidate gets a different set drawn from the pool." checked={!!s.randomSelect} onChange={(v) => patch("randomSelect", v)} />
                 <Check label="Shuffle question order" checked={!!s.shuffleOrder} onChange={(v) => patch("shuffleOrder", v)} />

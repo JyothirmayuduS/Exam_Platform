@@ -5,9 +5,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "../lib/supabase";
 import type { ExamRecord } from "../lib/examApi";
+import { deleteExam, getExamDeletionSafety, type ExamDeletionSafety } from "../lib/examApi";
 import { PageHeading, Button } from "./TeacherDashboard";
 import { PlusIcon, ArrowRightIcon } from "../components/ui";
-import { FiGrid, FiList } from "react-icons/fi";
+import { FiGrid, FiList, FiTrash2 } from "react-icons/fi";
 import CreateTestModal from "../components/teacher/CreateTestModal";
 
 type ExamCard = {
@@ -33,17 +34,20 @@ export default function TeacherExams({
   notify,
   autoCreate = false,
   onCreate,
+  onDeleted,
 }: {
   notify: (s: string) => void;
   navigate: (s: string) => void;
   exams: any[];
   autoCreate?: boolean;
   onCreate?: (exam: ExamRecord) => void;
+  onDeleted?: (examId: string) => void;
 }) {
   const [takers, setTakers] = useState<Record<string, number>>({});
   const [filter, setFilter] = useState("All exams");
   const [view, setView] = useState<"cards" | "list">("cards");
   const [showCreate, setShowCreate] = useState(autoCreate);
+  const [deleting, setDeleting] = useState<ExamCard | null>(null);
 
   useEffect(() => { setShowCreate(autoCreate); }, [autoCreate]);
 
@@ -147,13 +151,23 @@ export default function TeacherExams({
                 <CardStat label="Test takers" value={String(exam.takers)} />
               </div>
               <div className="mt-auto border-t border-line p-3">
-                <Button
-                  onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
-                  iconRight={<ArrowRightIcon />}
-                  className="w-full"
-                >
-                  {exam.state === "Draft" ? "Continue setup" : "Open test"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
+                    iconRight={<ArrowRightIcon />}
+                    className="min-w-0 flex-1"
+                  >
+                    {exam.state === "Draft" ? "Continue setup" : "Open test"}
+                  </Button>
+                  <button
+                    onClick={() => setDeleting(exam)}
+                    aria-label={`Delete ${exam.name}`}
+                    title="Delete this test"
+                    className="shrink-0 border border-line-strong p-2.5 text-ink-soft transition hover:border-alert hover:bg-alert/10 hover:text-alert"
+                  >
+                    <FiTrash2 aria-hidden />
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -194,7 +208,17 @@ export default function TeacherExams({
                   <td className="px-5 py-4">{exam.takers}</td>
                   <td className="px-5 py-4"><span className={`font-mono text-[10px] uppercase ${exam.tone}`}>{exam.state}</span></td>
                   <td className="px-5 py-4 text-right">
-                    <Button size="sm" onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)} iconRight={<ArrowRightIcon />}>{exam.state === "Draft" ? "Continue setup" : "Open"}</Button>
+                    <div className="flex items-center justify-end gap-2">
+                      <Button size="sm" onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)} iconRight={<ArrowRightIcon />}>{exam.state === "Draft" ? "Continue setup" : "Open"}</Button>
+                      <button
+                        onClick={() => setDeleting(exam)}
+                        aria-label={`Delete ${exam.name}`}
+                        title="Delete this test"
+                        className="border border-line-strong p-2 text-ink-soft transition hover:border-alert hover:bg-alert/10 hover:text-alert"
+                      >
+                        <FiTrash2 aria-hidden />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -213,8 +237,129 @@ export default function TeacherExams({
           }}
         />
       )}
+      {deleting && (
+        <DeleteExamDialog
+          exam={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={(id) => {
+            setDeleting(null);
+            onDeleted?.(id);
+            notify(`Test "${deleting.name}" deleted.`);
+          }}
+        />
+      )}
     </div>
   );
+}
+
+// ── Delete dialog with safety conditions ────────────────────────────────────
+//
+// Deletion is REFUSED when the exam has real attempt rows: in-progress means
+// students are sitting the paper right now; submitted means permanent student
+// records exist. Only untouched exams (no attempts, or merely enrolled
+// students who never started) can be removed.
+function DeleteExamDialog({ exam, onClose, onDeleted }: {
+  exam: ExamCard;
+  onClose: () => void;
+  onDeleted: (examId: string) => void;
+}) {
+  const [safety, setSafety] = useState<ExamDeletionSafety | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void getExamDeletionSafety(exam.id).then((s) => { if (active) setSafety(s); });
+    return () => { active = false; };
+  }, [exam.id]);
+
+  const blocked = !!safety && (safety.inProgress > 0 || safety.submitted > 0);
+  const totalAttempts = safety ? safety.inProgress + safety.submitted + safety.notStarted : 0;
+
+  const confirmDelete = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    const res = await deleteExam(exam.id);
+    setBusy(false);
+    if (!res.ok) { setError(res.error); return; }
+    onDeleted(exam.id);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-ink/50 p-4 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true" aria-label="Delete test">
+      <div className="w-full max-w-md border border-line-strong bg-paper shadow-2xl">
+        <div className="flex items-start justify-between border-b border-line px-6 py-5">
+          <div>
+            <h2 className="font-serif text-2xl font-semibold">Delete test</h2>
+            <p className="mt-1 text-[12px] text-ink-soft">{exam.name} · {exam.id}</p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="text-xl leading-none text-ink-soft transition hover:text-ink">×</button>
+        </div>
+
+        <div className="space-y-3 px-6 py-5 text-[13px]">
+          {!safety && <p className="py-6 text-center text-ink-soft">Checking attempts for this test…</p>}
+
+          {safety?.unavailable && (
+            <p className="border border-alert/40 bg-alert/5 px-4 py-3 text-alert">
+              The database could not be reached, so attempt safety could not be verified. Deletion is disabled — try again when online.
+            </p>
+          )}
+
+          {safety && !safety.unavailable && blocked && (
+            <div className="space-y-3">
+              <p className="border border-alert/40 bg-alert/5 px-4 py-3 text-alert">
+                <span className="font-medium">This test cannot be deleted.</span>
+              </p>
+              {safety.inProgress > 0 && (
+                <p className="border border-line bg-paper-raised px-4 py-3">
+                  ● <span className="font-medium">{safety.inProgress} student{plural(safety.inProgress)} taking this exam right now.</span> Deleting it would dump them out of the paper mid-attempt. The exam stays locked until the session ends.
+                </p>
+              )}
+              {safety.submitted > 0 && (
+                <p className="border border-line bg-paper-raised px-4 py-3">
+                  ● <span className="font-medium">{safety.submitted} submitted answer sheet{plural(safety.submitted)} recorded.</span> Deleting would permanently destroy student answer records, scores and evidence. Exams with submissions are kept for audit reasons.
+                </p>
+              )}
+              <p className="text-[12px] text-ink-soft">If you truly need to remove this test, clear its attempts first (or contact the administrator).</p>
+            </div>
+          )}
+
+          {safety && !safety.unavailable && !blocked && (
+            <>
+              <p>Permanently delete this test{totalAttempts > 0 ? ` and its ${totalAttempts} not-started enrollment row${plural(totalAttempts)}` : ""}?</p>
+              <ul className="space-y-1 border border-line bg-paper-raised px-4 py-3 text-[12px] text-ink-soft">
+                <li>• The exam, its schedule and join link</li>
+                <li>• Question pool links for this exam</li>
+                <li>• Enrollment rows for batch students</li>
+                <li>• Questions created inside this test (bank questions written separately stay)</li>
+              </ul>
+              <p className="text-[12px] text-ink-soft">No student has started this test, so no attempt data will be lost.</p>
+            </>
+          )}
+
+          {error && <p className="border border-alert/40 bg-alert/5 px-4 py-3 text-[12px] text-alert">{error}</p>}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-line px-6 py-5">
+          <button onClick={onClose} className="border border-line-strong px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-ink">Cancel</button>
+          {!blocked && safety && !safety.unavailable && (
+            <button
+              onClick={() => void confirmDelete()}
+              disabled={busy}
+              className="border border-alert bg-alert px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-paper transition hover:opacity-90 disabled:opacity-60"
+            >
+              {busy ? "Deleting…" : "Delete permanently"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function plural(n: number): string {
+  return n === 1 ? "" : "s";
 }
 
 function MiniStat({ label, value, detail, tone, onClick }: { label: string; value: string; detail: string; tone: string; onClick: () => void }) {
