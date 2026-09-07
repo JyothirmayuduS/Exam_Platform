@@ -35,6 +35,10 @@ const LOCKDOWN_JS: &str = r#"
     if (k === 'printscreen') { navigator.clipboard?.writeText(''); return block(e); }
   }, true);
 
+  // Mark this as the Tauri lockdown shell so isTauri() passes.
+  window.__TAURI_INTERNALS__ = true;
+  window.__TAURI__ = {};
+
   // Warn the invigilator layer when the window loses focus (possible cheating).
   window.addEventListener('blur', () => {
     window.dispatchEvent(new CustomEvent('lockdown:focus-lost'));
@@ -223,6 +227,8 @@ fn main() {
                 }
                 
                 let _ = win.eval(LOCKDOWN_JS);
+                // Force the web-layer lockdown markers so isTauri() succeeds.
+                let _ = win.eval("window.__TAURI_INTERNALS__=true; window.__TAURI__={};");
                 let _ = win.set_focus();
             }
 

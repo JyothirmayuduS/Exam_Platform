@@ -30,6 +30,7 @@ import {
   classifyObject,
   decideObjectEvent,
   gazeLabel,
+  lowerRegion,
   pushObjectSample,
   proctorDiag,
 } from "../proctoring";
@@ -203,12 +204,25 @@ function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number): void {
   }
 }
 
-/** Raw MediaPipe detection → normalized, confidence-gated engine Detections. */
+/** Raw MediaPipe detection → normalized, confidence-gated engine Detections.
+ *
+ *  MediaPipe's ObjectDetector returns the bounding box in PIXELS
+ *  (originX / originY / width / height), NOT normalized [0,1] units. Clamping
+ *  those pixel values into [0,1] collapsed every phone to the bottom-right
+ *  corner of the frame — which silently wrecked IoU identity tracking
+ *  (geometry.ts), desk-ROI filtering and the debug overlay, the #1 cause of
+ *  "proctoring never detects". We must divide by the actual video resolution.
+ */
 function toDetections(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   result: any,
+  video: HTMLVideoElement,
 ): Detection[] {
   const out: Detection[] = [];
+  // Guard against a still-initializing / 0x0 video (iOS Safari sometimes reads
+  // videoWidth 0 until the first decoded frame).
+  const vw = Math.max(1, video.videoWidth || 0);
+  const vh = Math.max(1, video.videoHeight || 0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   for (const d of result?.detections ?? []) {
     for (const c of d?.categories ?? []) {
@@ -218,22 +232,93 @@ function toDetections(
       const box = d.boundingBox;
       const minConf = kind === "phone" ? OBJECT.PHONE_MIN_CONF : OBJECT.LAPTOP_MIN_CONF;
       if (score < minConf) continue; // gate here — the model threshold stays low
-      const width = Math.max(0, Number(box.width ?? 0));
-      const height = Math.max(0, Number(box.height ?? 0));
+      // Real pixel dims, never negative, clamped to the visible frame.
+      const px = Math.max(0, Number(box.originX ?? 0));
+      const py = Math.max(0, Number(box.originY ?? 0));
+      const pw = Math.max(0, Number(box.width ?? 0));
+      const ph = Math.max(0, Number(box.height ?? 0));
       out.push({
         kind,
         label: String(c.categoryName),
         score,
         bbox: {
-          x: Math.max(0, Math.min(1, Number(box.originX ?? 0))),
-          y: Math.max(0, Math.min(1, Number(box.originY ?? 0))),
-          width: Math.min(1, width),
-          height: Math.min(1, height),
+          x: Math.min(1, px / vw),
+          y: Math.min(1, py / vh),
+          width: Math.min(1, pw / vw),
+          height: Math.min(1, ph / vh),
         },
       });
     }
   }
   return out;
+}
+
+/**
+ * Second detection pass on an upscaled crop of the lower desk/hands region.
+ *
+ * Phones are small objects: the full-frame pass frequently misses a phone that
+ * comfortably fills 40% of a quarter-frame crop. We copy the bottom
+ * `PHONE_ROI_FRACTION` of the frame to an offscreen canvas (up to the input
+ * dimensions MediaPipe already works at), run the IMAGE-mode detector, and map
+ * every returned PIXEL box back into FULL-FRAME normalized [0,1] coordinates
+ * so it composes with the full-frame pass before identity tracking.
+ */
+function detectDeskRoi(
+  now: number,
+  vw: number,
+  vh: number,
+  video: HTMLVideoElement,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  roiDetector: any,
+): Detection[] {
+  const roi = lowerRegion(OBJECT.PHONE_ROI_FRACTION); // normalized full-frame ROI
+  const roiX = Math.round(roi.x * vw);
+  const roiY = Math.round(roi.y * vh);
+  const roiW = Math.round(roi.width * vw);
+  const roiH = Math.round(roi.height * vh);
+  if (roiW < 16 || roiH < 16) return [];
+
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = roiW;
+    canvas.height = roiH;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return [];
+    ctx.drawImage(video, -roiX, -roiY);
+
+    if (!roiDetector) return [];
+    const result = roiDetector.detect(canvas);
+    const out: Detection[] = [];
+    for (const d of result?.detections ?? []) {
+      for (const c of d?.categories ?? []) {
+        const kind = classifyObject(String(c.categoryName ?? ""));
+        const score = Number(c.score ?? 0);
+        if (!kind || !d.boundingBox) continue;
+        const box = d.boundingBox;
+        const minConf = kind === "phone" ? OBJECT.PHONE_MIN_CONF : OBJECT.LAPTOP_MIN_CONF;
+        if (score < minConf) continue;
+        // Crop-local pixels → full-frame normalized.
+        const px = Math.max(0, Number(box.originX ?? 0)) + roiX;
+        const py = Math.max(0, Number(box.originY ?? 0)) + roiY;
+        const pw = Math.max(0, Number(box.width ?? 0));
+        const ph = Math.max(0, Number(box.height ?? 0));
+        out.push({
+          kind,
+          label: String(c.categoryName),
+          score,
+          bbox: {
+            x: Math.min(1, px / vw),
+            y: Math.min(1, py / vh),
+            width: Math.min(1, pw / vw),
+            height: Math.min(1, ph / vh),
+          },
+        });
+      }
+    }
+    return out;
+  } catch {
+    return []; // ROI pass is best-effort — never crash the detection loop
+  }
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -246,7 +331,9 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const landmarkRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const objDetRef   = useRef<any>(null);
+  const objDetRef   = useRef<any>(null);     // VIDEO mode for full-frame
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const objDetRoiRef = useRef<any>(null);    // IMAGE mode for desk-ROI crop
 
   // Engine singletons (stable for the component's lifetime; created once in an
   // effect so refs are never touched during render). They survive active/pause
@@ -515,6 +602,25 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         }
         if (!alive) return;
 
+        // IMAGE-mode detector for the desk-ROI second pass (can't reuse VIDEO mode)
+        if (!objDetRoiRef.current) {
+          objDetRoiRef.current = await withRetry(
+            (source) => createWithFallback(
+              (delegate) =>
+                ObjectDetector.createFromOptions(vision, {
+                  baseOptions: { modelAssetPath: source, delegate },
+                  runningMode: "IMAGE",
+                  scoreThreshold: OBJECT.SCORE_THRESHOLD,
+                  maxResults: OBJECT.MAX_RESULTS,
+                }),
+              "Loading desk-ROI object detector…",
+            ),
+            MODEL_OBJ_DET_SOURCES,
+            "desk-ROI object detector",
+          );
+        }
+        if (!alive) return;
+
         setStatus(s => ({ ...s, loading: false, loadStep: "AI proctor active" }));
       } catch (err) {
         console.error("[ProctorAI] model load error:", err);
@@ -664,13 +770,26 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
       }
 
       // ── Object detection: track + confirm, then fuse with head pose ─────
-      // (slow cadence — the heaviest model; raw frames never become events)
+      // (moderate cadence — the heaviest model; raw frames never become events)
       if (objDetRef.current && now - tPhone.current > OBJECT_MS) {
         tPhone.current = now;
         try {
+          // TWo-PASS DETECTION for maximum phone sensitivity:
+          //   1. the full frame,
+          //   2. a zoomed crop of the lower desk/hands region (where phones are
+          //      held) — small phones the model misses at full-frame size are
+          //      caught on the upsized crop, then the boxes are mapped back to
+          //      full-frame normalized coordinates before tracking.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const result: any = objDetRef.current.detectForVideo(video, now);
-          const dets = toDetections(result);
+          const dets: Detection[] = toDetections(result, video);
+
+          if (OBJECT.USE_PHONE_ROI && video.videoWidth > 0 && video.videoHeight > 0) {
+            const roi: Detection[] = detectDeskRoi(now, video.videoWidth, video.videoHeight, video, objDetRoiRef.current);
+            // Merged ROI detections are normalized to the SAME [0,1] full-frame
+            // coordinate space, so they compose cleanly with the full-frame pass.
+            dets.push(...roi);
+          }
 
           // Diagnostics: log EVERY raw detection the model returns — benign
           // objects, sub-threshold phones, low scores included — plus the

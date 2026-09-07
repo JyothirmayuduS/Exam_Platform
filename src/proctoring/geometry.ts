@@ -29,6 +29,24 @@ export function centerDistance(a: BBox, b: BBox): number {
 }
 
 /**
+ * Blended identity score in [0, 1]. Pure IoU is brittle for small, fast-moving
+ * objects (a phone in a hand sweeps between frames and can briefly have zero
+ * overlap with its own previous box) and for tiny boxes IoU saturates. We blend
+ * IoU with a Gaussian falloff of the center distance, so a box that stays near
+ * its predecessor — even with little or no area overlap — still matches.
+ */
+export function matchScore(a: BBox, b: BBox): number {
+  const overlap = iou(a, b);
+  const dist = centerDistance(a, b);
+  // Half the frame diagonal is "1 normalized unit"; a center drift of ~0.25
+  // (a quarter of the frame) already halves the distance term.
+  const distTerm = Math.exp(-dist / 0.18);
+  // Weight IoU more when the boxes actually overlap; fall back on proximity
+  // when they don't.
+  return Math.max(overlap * 0.7 + distTerm * 0.3, overlap);
+}
+
+/**
  * A detection "largely inside" an ROI? Phones are small objects — the model
  * reliably spots them only when the candidate holds them in the lower part of
  * the webcam frame (desk / hands zone). This returns the crop to run a second

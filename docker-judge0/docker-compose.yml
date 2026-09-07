@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  judge0:
+    image: judge0/judge0:1.13.1
+    container_name: judge0-server
+    ports:
+      - "2358:2358"
+    environment:
+      - REDIS_HOST=judge0-redis
+      - POSTGRES_USER=judge0
+      - POSTGRES_PASSWORD=judge0
+      - POSTGRES_DB=judge0
+      - POSTGRES_HOST=judge0-db
+    depends_on:
+      - judge0-redis
+      - judge0-db
+  judge0-redis:
+    image: redis:7-alpine
+    container_name: judge0-redis
+    command: redis-server --save "" --appendonly no
+  judge0-db:
+    image: postgres:15-alpine
+    container_name: judge0-db
+    environment:
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0
+      POSTGRES_DB: judge0

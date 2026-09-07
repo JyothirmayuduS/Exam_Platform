@@ -6,11 +6,23 @@ import { getSupabase } from "../supabase";
 import type { Student, StudentRosterRecord } from "./types";
 
 /** Resolve a student row id from their roll number (needed for attempt rows). */
-/** Full student profile (for pre-filling the registration step). */
+/** Full student profile — requires an authenticated student session.
+ *  Rejects unauthenticated and cross-student lookups (IDOR fix). */
 export async function getStudentProfile(roll: string): Promise<{ id: string; full_name: string | null; email: string | null } | null> {
   const db = getSupabase();
   if (!db || !roll) return null;
-  const { data } = await db.from("students").select("id, full_name, email").eq("roll", roll).maybeSingle();
+
+  // Caller must be an authenticated student.
+  const { data: userData } = await db.auth.getUser();
+  const user = userData?.user;
+  if (!user) return null;
+
+  // Resolve the caller's student row — reject if unlinked.
+  const { data: me } = await db.from("students").select("id").eq("auth_id", user.id).maybeSingle();
+  if (!me) return null;
+
+  // Only the matched student may read their own profile.
+  const { data } = await db.from("students").select("id, full_name, email").eq("id", me.id).maybeSingle();
   if (!data) return null;
   const r = data as { id?: string; full_name?: string | null; email?: string | null };
   return { id: String(r.id ?? ""), full_name: r.full_name ?? null, email: r.email ?? null };

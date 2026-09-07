@@ -133,6 +133,7 @@ export default function QuestionDisplay({
                     </p>
                   )}
                   <SubjectiveQRBlock
+                    key={`qr_${question.id}_${attemptId ?? "init"}`}
                     examId={examId}
                     attemptId={attemptId}
                     questionId={question.id}

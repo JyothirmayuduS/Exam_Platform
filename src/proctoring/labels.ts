@@ -11,10 +11,13 @@
 
 import type { ObjectKind } from "./types";
 
-const PHONE_HINTS = ["cell phone", "mobile phone", "phone"];
-const LAPTOP_HINTS = ["laptop"];
-const TV_HINTS = ["tv"];
-const MONITOR_HINTS = ["monitor"];
+const PHONE_HINTS = [
+  "cell phone", "mobile phone", "phone", "telephone", "smartphone", "smart phone",
+  "remote", "tablet", "mobile", "handset", "iphone", "android"
+];
+const LAPTOP_HINTS = ["laptop", "notebook"];
+const TV_HINTS = ["tv", "television"];
+const MONITOR_HINTS = ["monitor", "display"];
 
 // Word-boundary matching: "headphones" contains the substring "phone" but is
 // NOT a phone — naive `includes()` matching would flag every candidate wearing

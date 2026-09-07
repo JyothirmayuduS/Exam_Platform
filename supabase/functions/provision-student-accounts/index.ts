@@ -22,7 +22,13 @@ function json(body: unknown, status = 200) {
 }
 
 const normRoll = (roll: string) => roll.trim().toLowerCase();
-const defaultPassword = () => Deno.env.get("STUDENT_DEFAULT_PASSWORD") ?? "Vignan@123";
+// Default password comes from env ONLY — no hardcoded fallback.
+// Deployers must set STUDENT_DEFAULT_PASSWORD; without it the function refuses to run.
+const defaultPassword = () => {
+  const pw = Deno.env.get("STUDENT_DEFAULT_PASSWORD");
+  if (!pw) throw new Error("STUDENT_DEFAULT_PASSWORD env var is not set — refusing to provision");
+  return pw;
+};
 
 async function sendCredentialEmail(email: string, login: string, password: string) {
   const user = Deno.env.get("GMAIL_USER");

@@ -16,7 +16,7 @@
 // ────────────────────────────────────────────────────────────────────────────
 
 import type { Detection, TrackedObject } from "./types";
-import { iou } from "./geometry";
+import { iou, matchScore, centerDistance } from "./geometry";
 import { TRACKING } from "./config";
 
 export interface TrackerConfig {
@@ -65,14 +65,15 @@ export class ObjectTracker {
     const matched = new Set<Detection>();
 
     // 1. Match each track to the best detection of its own kind.
+    // Use blended IoU + center-distance score for robustness on small/fast objects.
     for (const track of this.tracks) {
       const candidates = byKind.get(track.kind) ?? [];
       let best: Detection | null = null;
-      let bestIou = this.cfg.iouThreshold;
+      let bestScore = this.cfg.iouThreshold; // threshold is IoU-based, but we compare blended score
       for (const det of candidates) {
-        const score = iou(track.bbox, det.bbox);
-        if (score > bestIou) {
-          bestIou = score;
+        const score = matchScore(track.bbox, det.bbox);
+        if (!Number.isNaN(score) && score > bestScore) {
+          bestScore = score;
           best = det;
         }
       }

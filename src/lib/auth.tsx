@@ -46,31 +46,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const db = getSupabase();
-    if (!db) {
-      // Demo mode (no backend configured): honor a stored demo identity so the
-      // prototype's role consoles are reachable without a database (used by the
-      // E2E suite and local demos).
+
+    // A stored demo identity may be honored ONLY when there is no real backend
+    // (pure prototype) or in a DEV / E2E build. In production (Supabase
+    // configured AND not DEV) a planted localStorage role is IGNORED — access
+    // requires a real signed-in session. This one predicate gates every
+    // demo-fallback path below so none of them can be bypassed individually.
+    const demoAllowed = !db || import.meta.env.DEV;
+    const applyStoredDemo = (): boolean => {
+      if (!demoAllowed) return false;
       const stored = localStorage.getItem(DEMO_KEY) as DemoRole | null;
       if (stored && DEMO_ROLES.includes(stored)) {
         setUser(demoUser(stored));
         setRole(stored);
+        setLoading(false);
+        return true;
       }
+      return false;
+    };
+
+    if (!db) {
+      // Demo mode (no backend configured): honor a stored demo identity so the
+      // prototype's role consoles are reachable without a database (used by the
+      // E2E suite and local demos).
+      applyStoredDemo();
       setLoading(false);
       return;
     }
 
-    // Get initial session
+    // Get initial session — a REAL Supabase session always wins over a stored
+    // demo identity.
     db.auth.getSession().then(({ data }: { data: { session: any } }) => {
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      resolveRole(data.session?.user ?? null);
+      if (data.session) {
+        setSession(data.session);
+        setUser(data.session?.user ?? null);
+        resolveRole(data.session?.user ?? null);
+        return;
+      }
+      // No real session: honor a stored demo identity only when allowed
+      // (DEV/E2E). Otherwise finish loading with no identity so the app doesn't
+      // hang on the loading screen.
+      if (!applyStoredDemo()) setLoading(false);
     });
 
     // Listen for auth state changes
     const { data: { subscription } } = db.auth.onAuthStateChange((_event: string, newSession: any) => {
       setSession(newSession);
       setUser(newSession?.user ?? null);
-      resolveRole(newSession?.user ?? null);
+      if (newSession?.user) {
+        resolveRole(newSession?.user ?? null);
+      } else {
+        // Signed out / no session — fall back to a stored demo identity only
+        // when allowed (DEV/E2E); in production resolve to no role so a planted
+        // localStorage role can never grant access.
+        if (!applyStoredDemo()) resolveRole(null);
+      }
     });
 
     return () => subscription.unsubscribe();

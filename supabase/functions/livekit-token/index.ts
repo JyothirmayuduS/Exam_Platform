@@ -105,6 +105,7 @@ Deno.serve(async (req: Request) => {
     //   3. the roll@student.vignan.ac.in email pattern (provisioned accounts)
     //   4. the identity the client requested (sanitized roll string)
     let roll = "";
+    let trustedRoll = false;
     const { data: studentRow } = await supabase
       .from("students")
       .select("roll")
@@ -112,6 +113,7 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
     if (studentRow?.roll) {
       roll = String(studentRow.roll);
+      trustedRoll = true;
     } else if (user.email) {
       const email = user.email.toLowerCase();
       const { data: byEmail } = await supabase
@@ -121,8 +123,10 @@ Deno.serve(async (req: Request) => {
         .maybeSingle();
       if (byEmail?.roll) {
         roll = String(byEmail.roll);
+        trustedRoll = true;
       } else if (email.endsWith("@student.vignan.ac.in")) {
         roll = email.replace(/@student\.vignan\.ac\.in$/, "");
+        trustedRoll = true;
       }
     }
     if (!roll) {
@@ -130,6 +134,19 @@ Deno.serve(async (req: Request) => {
       if (requested) roll = requested;
     }
     identity = roll ? `student:${roll}` : `student:${user.id}`;
+
+    // Ownership gate: a student may only join a room that references their own
+    // roll (rooms are named "<exam>-<roll>" / "voice-<exam>-<roll>"). Without
+    // this a student could request a token for another candidate's room and
+    // publish video into it (students have canPublish in non-voice rooms).
+    // Enforced only when we resolved the roll from a trusted source (DB/email),
+    // so a legitimate first-join with an unresolved roll still works.
+    if (trustedRoll && roll) {
+      const rollToken = roll.toLowerCase();
+      if (!room.toLowerCase().includes(rollToken)) {
+        return json({ error: "forbidden: room does not belong to this student" }, 403);
+      }
+    }
   }
 
   const at = new AccessToken(apiKey, apiSecret, { identity, ttl: "2h" });

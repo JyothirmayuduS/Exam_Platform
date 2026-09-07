@@ -868,13 +868,13 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
     const db = getSupabase();
     if (!db || !cid) return;
 
-    const fetchUrl = (path: string | null | undefined) => {
+    const fetchUrl = async (path: string | null | undefined) => {
       if (!path) return;
       if (path.startsWith("http")) {
         setUploadedUrl(path);
       } else {
-        const { data: urlData } = db.storage.from("exam-records").getPublicUrl(path);
-        if (urlData?.publicUrl) setUploadedUrl(urlData.publicUrl);
+        const { data: urlData } = await db.storage.from("exam-records").createSignedUrl(path, 3600);
+        if (urlData?.signedUrl) setUploadedUrl(urlData.signedUrl);
       }
     };
 
@@ -886,7 +886,7 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
       .maybeSingle()
       .then(({ data, error }: { data: any; error: any }) => {
         if (!error && data?.uploaded_image_url) {
-          fetchUrl(data.uploaded_image_url);
+          void fetchUrl(data.uploaded_image_url);
         }
       });
 
@@ -901,7 +901,7 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
       .then(({ data, error }: { data: any; error: any }) => {
         if (error || !data) return;
         const path = data.pdf_storage_path || data.original_storage_path;
-        if (path) fetchUrl(path);
+        if (path) void fetchUrl(path);
       });
   }, [cid, q.id, uploadedMatch]);
 

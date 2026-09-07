@@ -96,7 +96,11 @@ export async function listQuestionsForExam(examId: string): Promise<DBQuestion[]
   if (!ownErr && owned) ids = ids.concat(owned.map((r: { id?: string }) => String(r.id ?? "")));
   ids = Array.from(new Set(ids.filter(Boolean)));
   if (ids.length === 0) return [];
-  const { data, error } = await db.from("questions").select("*").in("id", ids).order("id", { ascending: true });
+  const { data, error } = await db
+    .from("questions")
+    .select("id, exam_id, title, type, unit, difficulty, marks, options, subjective_mode, created_at")
+    .in("id", ids)
+    .order("id", { ascending: true });
   if (error || !data) return [];
   return (data as DBQuestion[]).map((row) => ({ ...row, options: normalizeOptions(row.options) }));
 }

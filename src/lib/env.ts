@@ -21,10 +21,16 @@ export const env = {
   // uploads it to R2 via the store-artifact edge function. Off by default so
   // the prototype doesn't attempt uploads without a backend.
   proctorCapture: (import.meta.env.VITE_PROCTOR_CAPTURE ?? "") === "true",
-  // Dev-only diagnostics overlay for the AI engine (also via ?proctorDebug=1).
+  // Diagnostics overlay for the AI engine. The ?proctorDebug=1 URL override is
+  // honored ONLY in dev builds — in production it would let a student watch the
+  // live detection boxes / risk scores and tune their cheating to stay under
+  // thresholds, so the URL param is ignored there. A production operator can
+  // still force it on with the VITE_PROCTOR_DEBUG=1 build-time env var.
   proctorDebug:
     (import.meta.env.VITE_PROCTOR_DEBUG ?? "") === "1" ||
-    (typeof window !== "undefined" && new URLSearchParams(window.location.search).has("proctorDebug")),
+    (import.meta.env.DEV &&
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).has("proctorDebug")),
 
   // Where a student in a normal browser downloads the lockdown desktop app.
   // A single release page is enough; the per-OS overrides enable one-click

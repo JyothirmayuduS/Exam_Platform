@@ -40,6 +40,7 @@ Deno.serve(async (req: Request) => {
   });
   const { data: userData, error: authError } = await supabase.auth.getUser(jwt);
   if (authError || !userData?.user) return json({ error: "unauthorized" }, 401);
+  const user = userData.user;
 
   let body: Record<string, unknown> = {};
   try { body = await req.json(); } catch { /* empty */ }
@@ -49,6 +50,20 @@ Deno.serve(async (req: Request) => {
   const kind = String(body.kind ?? "camera").trim(); // "camera" or "screen"
 
   if (!examId || !studentId) return json({ error: "Missing examId or studentId" }, 400);
+
+  // Ownership gate: staff may mint a token for anyone; a student may only
+  // request a token for their own student row.
+  try {
+    const { data: staff } = await supabase.from("teachers").select("id").eq("auth_id", user.id).maybeSingle();
+    if (!staff) {
+      const { data: stu } = await supabase.from("students").select("id").eq("auth_id", user.id).maybeSingle();
+      if (!stu || stu.id !== studentId) {
+        return json({ error: "forbidden" }, 403);
+      }
+    }
+  } catch {
+    return json({ error: "forbidden" }, 403);
+  }
 
   // Request a Direct Creator Upload token using TUS from Cloudflare Stream
   // Cloudflare Stream allows you to POST to /stream to get a TUS upload URL

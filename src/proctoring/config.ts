@@ -17,7 +17,7 @@ import type { ProctorCategory } from "./types";
 export const CADENCE = {
   GAZE_MS: 250,     // head-pose / gaze estimation
   FACE_MS: 500,     // face count
-  OBJECT_MS: 900,   // object detection (phone / laptop / …) — fast enough that
+  OBJECT_MS: 500,   // object detection (phone / laptop / …) — fast enough that
                     // 3 hits can confirm a phone within ~2–3 s of visibility
   AUDIO_MS: 400,    // voice RMS
 } as const;
@@ -54,34 +54,34 @@ export const FACE = {
 
 // ── Object detection thresholds ──────────────────────────────────────────────
 export const OBJECT = {
-  SCORE_THRESHOLD: 0.20, // passed to the model (keep low — gating happens here)
+  SCORE_THRESHOLD: 0.15, // passed to the model (keep low — gating happens here)
   MAX_RESULTS: 6,
-  PHONE_MIN_CONF: 0.45,
-  LAPTOP_MIN_CONF: 0.55,
+  PHONE_MIN_CONF: 0.28,
+  LAPTOP_MIN_CONF: 0.40,
   // MediaPipe object detector only sees a phone when it's big enough in the
   // frame. Small phones slip through — candidates keep track of the lower
   // frame region for phones (see geometry.ts). Toggling the ROI means the
   // detector runs an additional pass on the desk area.
-  USE_PHONE_ROI: false,
-  PHONE_ROI_FRACTION: 0.55, // bottom 55% of the frame = typical desk / hands zone
+  USE_PHONE_ROI: true,
+  PHONE_ROI_FRACTION: 0.60, // bottom 60% of the frame = typical desk / hands zone
 } as const;
 
 // ── Temporal confirmation (object tracking) ─────────────────────────────────
 // A phone must be seen MIN_HITS times within CONFIRM_WINDOW_MS before it is
 // "confirmed" — a single 0.46-confidence flash never becomes a violation.
 export const TRACKING = {
-  // IoU above which two boxes are the same object.
-  IOU_THRESHOLD: 0.30,
+  // IoU above which two boxes are the same object. Lowered for small/moving
+  // objects; tracker also uses center-distance fallback for robustness.
+  IOU_THRESHOLD: 0.15,
   // Confirmation = MIN_HITS positive samples seen inside CONFIRM_WINDOW_MS.
-  // With the 900 ms detector cadence that means a phone is confirmed only
-  // after it has been visibly present for roughly 2–3 s — an object that
-  // flickers once or twice never confirms.
-  MIN_HITS: 3,
+  // With the 500 ms detector cadence that means a phone is confirmed only
+  // after it has been visibly present for roughly 1–2 s.
+  MIN_HITS: 2,
   // Consecutive samples an object may be invisible before its identity is
-  // dropped (~1 s of short-term persistence at 900 ms cadence). One missed
-  // frame must not kill the track; two in a row means it left the frame.
-  MAX_MISSES: 1,
-  CONFIRM_WINDOW_MS: 3_600,
+  // dropped (~1.5 s of short-term persistence at 500 ms cadence). One missed
+  // frame must not kill the track; three in a row means it left the frame.
+  MAX_MISSES: 3,
+  CONFIRM_WINDOW_MS: 4_500,
   // Keep recent scores per track for smoothing + diagnostics.
   MAX_HISTORY: 12,
 } as const;

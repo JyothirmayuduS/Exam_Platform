@@ -6,6 +6,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -19,6 +23,15 @@ serve(async (req) => {
         global: { headers: { Authorization: req.headers.get("Authorization")! } },
       }
     );
+
+    // Auth check: only staff may trigger a sync.
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (!jwt) return json({ error: "missing bearer token" }, 401);
+    const { data: userData, error: authError } = await supabaseClient.auth.getUser(jwt);
+    if (authError || !userData?.user) return json({ error: "unauthorized" }, 401);
+    const { data: staff } = await supabaseClient.from("teachers").select("id").eq("auth_id", userData.user.id).maybeSingle();
+    if (!staff) return json({ error: "staff only" }, 403);
 
     let body;
     try { body = await req.json(); } catch { body = {}; }

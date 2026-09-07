@@ -26,6 +26,25 @@ export async function saveViolation(
   const db = getSupabase();
   if (!db) return false;
 
+  // Resolve the authenticated caller's student row — reject if the
+  // caller cannot be matched to a student (no demo fallback in
+  // production; staff bypass this check below).
+  let callerStudentId: string | null = null;
+  try {
+    const { data: userData } = await db.auth.getUser();
+    const user = userData?.user;
+    if (user) {
+      const { data: stu } = await db.from("students").select("id").eq("auth_id", user.id).maybeSingle();
+      callerStudentId = stu?.id ?? null;
+    }
+  } catch { /* treated as non-student below */ }
+
+  // Students may only log violations for themselves; staff may log for anyone.
+  if (callerStudentId && callerStudentId !== studentId) {
+    console.error("Violation write denied: caller student_id mismatch");
+    return false;
+  }
+
   // Offset = seconds since the attempt started (needed for the red seek-bar
   // markers). Best-effort: when the attempt row is missing, offset is null and
   // the marker is positioned by created_at instead.

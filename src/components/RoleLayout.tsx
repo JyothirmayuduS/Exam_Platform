@@ -31,7 +31,7 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
         <nav className="flex-1 space-y-1 px-3">
           {items.map((item) => (
             <NavLink
-              key={item.to}
+              key={`${item.to}|${item.label}`}
               to={item.to}
               end={item.end}
               className={({ isActive }) => `flex items-center justify-between border-l-2 px-3 py-2.5 text-[13px] transition-colors ${isActive ? "border-current bg-paper text-ink" : "border-transparent text-ink-soft hover:bg-paper hover:text-ink"}`}

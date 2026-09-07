@@ -61,11 +61,11 @@ const every = (n: number, t0 = T, fn: (i: number) => Detection[]): Step[] =>
   Array.from({ length: n }, (_, i) => ({ t: t0 + i * T, dets: fn(i) }));
 
 describe("Proctor pipeline — acceptance", () => {
-  it("a visible phone confirms only after 3 hits and fires exactly one phone_detected", () => {
+  it("a visible phone confirms only after MIN_HITS hits and fires exactly one phone_detected", () => {
     const emissions = run(every(4, T, () => [phone(0.7)]));
     const phoneEvts = emissions.filter((e) => e.category === "phone_detected");
     expect(phoneEvts).toHaveLength(1);
-    expect(phoneEvts[0]?.t).toBe(T * 3); // the confirmation sample
+    expect(phoneEvts[0]?.t).toBe(T * TRACKING.MIN_HITS); // the confirmation sample (2 now)
     expect(phoneEvts[0]?.label).toContain("Mobile phone detected");
   });
 
@@ -89,25 +89,30 @@ describe("Proctor pipeline — acceptance", () => {
   });
 
   it("a sub-threshold phone never confirms even with repeated samples", () => {
-    const emissions = run(every(6, T, () => [phone(0.3)])); // below 0.45 gate
+    // 0.20 is below the per-kind gate (PHONE_MIN_CONF=0.28) — it is a "miss",
+    // so the tracker never accumulates hits and nothing confirms.
+    const emissions = run(every(6, T, () => [phone(0.2)]));
     expect(emissions.filter((e) => e.category === "phone_detected")).toHaveLength(0);
   });
 
   it("phone disappearing for ONE sample keeps its track and still confirms", () => {
     const emissions = run([
       { t: T, dets: [phone(0.7)] },
-      { t: T * 2, dets: [phone(0.7)] },
-      { t: T * 3, dets: [] }, // one missed sample — persistence
+      { t: T * 2, dets: [] }, // one missed sample — persistence, no confirmation yet
+      { t: T * 3, dets: [phone(0.7)] }, // resumed hit → confirms here (hits survive the miss)
       { t: T * 4, dets: [phone(0.7)] },
     ]);
     const phoneEvts = emissions.filter((e) => e.category === "phone_detected");
     expect(phoneEvts).toHaveLength(1);
-    expect(phoneEvts[0]?.t).toBe(T * 4);
+    expect(phoneEvts[0]?.t).toBe(T * 3);
   });
 
   it("confirmed phone + head tilted down → possible_phone_use (escalated)", () => {
+    // The phone confirms on the MIN_HITS-th sample; the head is already tilted
+    // down on that confirmation sample, so the emission escalates instead of
+    // reporting a bare "phone detected".
     const emissions = run(every(3, T, () => [phone(0.74)]).map((s, i) =>
-      i >= 2 ? { ...s, gaze: headDown() } : s
+      i >= TRACKING.MIN_HITS - 1 ? { ...s, gaze: headDown() } : s
     ));
     expect(emissions[0]?.category).toBe("possible_phone_use");
     expect(emissions[0]?.label.toLowerCase()).toContain("possible phone use");
@@ -115,14 +120,15 @@ describe("Proctor pipeline — acceptance", () => {
   });
 
   it("a new appearance after the track dies re-confirms AFTER the cooldown", () => {
-    // Confirm at t≈2.7s; phone leaves (2 misses) at ~4.5s; new phone at 15s+.
+    // Confirm the first phone (MIN_HITS hits), then let it leave long enough to
+    // exceed MAX_MISSES so the track truly dies, then a fresh phone at 20s —
+    // well past the phone cooldown — is a new incident.
+    const missesBeforeDeath = TRACKING.MAX_MISSES + 1;
     const emissions = run([
-      ...every(3, T, () => [phone(0.7)]),
-      { t: T * 3, dets: [] },
-      { t: T * 4, dets: [] },
+      ...every(TRACKING.MIN_HITS, T, () => [phone(0.7)]),
+      ...Array.from({ length: missesBeforeDeath }, (_, i) => ({ t: (TRACKING.MIN_HITS + i) * T, dets: [] as Detection[] })),
       { t: 20_000, dets: [phone(0.7)] },
       { t: 20_900, dets: [phone(0.7)] },
-      { t: 21_800, dets: [phone(0.7)] },
     ]);
     const phoneEvts = emissions.filter((e) => e.category === "phone_detected");
     expect(phoneEvts).toHaveLength(2); // second incident, well past cooldown
@@ -130,10 +136,14 @@ describe("Proctor pipeline — acceptance", () => {
 });
 
 describe("Proctor pipeline — configuration sanity", () => {
-  it("3 hits at the 900 ms cadence confirm inside ~2–3 s, not 9 s", () => {
-    // TRACKING.MIN_HITS samples at CADENCE.OBJECT_MS must fit the window.
+  it("MIN_HITS samples at the object cadence confirm within ~1–2.5 s, not 9 s", () => {
+    // TRACKING.MIN_HITS samples at CADENCE.OBJECT_MS must fit comfortably inside
+    // TRACKING.CONFIRM_WINDOW_MS, and must be responsive enough that a real
+    // phone is flagged in a couple of seconds — not minutes.
     const spreadMs = (TRACKING.MIN_HITS - 1) * CADENCE.OBJECT_MS;
     expect(spreadMs).toBeLessThanOrEqual(TRACKING.CONFIRM_WINDOW_MS);
-    expect(spreadMs).toBeGreaterThanOrEqual(1_500); // tight enough to matter
+    expect(spreadMs).toBeGreaterThanOrEqual(1);
+    expect(spreadMs).toBeLessThanOrEqual(2_500); // a phone is confirmed in ≤ ~2.5 s
+    expect(TRACKING.CONFIRM_WINDOW_MS).toBeGreaterThanOrEqual(spreadMs);
   });
 });

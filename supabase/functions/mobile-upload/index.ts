@@ -5,6 +5,7 @@ import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 serve(async (req) => {
@@ -21,7 +22,10 @@ serve(async (req) => {
       });
     }
 
-    const token = formData.get("token") as string;
+    // Trim the token: QR readers occasionally append a trailing newline or
+    // space to the URL segment, which previously made the exact-match lookup
+    // fail with the misleading "Invalid or expired token".
+    const token = (formData.get("token") as string ?? "").trim();
     // Human question number forwarded from the QR URL (falls back to question_id).
     const qId = (formData.get("qId") as string | null) || null;
     const imageFiles: File[] = [];

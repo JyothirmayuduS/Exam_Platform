@@ -14,6 +14,7 @@ import AnswerPanel from "../components/exam/AnswerPanel";
 import ExamSidebar from "../components/exam/ExamSidebar";
 import SubmitDialog from "../components/exam/SubmitDialog";
 import { supabaseConfigured } from "../lib/env";
+import { useAuth } from "../lib/auth";
 import {
   loadPaperForStudent,
   getStudentProfile,
@@ -101,6 +102,7 @@ export default function StudentExam() {
   // ?roll= URL param is honoured ONLY in the explicit anon sandbox mode
   // (VITE_ALLOW_ANON_ROLL=true) — never as a silent production fallback.
   const anonRollAllowed = import.meta.env.VITE_ALLOW_ANON_ROLL === "true";
+  const { user: authUser, role: authRole, loading: authLoading } = useAuth();
   const { profile: authProfile, loading: profileLoading } = useCurrentProfile();
   const [resolvedRoll, setResolvedRoll] = useState<string>(() =>
     searchRoll && anonRollAllowed ? searchRoll : "",
@@ -110,7 +112,12 @@ export default function StudentExam() {
       setResolvedRoll(authProfile.roll);
     }
   }, [authProfile]);
-  const STUDENT_ROLL = resolvedRoll;
+  // Demo users (id starts with "demo-") get a mock roll so the install gate
+  // and pre-flight checks can run without a real DB row.
+  const demoRoll = authUser?.id?.startsWith("demo-")
+    ? `DEMO${authUser.id.slice(5).toUpperCase()}`
+    : null;
+  const STUDENT_ROLL = demoRoll ?? resolvedRoll;
   const identityReady = profileLoading || Boolean(STUDENT_ROLL);
   const rollParamMismatch =
     !anonRollAllowed && searchRoll && STUDENT_ROLL && searchRoll !== STUDENT_ROLL;
@@ -142,6 +149,7 @@ export default function StudentExam() {
 
   // Attempt / DB
   const studentIdRef = useRef<string | null>(null);
+  const [studentId, setStudentId] = useState<string | null>(null); // state for immediate re-render
   const attemptStartedRef = useRef(false);
   const [attemptId, setAttemptId] = useState<string | undefined>();
 
@@ -492,15 +500,28 @@ export default function StudentExam() {
   // Load exam + this student's paper (per-student question snapshot) from the DB.
   useEffect(() => {
     if (!supabaseConfigured) return;
+    // Wait until auth identity has resolved so demo users (no real Supabase
+    // session) still get a student id. authUser is set from useAuth for both
+    // demo and real accounts.
+    if (authLoading) return;
     let active = true;
     (async () => {
-      // Resolve the student row FIRST from the authenticated session (the real
-      // identity), so paper snapshots and attempts are bound to the account.
+      // Resolve the student row from the authenticated identity (authUser),
+      // so paper snapshots and attempts are bound to the account. Demo users
+      // (id starts with "demo-") get a mock roll so the install gate and
+      // pre-flight checks can run without a real DB row.
       const db = await import("../lib/supabase").then(m => m.getSupabase());
-      if (db) {
-        const { data: { session } } = await db.auth.getSession();
-        const uid = session?.user?.id ?? null;
-        if (uid) {
+      const uid = authUser?.id ?? null;
+      if (uid) {
+        if (uid.startsWith("demo-")) {
+          const mockRoll = `DEMO${uid.slice(5).toUpperCase()}`; // e.g. DEMOSTUDENT
+          const mockId = `demo-${uid}`;
+          studentIdRef.current = mockId;
+          setStudentId(mockId);
+          setResolvedRoll(mockRoll);
+          if (!urlName) setStudentName("Demo Student");
+          if (!urlEmail) setStudentEmail(`${uid}@demo.local`);
+        } else if (db) {
           const { data: st } = await db
             .from("students")
             .select("id, roll, full_name, email")
@@ -508,20 +529,22 @@ export default function StudentExam() {
             .maybeSingle();
           if (st) {
             studentIdRef.current = st.id;
+            setStudentId(st.id);
             if (st.roll) setResolvedRoll(st.roll);
             if (!urlName) setStudentName(st.full_name || "Candidate");
             if (!urlEmail) setStudentEmail(st.email ?? "");
           }
-        } else if (anonRollAllowed && searchRoll) {
-          // Explicit sandbox escape: demo without Supabase Auth. Never active
-          // unless VITE_ALLOW_ANON_ROLL=true is set at build time.
-          const st = await getStudentProfile(searchRoll);
-          if (st?.id) {
-            studentIdRef.current = st.id;
-            setResolvedRoll(searchRoll);
-            if (!urlName) setStudentName(st.full_name || "Candidate");
-            if (!urlEmail) setStudentEmail(st.email ?? "");
-          }
+        }
+      } else if (anonRollAllowed && searchRoll) {
+        // Explicit sandbox escape: demo without Supabase Auth. Never active
+        // unless VITE_ALLOW_ANON_ROLL=true is set at build time.
+        const st = await getStudentProfile(searchRoll);
+        if (st?.id) {
+          studentIdRef.current = st.id;
+          setStudentId(st.id);
+          setResolvedRoll(searchRoll);
+          if (!urlName) setStudentName(st.full_name || "Candidate");
+          if (!urlEmail) setStudentEmail(st.email ?? "");
         }
       }
       if (!active) return;
@@ -570,7 +593,7 @@ export default function StudentExam() {
       }
     })();
     return () => { active = false; };
-  }, []);
+  }, [authUser, authLoading]);
 
   // Release any held media on unmount.
   useEffect(() => () => {
@@ -644,7 +667,6 @@ export default function StudentExam() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, flag]);
 
-  const studentId = studentIdRef.current;
   const screenStream = screenStreamRef.current;
   const cameraStream = cameraStreamRef.current;
   const answeredCount = counts.answered;
@@ -671,9 +693,7 @@ export default function StudentExam() {
 
   const persistAnswers = useCallback(async () => {
     if (!supabaseConfigured || !studentIdRef.current) return false;
-    // Cache in localStorage as offline backup
-    try { localStorage.setItem(`answers_${EXAM_ID}`, JSON.stringify(answers)); } catch { /* quota */ }
-    
+
     const minutesUsed = Math.round((durationMin * 60 - secondsLeft) / 60);
     const success = await saveAnswers({
       examId: EXAM_ID,
@@ -698,17 +718,6 @@ export default function StudentExam() {
     
     return true;
   }, [answeredCount, answers, secondsLeft]);
-
-  // Restore answers from localStorage on mount (in case of reconnect)
-  useEffect(() => {
-    try {
-      const cached = localStorage.getItem(`answers_${EXAM_ID}`);
-      if (cached) {
-        // only restore if no answers yet
-        // (handled inside setAnswer — we just pre-seed on first load)
-      }
-    } catch { /* ignore */ }
-  }, []);
 
   const { status: autosaveStatus, lastSavedAt, saveNow } = useAutosave({
     enabled: step === "exam",
@@ -1307,6 +1316,7 @@ export default function StudentExam() {
           <QuestionDisplay
             question={q}
             examId={EXAM_ID}
+            attemptId={attemptId}
             studentId={studentId}
             answer={q ? answers[q.id] : undefined}
             isReviewed={!!(q && isReviewed(q.id))}

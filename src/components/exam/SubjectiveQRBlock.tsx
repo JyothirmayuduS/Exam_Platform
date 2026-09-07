@@ -39,7 +39,6 @@ export default function SubjectiveQRBlock({
   questionId,
   questionIndex,
   studentId,
-  studentName,
   examName,
   onAnswerUploaded,
 }: Props) {
@@ -126,9 +125,11 @@ export default function SubjectiveQRBlock({
                 .single();
 
               if (subData?.pdf_storage_path) {
-                const { data: urlData } = db.storage.from("exam-records").getPublicUrl(subData.pdf_storage_path);
-                setPdfUrl(urlData.publicUrl);
-                onAnswerUploaded?.(urlData.publicUrl);
+                const { data: urlData } = await db.storage.from("exam-records").createSignedUrl(subData.pdf_storage_path, 3600);
+                if (urlData?.signedUrl) {
+                  setPdfUrl(urlData.signedUrl);
+                  onAnswerUploaded?.(urlData.signedUrl);
+                }
               }
             }
           }
@@ -170,12 +171,15 @@ export default function SubjectiveQRBlock({
     }
   }, [studentId, examId, questionId, onAnswerUploaded]);
 
+  // The QR URL carries only the single-use capability token + non-PII ids.
+  // The student's NAME is never placed in the URL (it would leak into phone
+  // browser history / any URL logging) — the mobile-upload function resolves
+  // the authoritative name/roll from the DB via the session's student_id.
   const queryParams = new URLSearchParams({
     examId: examId,
     qId: String(questionIndex || questionId),
     student: studentId || "",
     examName: examName || "",
-    studentName: studentName || ""
   });
   const uploadUrl = token ? `${base}/mobile-upload/${token}?${queryParams.toString()}` : "";
 

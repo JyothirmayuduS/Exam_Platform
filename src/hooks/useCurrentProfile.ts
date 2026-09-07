@@ -41,6 +41,20 @@ export default function useCurrentProfile() {
     const db = getSupabase();
     if (!db) { setLoading(false); return; }
 
+    // Demo identities (auth.tsx demoUser) carry a non-UUID id like
+    // "demo-student". Never send that to Postgres — .eq("auth_id", "demo-…")
+    // throws 22P02 (invalid uuid). Serve a synthetic profile instead so the
+    // console headers render without a backend round-trip.
+    if (typeof user.id === "string" && user.id.startsWith("demo-")) {
+      setProfile(
+        role === "teacher" || role === "proctor"
+          ? { kind: "teacher", id: user.id, full_name: role === "proctor" ? "Demo Proctor" : "Demo Teacher", department: "Demo Department", designation: role === "proctor" ? "Invigilator" : "Faculty", email: user.email ?? "" }
+          : { kind: "student", id: user.id, full_name: "Demo Student", roll: "DEMO", department: "Demo Department", semester: null, email: user.email ?? "" }
+      );
+      setLoading(false);
+      return;
+    }
+
     async function load() {
       setLoading(true);
       if (role === "teacher") {

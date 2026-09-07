@@ -281,7 +281,8 @@ async function listSupabaseArtifacts(prefix: string): Promise<R2Artifact[] | nul
 
 /**
  * Playable/embeddable URL for an artifact, from whichever provider holds it:
- * server-signed R2 GET first, then the Supabase public URL.
+ * server-signed R2 GET first, then a short-lived Supabase SIGNED url (the
+ * bucket is private — never a public URL).
  */
 export async function getArtifactObjectUrl(key: string, expiresIn = 3600): Promise<string | null> {
   const r2 = await getR2ObjectUrl(key, expiresIn);
@@ -289,8 +290,8 @@ export async function getArtifactObjectUrl(key: string, expiresIn = 3600): Promi
   if (supabaseConfigured) {
     const db = getSupabase();
     if (db) {
-      const { data } = db.storage.from(supabaseBucketName()).getPublicUrl(key);
-      if (data?.publicUrl) return data.publicUrl;
+      const { data, error } = await db.storage.from(supabaseBucketName()).createSignedUrl(key, expiresIn);
+      if (!error && data?.signedUrl) return data.signedUrl;
     }
   }
   return null;

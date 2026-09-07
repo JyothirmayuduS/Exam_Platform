@@ -581,9 +581,9 @@ function FeedVideo({ el, initials, label, isScreen = false }: { el: HTMLVideoEle
   useEffect(() => {
     const holder = holderRef.current;
     if (!holder) return;
-    holder.innerHTML = "";
+    holder.replaceChildren();
     if (el) { el.className = "h-full w-full object-cover"; holder.appendChild(el); }
-    return () => { if (holder) holder.innerHTML = ""; };
+    return () => { if (holder) holder.replaceChildren(); };
   }, [el]);
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#1F231D]">

@@ -49,9 +49,10 @@ export async function uploadSubjectiveAnswer(opts: {
     onProgress?.(90);
     if (error) return { ok: false, error: error.message };
 
-    const { data: urlData } = supabase.storage.from(bucketName).getPublicUrl(data.path);
+    // Private bucket: return a short-lived SIGNED url (never a public URL).
+    const { data: urlData } = await supabase.storage.from(bucketName).createSignedUrl(data.path, 3600);
     onProgress?.(100);
-    return { ok: true, path: data.path, publicUrl: urlData.publicUrl };
+    return { ok: true, path: data.path, publicUrl: urlData?.signedUrl ?? "" };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Upload failed" };
   }

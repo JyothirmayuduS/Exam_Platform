@@ -8,6 +8,7 @@ import {
   compressImage,
   autoCropWhiteEdges,
   rotateImage,
+  uploadSubjectiveAnswer,
 } from "../lib/subjectiveUpload";
 
 type UploadStep = "capture" | "preview" | "crop" | "review" | "uploading" | "done" | "error";
@@ -109,19 +110,55 @@ export default function MobileUpload() {
 
       if (!attempt.ok) {
         const { status, message } = attempt.error;
-        let friendly = message || "Upload failed";
-        if (status === 403) {
-          if (/invalid or expired token/i.test(message)) {
-            friendly = "This upload link is no longer valid — go back to the exam and scan a fresh QR code for the question.";
-          } else if (/already used/i.test(message)) {
-            friendly = "This question was already uploaded — check the exam tab for your submitted answer.";
-          } else if (/expired/i.test(message)) {
-            friendly = "This upload link expired — scan a fresh QR code for the question.";
+        const friendly = (() => {
+          let f = message || "Upload failed";
+          if (status === 403) {
+            if (/invalid or expired token/i.test(message)) {
+              f = "This upload link is no longer valid — go back to the exam and scan a fresh QR code for the question.";
+            } else if (/already used/i.test(message)) {
+              f = "This question was already uploaded — check the exam tab for your submitted answer.";
+            } else if (/expired/i.test(message)) {
+              f = "This upload link expired — scan a fresh QR code for the question.";
+            }
+          } else if (status === 500 && /lookup failed/i.test(message)) {
+            f = "The upload server could not verify this session (a configuration problem). Show the technical details below to your teacher.";
           }
-        } else if (status === 500 && /lookup failed/i.test(message)) {
-          friendly = "The upload server could not verify this session (a configuration problem). Show the technical details below to your teacher.";
-        }
+          return f;
+        })();
         setLastError({ message, raw: attempt.error.body });
+
+        // ── Resilient fallback ─────────────────────────────────────────────
+        // Server misconfiguration (500) or a network/transport failure means the
+        // token was never accepted/consumed server-side — the session row is
+        // still untouched. In that case the phone can upload the images directly
+        // to storage itself (using the identity carried on the QR URL), so a
+        // broken edge function never blocks a student mid-exam. A definitive
+        // 403 (bad/used/expired token) is NOT retried this way — there the
+        // client cannot prove ownership.
+        const serverOrNetwork = status === undefined || status >= 500;
+        if (serverOrNetwork) {
+          try {
+            const res = await uploadSubjectiveAnswer({
+              examId,
+              studentId: studentId || "unknown",
+              questionId: qId,
+              blob: pages[0].blob,
+              onProgress: setProgress,
+            });
+            if (!res.ok) {
+              throw new Error(`${friendly} The server is having trouble, and direct backup upload failed too (${res.error}).`);
+            }
+            setUploadedUrl(res.publicUrl);
+            setStep("done");
+            return;
+          } catch (err) {
+            console.error(err);
+            setErrorMsg(err instanceof Error ? err.message : friendly);
+            setStep("error");
+            return;
+          }
+        }
+
         throw new Error(friendly);
       }
 

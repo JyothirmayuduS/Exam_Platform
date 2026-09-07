@@ -6,13 +6,22 @@ export default function ErrorPage() {
   const navigate = useNavigate();
   const location = useLocation();
   
-  console.error("Route error caught:", error);
+  // Only log real router errors — a bare 404 (no error object, just an
+  // unmatched path under BrowserRouter) is normal navigation, not a fault.
+  if (error) console.error("Route error caught:", error);
 
   let title = "Something went wrong";
   let message = "An unexpected error occurred.";
   let code = "500";
 
-  if (isRouteErrorResponse(error)) {
+  if (!error && location.key !== "default") {
+    // Rendered outside a data router (BrowserRouter has no route error), or a
+    // direct visit to an unmatched path — treat as a clean 404 rather than a
+    // crash.
+    code = "404";
+    title = "Page Not Found";
+    message = `The path ${location.pathname} does not exist.`;
+  } else if (isRouteErrorResponse(error)) {
     code = String(error.status);
     if (error.status === 404) {
       title = "Page Not Found";

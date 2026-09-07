@@ -216,7 +216,7 @@ export default function Login() {
             </Link>
           </p>
 
-          {!supabaseConfigured && (
+          {(import.meta.env.DEV || searchParams.has("demo") || !supabaseConfigured) && (
             <div className="mt-6 border border-dashed border-amber/60 bg-amber/5 p-4">
               <p className="font-mono text-[10px] uppercase tracking-widest text-amber font-bold">Demo mode — no backend configured</p>
               <p className="mt-1 text-[12px] leading-relaxed text-ink-soft">
