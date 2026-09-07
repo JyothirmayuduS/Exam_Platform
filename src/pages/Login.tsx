@@ -228,7 +228,7 @@ export default function Login() {
                     key={role}
                     type="button"
                     onClick={() => {
-                      signInDemo(role);
+                      signInDemo!(role);
                       navigate(role === "proctor" ? "/proctor" : role === "teacher" ? "/teacher" : "/student");
                     }}
                     className="border border-line bg-paper px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink hover:bg-paper-raised hover:border-forest hover:text-forest"
