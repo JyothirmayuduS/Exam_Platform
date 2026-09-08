@@ -312,7 +312,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
           </section>
 
           {notStarted.length > 0 && <section className="border border-amber/40 bg-amber/5 p-5">
-            <div className="flex items-center justify-between"><p className="font-mono text-[10px] uppercase tracking-widest text-amber">Not started</p><span className="rounded-full bg-amber px-2 py-1 font-mono text-[9px] text-paper">{notStarted.length}</span></div>
+            <div className="flex items-center justify-between"><p className="font-mono text-[10px] uppercase tracking-widest text-amber">Not started</p><span className="rounded-none bg-amber px-2 py-1 font-mono text-[9px] text-paper">{notStarted.length}</span></div>
             <div className="mt-3 space-y-2">
               {notStarted.map((a) => <div key={a.id} className="flex items-center justify-between gap-3 text-[12px]"><span>{a.name}<span className="mt-0.5 block font-mono text-[10px] text-ink-soft">{a.lastActivity}</span></span><button onClick={() => void remind(a.email)} className="font-mono text-[10px] uppercase tracking-wider text-amber hover:underline">Remind</button></div>)}
             </div>

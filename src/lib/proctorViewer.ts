@@ -30,8 +30,8 @@ export type ViewerHandle = {
   room: InstanceType<typeof Room> | null;
   /** Live room stats for the console status line: participants we see and the
    *  number of their published (remote) tracks. Turns the old "0 feeds" dead
-   *  end into an answer: room empty? → students not connected; tracks 0 but
-   *  participants 1? → student connected but not publishing. */
+   *  end into an answer: room empty? / students not connected; tracks 0 but
+   *  participants 1? / student connected but not publishing. */
   diagnostics: () => { participants: number; remoteTracks: number };
   stop: () => void;
 };

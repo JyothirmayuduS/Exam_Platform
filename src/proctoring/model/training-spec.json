@@ -1,0 +1,1 @@
+{"dataset": "COCO + exam-room custom labels", "model": "YOLOv8", "categories": ["phone","earbuds","no_face","head_tilted","eye_off_screen","multiple_faces"], "training_env": "cloud GPU", "output": "src/proctoring/model/best.pt"}

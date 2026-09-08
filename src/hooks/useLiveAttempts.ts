@@ -92,6 +92,9 @@ function toUIAttempt(row: LiveAttempt, examName: string): Attempt {
     severity: v.severity === "critical" || v.severity === "high" ? "critical" : "notice",
     label: v.description || v.violation_type,
     at: v.offset_seconds != null ? `at ${fmtClock(v.offset_seconds)}` : `at ${new Date(v.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+    // Raw ISO timestamp — the session report needs a real wall-clock moment to
+    // line each violation up with the candidate's stored snapshots.
+    atIso: v.created_at,
   }));
 
   return {
@@ -107,6 +110,7 @@ function toUIAttempt(row: LiveAttempt, examName: string): Attempt {
     answered: row.answered,
     total: row.total,
     startedAt: row.started_at ? new Date(row.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—",
+    startedAtIso: row.started_at ?? null,
     submittedAgo: state === "Submitted" ? timeAgo(row.submitted_at) : "",
     minutesUsed: row.minutes_used,
     lastActivity:

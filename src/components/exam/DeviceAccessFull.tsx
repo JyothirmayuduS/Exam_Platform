@@ -51,17 +51,17 @@ export default function DeviceAccessFull({
     <div className="flex min-h-screen items-center justify-center bg-paper px-6 py-10">
       <div className="w-full max-w-2xl space-y-6">
         <div>
-          <p className="font-mono text-[11px] uppercase tracking-widest text-ink-soft">Pre-exam · Step 2 of 3</p>
+          <p className="font-mono text-[11px] uppercase tracking-widest text-soft">Pre-exam · Step 2 of 3</p>
           <h1 className="mt-1 font-serif text-2xl font-semibold">Grant camera, mic & screen</h1>
-          <p className="mt-1 text-[13px] text-ink-soft">Your camera, microphone, and screen must be active for proctoring. All feeds are monitored by AI and your invigilator.</p>
+          <p className="mt-1 text-[13px] text-soft">Your camera, microphone, and screen must be active for proctoring. All feeds are monitored by AI and your invigilator.</p>
         </div>
 
         {/* ── Permission grant ── */}
         <div className="grid gap-4 sm:grid-cols-[200px_1fr]">
-          <div className="overflow-hidden border border-line-strong bg-ink">
+          <div className="overflow-hidden border border-line bg-ink">
             <video ref={previewRef} autoPlay playsInline muted className="aspect-[4/3] w-full bg-black object-cover" />
             <div className="flex items-center gap-2 border-t border-white/10 px-2 py-1.5">
-              <span className={`h-1.5 w-1.5 rounded-full ${cam === "granted" ? "bg-success" : cam === "denied" ? "bg-alert" : "bg-amber animate-pulse"}`} />
+              <span className={`h-1.5 w-1.5 rounded-none ${cam === "granted" ? "bg-success" : cam === "denied" ? "bg-alert" : "bg-amber animate-pulse"}`} />
               <span className="font-mono text-[9px] uppercase tracking-wider text-paper/70">
                 {cam === "granted" ? "Camera on" : cam === "denied" ? "Blocked" : "Waiting"}
               </span>
@@ -77,7 +77,7 @@ export default function DeviceAccessFull({
             {(cam === "denied" || mic === "denied") && (
               <div className="border border-alert/40 bg-alert/5 p-3 text-[12px]">
                 <p className="font-mono text-[10px] uppercase tracking-wider text-alert mb-1">How to fix permission errors</p>
-                <ol className="list-decimal pl-4 space-y-0.5 text-ink-soft">
+                <ol className="list-decimal pl-4 space-y-0.5 text-soft">
                   <li>Click the <FiLock className="inline" aria-hidden /> lock icon in your browser address bar</li>
                   <li>Set Camera and Microphone to "Allow"</li>
                   <li>Reload the page and click Grant again</li>
@@ -90,7 +90,7 @@ export default function DeviceAccessFull({
         <button
           onClick={onRequest}
           disabled={requesting}
-          className="w-full border border-line-strong py-3 font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-paper-raised disabled:opacity-60"
+          className="w-full border border-line py-3 font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-raised disabled:opacity-60"
         >
           {requesting ? "Requesting access…" : "Allow camera, microphone & screen"}
         </button>
@@ -99,10 +99,10 @@ export default function DeviceAccessFull({
         {mic === "granted" && (
           <section className="border border-line p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Microphone test</p>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Microphone test</p>
               <div className="flex gap-2">
                 {audio.state === "idle" && (
-                  <button onClick={() => void audio.startTest()} className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
+                  <button onClick={() => void audio.startTest()} className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-raised">
                     Test mic
                   </button>
                 )}
@@ -122,7 +122,7 @@ export default function DeviceAccessFull({
             {(audio.state === "testing" || audio.state === "recording") && (
               <div>
                 <AudioBars level={audio.level} />
-                <p className="mt-1 font-mono text-[9px] text-ink-soft">
+                <p className="mt-1 font-mono text-[9px] text-soft">
                   {audio.level < 0.05 ? "No audio detected — speak or make noise" : "Audio detected ✓"}
                 </p>
               </div>
@@ -145,9 +145,9 @@ export default function DeviceAccessFull({
         {screen === "granted" && (
           <section className="border border-line p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Screen share test</p>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Screen share test</p>
               {screenTest.state === "idle" ? (
-                <button onClick={() => void screenTest.start()} className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
+                <button onClick={() => void screenTest.start()} className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-raised">
                   Preview screen
                 </button>
               ) : (
@@ -163,7 +163,7 @@ export default function DeviceAccessFull({
               <p className="text-[12px] text-alert">{screenTest.error}</p>
             )}
             {screenTest.state === "idle" && (
-              <p className="text-[12px] text-ink-soft">Verify your screen is being shared correctly before entering the exam.</p>
+              <p className="text-[12px] text-soft">Verify your screen is being shared correctly before entering the exam.</p>
             )}
           </section>
         )}
@@ -171,11 +171,11 @@ export default function DeviceAccessFull({
         {/* ── Device detection results ── */}
         {scanDone && (
           <section className="border border-line p-4 space-y-2">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Device security scan</p>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Device security scan</p>
             {risks.map((r) => (
               <div key={r.label} className={`flex items-center justify-between border px-3 py-2 text-[12px] ${r.detected ? (r.severity === "block" ? "border-alert/40 bg-alert/5" : r.severity === "warn" ? "border-amber/40 bg-amber/5" : "border-line") : "border-line"}`}>
                 <span className="text-ink">{r.label}</span>
-                <span className={`font-mono text-[10px] uppercase tracking-wider ${r.detected ? (r.severity === "block" ? "text-alert" : r.severity === "warn" ? "text-amber" : "text-ink-soft") : "text-success"}`}>
+                <span className={`font-mono text-[10px] uppercase tracking-wider ${r.detected ? (r.severity === "block" ? "text-alert" : r.severity === "warn" ? "text-amber" : "text-soft") : "text-success"}`}>
                   {r.detected ? (r.severity === "block" ? <><FiAlertOctagon className="inline" aria-hidden /> Blocked</> : <><FiAlertTriangle className="inline" aria-hidden /> Warning</>) : <><FiCheck className="inline" aria-hidden /> Clear</>}
                 </span>
               </div>
@@ -209,9 +209,9 @@ export default function DeviceAccessFull({
 
 // ── Shared helper ─────────────────────────────────────────────────────────────
 function AccessRow({ label, state }: { label: string; state: AccessState }) {
-  const tone = state === "granted" ? "text-success" : state === "denied" ? "text-alert" : "text-ink-soft";
+  const tone = state === "granted" ? "text-success" : state === "denied" ? "text-alert" : "text-soft";
   const text = state === "granted" ? "GRANTED" : state === "denied" ? "BLOCKED" : "WAITING";
-  const dot = state === "granted" ? "bg-success" : state === "denied" ? "bg-alert" : "bg-line-strong";
+  const dot = state === "granted" ? "bg-success" : state === "denied" ? "bg-alert" : "bg-line";
   return (
     <div className="flex items-center justify-between border border-line px-3 py-2.5 text-[13px]">
       <span className="flex items-center gap-2"><span className={`h-2 w-2 ${dot}`} />{label}</span>

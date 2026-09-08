@@ -35,7 +35,7 @@ describe("decideObjectEvent — phone + gaze fusion", () => {
     expect(FUSION_LABELS.gazeDown.toLowerCase()).not.toContain("mobile");
   });
 
-  it("confirmed phone with neutral head → phone_detected only", () => {
+  it("confirmed phone with neutral head / phone_detected only", () => {
     const out = decideObjectEvent(confirmedPhone(), gaze(false), NOW);
     expect(out.fired).toBe(true);
     if (out.fired) {
@@ -45,7 +45,7 @@ describe("decideObjectEvent — phone + gaze fusion", () => {
     }
   });
 
-  it("confirmed phone while head tilted down → possible_phone_use (escalated)", () => {
+  it("confirmed phone while head tilted down / possible_phone_use (escalated)", () => {
     const out = decideObjectEvent(confirmedPhone(), gaze(true, 8_000, "down"), NOW);
     expect(out.fired).toBe(true);
     if (out.fired) {
@@ -59,6 +59,21 @@ describe("decideObjectEvent — phone + gaze fusion", () => {
     const out = decideObjectEvent(confirmedPhone(), gaze(true, 6_000, "down"), NOW);
     expect(out.fired).toBe(true);
     if (out.fired) expect(out.category).toBe("phone_detected");
+  });
+
+  it("confirmed earbuds / earbuds_detected regardless of head pose", () => {
+    const buds: TrackedObject = {
+      ...confirmedPhone(),
+      kind: "earbuds",
+      label: "headphones",
+      peak: 0.66,
+    };
+    const out = decideObjectEvent(buds, gaze(false), NOW);
+    expect(out.fired).toBe(true);
+    if (out.fired) {
+      expect(out.category).toBe("earbuds_detected");
+      expect(out.label).toContain("Earbuds/headphones detected");
+    }
   });
 
   it("laptop confirmations are reported as electronics regardless of head pose", () => {

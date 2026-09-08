@@ -93,8 +93,8 @@ export async function recordConsent(
  * hiccup, slow first query, RLS hiccup) every "saved" and even the final
  * submit wrote NOTHING while the UI cheerfully reported success.
  *
- * Flow: update → verify a row matched (select id) → if zero rows, insert a
- * minimal in_progress row → re-apply the patch. A unique(exam_id, student_id)
+ * Flow: update / verify a row matched (select id) / if zero rows, insert a
+ * minimal in_progress row / re-apply the patch. A unique(exam_id, student_id)
  * violation on the insert only means a concurrent writer created the row, so
  * we simply retry the update.
  */

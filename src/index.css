@@ -4,34 +4,37 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  -webkit-font-smoothing: antialiased;
-}
-
-html, body, #root {
-  height: 100%;
-}
+* { -webkit-font-smoothing: antialiased; }
+html, body, #root { height: 100%; }
 
 body {
-  background-color: #FAF9F6;
-  color: #1C1C1A;
+  background-color: #F7F5F0;
+  color: #1A1814;
+  line-height: 1.6;
 }
 
-/* Keep the proctor video wall readable: four feeds per desktop row. */
+/* ── Design tokens ─────────────────────────────────── */
+:root { --max-measure: 72ch; }
+
+/* ── Heading scale ─────────────────────────────────── */
+h1, h2, h3 { line-height: 1.15; letter-spacing: -0.01em; }
+h1 { font-size: 1.75rem; font-weight: 600; }
+h2 { font-size: 1.25rem; font-weight: 600; }
+h3 { font-size: 1.05rem; font-weight: 500; }
+
+/* ── Surfaces ──────────────────────────────────────── */
+.surface { background: #F7F5F0; border: 1px solid #C8C3B8; }
+.surface-raised { background: #EDEAE2; }
+.surface-raised2 { background: #E3E0D6; }
+
+/* ── Proctor grid: readable feed size ─────────────── */
 @media (min-width: 1280px) {
-  .xl\:grid-cols-6 {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
+  .xl\:grid-cols-6 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
-/* Keep the question editor's preview and save panels from overlapping while scrolling. */
-.sticky.top-24 {
-  position: static;
-}
-
-/* The question preview is a student-session surface, not a dialog card. */
+/* ── Exam preview modal: full-bleed student surface ── */
 .fixed.inset-0.z-50.overflow-y-auto.bg-ink\/40 {
-  background-color: #f8f7f3;
+  background-color: #f7f5f0;
   padding: 0;
 }
 .fixed.inset-0.z-50.overflow-y-auto.bg-ink\/40 > section {
@@ -43,29 +46,8 @@ body {
   max-width: 980px;
 }
 
-/* Coding-question authoring needs room for readable input/output editors. */
-@media (min-width: 1280px) {
-  .xl\:grid-cols-\[1fr_330px\] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.tabular {
-  font-variant-numeric: tabular-nums;
-}
-
-@media (min-width: 768px) {
-  /* The final action should use the same natural height as the other buttons. */
-  section.mb-6 > .mt-5.grid.gap-3 > button {
-    align-self: end;
-  }
-}
-
-@media (min-width: 1024px) {
-  section.mb-6 > .mt-5.grid.gap-3 {
-    column-gap: 8px;
-  }
-}
+/* ── Utilities ─────────────────────────────────────── */
+.tabular { font-variant-numeric: tabular-nums; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

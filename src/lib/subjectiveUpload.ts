@@ -74,7 +74,7 @@ function classifyImageError(event: Event | string | unknown): string {
   return "unknown-image-error";
 }
 
-/** Compress and optionally resize an image File/Blob → JPEG Blob.
+/** Compress and optionally resize an image File/Blob / JPEG Blob.
  *
  *  Fixes applied (audit issues #4, #6, #9):
  *  - Issue #4: onerror captures and classifies browser ErrorEvent details.

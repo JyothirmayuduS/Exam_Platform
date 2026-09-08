@@ -13,13 +13,13 @@ export default function Header({ role, roleTone = "#7A1F2B", right }: HeaderProp
         <Link to="/" className="flex items-center gap-3">
           <div
             className="flex h-9 w-9 items-center justify-center border font-serif text-base font-semibold"
-            style={{ borderColor: "#1C1C1A" }}
+            style={{ borderColor: "#1A1814" }}
           >
             V
           </div>
           <div className="leading-none">
             <p className="font-serif text-[17px] font-semibold tracking-tight">Vignan Lockdown OS</p>
-            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft">
+            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-soft">
               Secure Examination Platform
             </p>
           </div>

@@ -26,19 +26,19 @@ export function DownloadGateScreen({
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper px-6">
       <div className="w-full max-w-lg">
-        <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-ink-soft">Vignan University · Secure exam platform</p>
+        <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-soft">Vignan University · Secure exam platform</p>
         <h1 className="mb-1 font-serif text-2xl font-semibold">Install Vignan Exam Browser</h1>
         <p className="mb-1 font-mono text-[11px] uppercase tracking-wider text-maroon">{examName}</p>
-        <div className="border border-line bg-paper-raised p-5">
-          <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Detected OS: {os}</p>
-          {installer === "checking" && <div className="mt-4 border border-line py-3 text-center font-mono text-[12px] uppercase tracking-widest text-ink-soft">Locating installer…</div>}
+        <div className="border border-line bg-raised p-5">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-soft">Detected OS: {os}</p>
+          {installer === "checking" && <div className="mt-4 border border-line py-3 text-center font-mono text-[12px] uppercase tracking-widest text-soft">Locating installer…</div>}
           {installer === "ready" && <a href={href} download={downloadFilename} className="mt-4 flex w-full items-center justify-center gap-2 border border-maroon bg-maroon py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper"><FiDownload aria-hidden /> Download</a>}
-          {installer === "release" && <a href={href} target="_blank" rel="noreferrer" className="mt-4 block w-full border border-maroon bg-maroon py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper">Open download page →</a>}
-          {installer === "missing" && <p className="mt-4 text-[12px] text-ink-soft">Installer unavailable for this OS.</p>}
+          {installer === "release" && <a href={href} target="_blank" rel="noreferrer" className="mt-4 block w-full border border-maroon bg-maroon py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper">Open download page /</a>}
+          {installer === "missing" && <p className="mt-4 text-[12px] text-soft">Installer unavailable for this OS.</p>}
         </div>
         <div className="mt-4 flex flex-col gap-3">
           {(installer === "ready" || installer === "release") && <button onClick={onDoneInstall} className="w-full border border-success bg-success/10 py-3 font-mono text-[12px] uppercase tracking-widest text-success">✓ Done — I've installed it</button>}
-          <button onClick={onPreview} className="font-mono text-[10px] text-ink-soft underline">Preview exam flow (dev bypass)</button>
+          <button onClick={onPreview} className="font-mono text-[10px] text-soft underline">Preview exam flow (dev bypass)</button>
         </div>
       </div>
     </div>
@@ -72,25 +72,25 @@ export function InstalledScreen({
         <h1 className="mt-5 font-serif text-2xl font-semibold">Vignan Exam Browser installed!</h1>
         <p className="mt-2 font-mono text-[11px] uppercase tracking-wider text-maroon">{examName}</p>
         {!deepLinkTried ? (
-          <button onClick={onEnter} className="mt-6 w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-maroon/90">Enter exam →</button>
+          <button onClick={onEnter} className="mt-6 w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-maroon/90">Enter exam /</button>
         ) : deepLinkFailed ? (
           <div className="mt-4 space-y-3">
-            <button onClick={onTryAgain} className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-maroon/90">Try again →</button>
+            <button onClick={onTryAgain} className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-maroon/90">Try again /</button>
             {onPreview && (
               <button
                 onClick={onPreview}
                 className="block w-full border border-forest bg-forest/10 py-3 text-center font-mono text-[11px] uppercase tracking-widest text-forest hover:bg-forest/20"
               >
-                ⚡ Continue in browser (Demo / Bypass mode) →
+                ⚡ Continue in browser (Demo / Bypass mode) /
               </button>
             )}
-            <a href={downloadHref} download={downloadFilename} className="flex w-full items-center justify-center gap-2 border border-line-strong py-3 text-center font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-paper-raised"><FiDownload aria-hidden /> Download again</a>
+            <a href={downloadHref} download={downloadFilename} className="flex w-full items-center justify-center gap-2 border border-line py-3 text-center font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-raised"><FiDownload aria-hidden /> Download again</a>
           </div>
         ) : (
-          <div className="mt-5 font-mono text-[11px] text-ink-soft">Launching Vignan Exam Browser…</div>
+          <div className="mt-5 font-mono text-[11px] text-soft">Launching Vignan Exam Browser…</div>
         )}
         <div className="mt-5 flex items-center justify-center gap-3">
-          <button onClick={onBack} className="font-mono text-[10px] text-ink-soft underline hover:text-ink">← Back</button>
+          <button onClick={onBack} className="font-mono text-[10px] text-soft underline hover:text-ink">← Back</button>
           {onPreview && (
             <>
               <span className="text-[10px] text-line-strong">·</span>
@@ -116,14 +116,14 @@ export function SystemCheckScreen({ examName, checks, checkIndex, checksDone, ch
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper px-6">
       <div className="w-full max-w-md">
-        <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-ink-soft">Pre-exam · Step 1 of 3</p>
+        <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-soft">Pre-exam · Step 1 of 3</p>
         <h1 className="mb-1 font-serif text-2xl font-semibold">System readiness check</h1>
         <p className="mb-8 font-mono text-[11px] uppercase tracking-wider text-maroon">{examName}</p>
-        <div className="space-y-3 border border-line bg-paper-raised p-5">
+        <div className="space-y-3 border border-line bg-raised p-5">
           {checks.map((c, i) => (
             <div key={c.label} className="flex items-center justify-between text-[13.5px]">
-              <span className={i < checkIndex ? "text-ink" : "text-ink-soft"}>{c.label}</span>
-              <span className={`font-mono text-[11px] ${i < checkIndex ? (c.ok ? "text-success" : "text-alert") : "text-ink-soft"}`}>{i < checkIndex ? (c.ok ? "PASS" : "FAIL") : "—"}</span>
+              <span className={i < checkIndex ? "text-ink" : "text-soft"}>{c.label}</span>
+              <span className={`font-mono text-[11px] ${i < checkIndex ? (c.ok ? "text-success" : "text-alert") : "text-soft"}`}>{i < checkIndex ? (c.ok ? "PASS" : "FAIL") : "—"}</span>
             </div>
           ))}
         </div>
@@ -131,7 +131,7 @@ export function SystemCheckScreen({ examName, checks, checkIndex, checksDone, ch
         {checksDone && !checksPassed && (
           <div className="mt-6 flex flex-col gap-3">
             <button onClick={onRecheck} className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper">Re-check Environment</button>
-            {onExit && <button onClick={onExit} className="w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-paper-raised">Exit to Desktop</button>}
+            {onExit && <button onClick={onExit} className="w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-raised">Exit to Desktop</button>}
           </div>
         )}
       </div>
@@ -152,13 +152,13 @@ export function DeviceAccessScreen({ cam, mic, screen, requesting, devicesReady,
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper px-6">
       <div className="w-full max-w-lg">
-        <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-ink-soft">Pre-exam · Step 2 of 3</p>
+        <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-soft">Pre-exam · Step 2 of 3</p>
         <h1 className="mb-2 font-serif text-2xl font-semibold">Grant camera, mic & screen</h1>
         <div className="grid gap-4 sm:grid-cols-[200px_1fr]">
-          <div className="overflow-hidden border border-line-strong bg-ink"><video ref={previewRef} autoPlay playsInline muted className="aspect-[4/3] w-full bg-black object-cover" /></div>
+          <div className="overflow-hidden border border-line bg-ink"><video ref={previewRef} autoPlay playsInline muted className="aspect-[4/3] w-full bg-black object-cover" /></div>
           <div className="space-y-2"><AccessRow label="Camera" state={cam} /><AccessRow label="Microphone" state={mic} /><AccessRow label="Screen sharing" state={screen} /></div>
         </div>
-        <button onClick={onRequest} disabled={requesting} className="mt-6 w-full border border-line-strong py-3 font-mono text-[11px] uppercase tracking-wider text-ink">{requesting ? "Requesting access…" : "Allow camera, microphone & screen"}</button>
+        <button onClick={onRequest} disabled={requesting} className="mt-6 w-full border border-line py-3 font-mono text-[11px] uppercase tracking-wider text-ink">{requesting ? "Requesting access…" : "Allow camera, microphone & screen"}</button>
         <button disabled={!devicesReady} onClick={onContinue} className="mt-3 w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper disabled:opacity-60">Continue</button>
       </div>
     </div>
@@ -176,9 +176,9 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper px-6">
       <div className="w-full max-w-lg">
-        <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-ink-soft">Pre-exam · Step 3 of 3</p>
+        <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-soft">Pre-exam · Step 3 of 3</p>
         <h1 className="mb-4 font-serif text-2xl font-semibold">{examName}</h1>
-        <p className="text-[13px] text-ink-soft">Duration: {durationMin} min · Questions: {questionsLength}</p>
+        <p className="text-[13px] text-soft">Duration: {durationMin} min · Questions: {questionsLength}</p>
         <label className="mt-5 flex items-start gap-3 text-[13px]"><input type="checkbox" checked={agreed} onChange={(e) => onAgree(e.target.checked)} className="mt-0.5 h-4 w-4 accent-maroon" /><span>I have read the rules and consent to monitoring for this exam.</span></label>
         <button disabled={!agreed} onClick={onStart} className="mt-6 w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper disabled:opacity-60">Start exam</button>
       </div>
@@ -233,7 +233,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
         <Seal label="Submitted" sublabel="Receipt recorded" tone="forest" size={100} />
         
         <h1 className="mt-6 font-serif text-3xl font-semibold text-success">Exam Complete</h1>
-        <p className="mt-2 text-[13.5px] text-ink-soft">Your answers have been securely submitted.</p>
+        <p className="mt-2 text-[13.5px] text-soft">Your answers have been securely submitted.</p>
         
         {submitFailed && (
           <div className="mt-6 border border-alert/40 bg-alert/5 px-4 py-3 text-left text-[12px] text-alert">
@@ -244,17 +244,17 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
 
         {uploadState && (
           <div className={`mt-6 border px-4 py-3 text-left text-[12px] ${uploadState === "stored" ? "border-success/40 bg-success/5 text-success" : uploadState === "uploading" ? "border-amber/40 bg-amber/5 text-amber" : uploadState === "partial" ? "border-amber/40 bg-amber/5 text-amber" : "border-alert/40 bg-alert/5 text-alert"}`}>
-            <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Recording storage</p>
+            <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Exam recording</p>
             <p className="mt-1">
-              {uploadState === "stored" && <>Stored in Cloudflare R2 under <span className="font-mono text-[11px]">{uploadDetail}</span></>}
-              {uploadState === "uploading" && <>{uploadDetail ?? "Uploading recording and evidence…"}</>}
-              {uploadState === "partial" && <>{uploadDetail ?? "Recording partially stored — the invigilator can still replay it from crash-safe segments."}</>}
-              {uploadState === "failed" && <>{uploadDetail ?? "Recording could not be uploaded — please tell the invigilator before leaving."}</>}
+              {uploadState === "stored" && <>Your exam recording has been secured. You may close this window.</>}
+              {uploadState === "uploading" && <>{uploadDetail ?? "Securing your exam recording…"}</>}
+              {uploadState === "partial" && <>Finishing up — your recording is being secured. You may close this window.</>}
+              {uploadState === "failed" && <>Your answers are submitted. Please tell the invigilator before leaving so your recording can be verified.</>}
             </p>
           </div>
         )}
 
-        <div className="mt-8 border border-line bg-paper-raised text-left font-mono text-[11px] text-ink-soft">
+        <div className="mt-8 border border-line bg-raised text-left font-mono text-[11px] text-soft">
           <div className="border-b border-line px-5 py-3">
             <span className="block uppercase tracking-widest text-[9px] mb-1">Candidate</span>
             <span className="text-ink text-[13px]">{studentName} ({studentRoll})</span>
@@ -284,7 +284,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
         </div>
 
         <div className="mt-8 space-y-4">
-          <p className="text-[13px] text-ink-soft leading-relaxed px-4">
+          <p className="text-[13px] text-soft leading-relaxed px-4">
             You may now close this secure browser window. Detailed results and Analytics will be available on your dashboard once grading is complete.
           </p>
 
@@ -292,12 +292,12 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
             href="/student/results" 
             className="block w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper transition-colors hover:bg-ink/90"
           >
-            Go to Results Hub →
+            Go to Results Hub /
           </a>
           
           <button 
             onClick={closeExamWindow} 
-            className="block w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink transition-colors hover:bg-paper-raised"
+            className="block w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink transition-colors hover:bg-raised"
           >
             Close Exam Window
           </button>
@@ -308,8 +308,8 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
 }
 
 function AccessRow({ label, state }: { label: string; state: "idle" | "granted" | "denied" }) {
-  const tone = state === "granted" ? "text-success" : state === "denied" ? "text-alert" : "text-ink-soft";
+  const tone = state === "granted" ? "text-success" : state === "denied" ? "text-alert" : "text-soft";
   const text = state === "granted" ? "GRANTED" : state === "denied" ? "BLOCKED" : "NOT REQUESTED";
-  const dot = state === "granted" ? "bg-success" : state === "denied" ? "bg-alert" : "bg-line-strong";
+  const dot = state === "granted" ? "bg-success" : state === "denied" ? "bg-alert" : "bg-line";
   return <div className="flex items-center justify-between border border-line px-3 py-2.5 text-[13px]"><span className="flex items-center gap-2"><span className={`h-2 w-2 ${dot}`} />{label}</span><span className={`font-mono text-[10px] uppercase tracking-wider ${tone}`}>{text}</span></div>;
 }

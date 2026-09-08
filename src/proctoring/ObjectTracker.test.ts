@@ -19,7 +19,7 @@ describe("ObjectTracker", () => {
     expect(confirmed).toHaveLength(0); // 1 hit
 
     confirmed = tracker.update([phone(0.11)], T * 2);
-    expect(confirmed).toHaveLength(MIN_HITS === 2 ? 1 : 0); // MIN_HITS hits → confirmed (2 now)
+    expect(confirmed).toHaveLength(MIN_HITS === 2 ? 1 : 0); // MIN_HITS hits / confirmed (2 now)
 
     expect(confirmed[0]?.confirmed).toBe(true);
     expect(confirmed[0]?.hits).toBe(MIN_HITS);

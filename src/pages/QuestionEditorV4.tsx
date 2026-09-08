@@ -147,7 +147,7 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
     }
   };
 
-  // ── Bulk CSV: parse → validate → insert ────────────────────────────────────
+  // ── Bulk CSV: parse / validate / insert ────────────────────────────────────
   const handleBulkFile = async (file: File | undefined) => {
     if (!file) return;
     setBulkFile(file.name);

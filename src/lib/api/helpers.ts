@@ -47,7 +47,7 @@ export function normalizeExamRecord(record: ExamRecord): ExamRecord {
 export function severityForType(violationType: string): ViolationSeverity {
   const t = violationType.toLowerCase();
   if (t.includes("escalat") || t.includes("critical") || t.includes("second_face") || t.includes("prohibited") || t.includes("multiple_face")) return "critical";
-  if (t.includes("pause") || t.includes("force_submit") || t.includes("phone") || t.includes("no_face") || t.includes("camera_lost") || t.includes("tab") || t.includes("audio")) return "high";
+  if (t.includes("pause") || t.includes("force_submit") || t.includes("phone") || t.includes("earbud") || t.includes("headphone") || t.includes("no_face") || t.includes("camera_lost") || t.includes("tab") || t.includes("audio")) return "high";
   return "warning";
 }
 

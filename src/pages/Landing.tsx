@@ -38,16 +38,16 @@ export default function Landing() {
             </div>
             <div className="leading-none">
               <h1 className="font-serif text-[19px] font-semibold tracking-tight">Vignan Lockdown OS</h1>
-              <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft">
+              <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-soft">
                 Secure Examination Platform
               </p>
             </div>
           </div>
           <Link
             to="/login"
-            className="border border-line bg-paper px-4 py-2 font-mono text-[11px] uppercase tracking-wider text-ink transition-colors hover:bg-paper-raised"
+            className="border border-line bg-raised px-4 py-2 font-mono text-[11px] uppercase tracking-wider text-soft transition-colors hover:border-ink hover:text-ink"
           >
-            Sign In / Switch Role →
+            Sign In / Switch Role
           </Link>
         </div>
       </header>
@@ -62,7 +62,7 @@ export default function Landing() {
             <br />
             three vantage points.
           </h1>
-          <p className="mt-5 text-[15px] leading-relaxed text-ink-soft">
+          <p className="mt-5 text-[15px] leading-relaxed text-soft">
             The same exam, seen from where you sit. Choose a role below to open its console — each is
             built for exactly what that seat in the hall needs to see, and nothing else.
           </p>
@@ -73,20 +73,20 @@ export default function Landing() {
             <Link
               key={r.key}
               to={r.to}
-              className="group flex flex-col justify-between bg-paper p-7 transition-colors hover:bg-paper-raised"
+              className="group flex flex-col justify-between bg-paper p-7 transition-colors hover:bg-raised"
             >
               <div>
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-[11px] text-ink-soft">0{i + 1}</span>
+                  <span className="font-mono text-[11px] text-soft">0{i + 1}</span>
                   <span
-                    className="h-2 w-2 rounded-full"
+                    className="h-2 w-2 rounded-none"
                     style={{ backgroundColor: r.tone }}
                   />
                 </div>
                 <h2 className="mt-4 font-serif text-2xl font-semibold" style={{ color: r.tone }}>
                   {r.title}
                 </h2>
-                <p className="mt-2 text-[13.5px] leading-relaxed text-ink-soft">{r.desc}</p>
+                <p className="mt-2 text-[13.5px] leading-relaxed text-soft">{r.desc}</p>
                 <ul className="mt-5 space-y-1.5">
                   {r.points.map((p) => (
                     <li key={p} className="flex items-start gap-2 text-[12.5px] text-ink">
@@ -96,15 +96,15 @@ export default function Landing() {
                   ))}
                 </ul>
               </div>
-              <div className="mt-8 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-ink-soft group-hover:text-ink">
+              <div className="mt-8 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-soft group-hover:text-ink">
                 Enter console
-                <span className="transition-transform group-hover:translate-x-0.5">→</span>
+                <span className="transition-transform group-hover:translate-x-0.5">/</span>
               </div>
             </Link>
           ))}
         </div>
 
-        <div className="mt-16 flex items-center gap-2 border-t border-line pt-6 font-mono text-[11px] text-ink-soft">
+        <div className="mt-16 flex items-center gap-2 border-t border-line pt-6 font-mono text-[11px] text-soft">
           <span className="h-1.5 w-1.5 bg-success" />
           All systems operational · Tier: AI Proctoring
         </div>

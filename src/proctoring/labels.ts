@@ -15,6 +15,14 @@ const PHONE_HINTS = [
   "cell phone", "mobile phone", "phone", "telephone", "smartphone", "smart phone",
   "remote", "tablet", "mobile", "handset", "iphone", "android"
 ];
+// Ear-worn devices. COCO-style checkpoints have no dedicated earbud class, so
+// these labels only fire on models that DO emit them — but wiring the mapping
+// here means any such label instantly becomes a proctoring violation instead
+// of being dropped as benign.
+const EARBUDS_HINTS = [
+  "headphone", "headphones", "earbud", "earbuds", "earphone", "earphones",
+  "airpod", "airpods", "airpods max", "airpods pro", "headset"
+];
 const LAPTOP_HINTS = ["laptop", "notebook"];
 const TV_HINTS = ["tv", "television"];
 const MONITOR_HINTS = ["monitor", "display"];
@@ -38,6 +46,7 @@ function hasAny(label: string, hints: readonly string[]): boolean {
  */
 export function classifyObject(rawLabel: string): ObjectKind | null {
   const label = rawLabel.toLowerCase();
+  if (hasAny(label, EARBUDS_HINTS)) return "earbuds";
   if (hasAny(label, PHONE_HINTS)) return "phone";
   if (hasAny(label, LAPTOP_HINTS)) return "laptop";
   if (hasAny(label, TV_HINTS)) return "tv";
@@ -49,6 +58,7 @@ export function classifyObject(rawLabel: string): ObjectKind | null {
 export function kindName(kind: ObjectKind): string {
   switch (kind) {
     case "phone": return "phone";
+    case "earbuds": return "earbuds/headphones";
     case "laptop": return "laptop";
     case "tv": return "TV";
     case "monitor": return "monitor";
@@ -58,8 +68,8 @@ export function kindName(kind: ObjectKind): string {
 /** Diagnostics helper — is this a known non-target class we deliberately drop? */
 export function isBenignObject(rawLabel: string): boolean {
   const label = rawLabel.toLowerCase();
+  // NOTE: headphones/earbuds are TARGETS now (earbuds_detected), not benign.
   return (
-    hasAny(label, ["person", "headphone", "headphones", "earbud", "earbuds", "book", "cup", "bottle", "chair", "backpack"]) ||
-    label === "remote"
+    hasAny(label, ["person", "book", "cup", "bottle", "chair", "backpack"])
   );
 }

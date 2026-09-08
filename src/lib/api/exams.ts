@@ -238,9 +238,9 @@ export type ExamDeletionSafety = {
 
 /**
  * Check whether an exam is safe to delete. Conditions:
- *  - anyone currently taking the exam  → BLOCK (they'd be dumped mid-exam)
- *  - any submitted attempt             → BLOCK (permanent student records)
- *  - only not-started enrollments      → allowed (roster rows cascade away)
+ *  - anyone currently taking the exam  / BLOCK (they'd be dumped mid-exam)
+ *  - any submitted attempt             / BLOCK (permanent student records)
+ *  - only not-started enrollments      / allowed (roster rows cascade away)
  */
 export async function getExamDeletionSafety(examId: string): Promise<ExamDeletionSafety> {
   const db = getSupabase();

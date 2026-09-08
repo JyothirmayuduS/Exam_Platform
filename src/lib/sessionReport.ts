@@ -1,16 +1,26 @@
 // Session report exports (teacher + proctor side).
 //
 // Generates the PDF and CSV client-side with jsPDF from the live roster +
-// violation events already loaded from the DB — no server round trip, no HTML
-// masquerading as a PDF.
+// violation events already loaded from the DB, PLUS the candidate's stored
+// per-interval camera snapshots from Cloudflare R2. No server round trip, no
+// HTML masquerading as a PDF.
+//
+// Snapshot timeline: for EVERY candidate the report embeds each stored
+// snapshot (the frames the exam client uploads every few seconds) with its
+// timestamp, and any violation whose moment falls under that snapshot is
+// printed directly beneath it — so the reviewer sees exactly what the camera
+// saw when each flag fired.
 
 import { jsPDF } from "jspdf";
+import { listStudentArtifacts, getArtifactObjectUrl } from "./examStorage";
 
 export type ReportRow = {
   name: string;
   roll: string;
   state: string;
   progress: number;
+  /** Attempt start (ISO) — turns snapshot captions into elapsed exam time. */
+  startedAt?: string | null;
   violations: {
     description: string;
     type: string;
@@ -31,12 +41,242 @@ export function fmtReportClock(sec: number | null | undefined): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-export function downloadSessionReportPdf(
+function fmtWallClock(epochMs: number): string {
+  return new Date(epochMs).toLocaleTimeString([], { hour12: false });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Snapshot timeline (per candidate)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One stored snapshot with the violations that happened under it. */
+export type SnapshotEntry = {
+  key: string;
+  epochMs: number;
+  violations: ReportRow["violations"];
+};
+
+/** Safety cap — a marathon exam must not produce an unbounded PDF. */
+const MAX_SNAPS_PER_CANDIDATE = 720;
+const SNAPS_PER_ROW = 2;
+const SNAPS_PER_PAGE = SNAPS_PER_ROW * 3; // 2 cols × 3 rows
+
+function snapEpochFromKey(key: string): number | null {
+  const m = /snap_(\d{10,})\.jpe?g$/i.exec(key);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Build the snapshot timeline for one candidate: every stored interval
+ * snapshot, sorted by capture time, with the violations whose moment falls
+ * under it (wall-clock window between the previous and this snapshot).
+ * Returns null when storage is unavailable or holds no snapshots.
+ */
+export async function collectSnapshotTimeline(
+  examId: string,
+  roll: string,
+  violations: ReportRow["violations"],
+): Promise<SnapshotEntry[] | null> {
+  if (!examId || !roll || roll === "—") return null;
+  let artifacts;
+  try {
+    artifacts = await listStudentArtifacts(examId, roll);
+  } catch {
+    return null;
+  }
+  if (!artifacts || artifacts.length === 0) return null;
+
+  const snaps = artifacts
+    .filter((a) => a.kind === "screenshots")
+    .map((a) => ({ key: a.key, epochMs: snapEpochFromKey(a.key) }))
+    .filter((s): s is { key: string; epochMs: number } => s.epochMs !== null)
+    .sort((a, b) => a.epochMs - b.epochMs)
+    .slice(0, MAX_SNAPS_PER_CANDIDATE);
+  if (snaps.length === 0) return null;
+
+  const timed = violations
+    .map((v) => ({ v, t: new Date(v.created_at).getTime() }))
+    .filter((x) => Number.isFinite(x.t));
+
+  return snaps.map((snap, i) => {
+    const prev = i > 0 ? snaps[i - 1].epochMs : Number.NEGATIVE_INFINITY;
+    return {
+      key: snap.key,
+      epochMs: snap.epochMs,
+      violations: timed.filter((x) => x.t > prev && x.t <= snap.epochMs).map((x) => x.v),
+    };
+  });
+}
+
+/** Fetch a stored snapshot and downscale it to a small embedded JPEG. */
+async function snapshotThumbDataUrl(key: string, maxEdge = 480): Promise<string | null> {
+  try {
+    const url = await getArtifactObjectUrl(key, 600);
+    if (!url) return null;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d");
+    if (!ctx) {
+      bitmap.close?.();
+      return null;
+    }
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    return c.toDataURL("image/jpeg", 0.6);
+  } catch {
+    return null;
+  }
+}
+
+/** Render one candidate's snapshot timeline into the open PDF document. */
+async function drawSnapshotTimeline(
+  doc: jsPDF,
+  row: ReportRow,
+  examId: string,
+): Promise<number> {
+  const W = doc.internal.pageSize.getWidth();
+  const M = 32;
+  const CW = W - M * 2;
+
+  const timeline = await collectSnapshotTimeline(examId, row.roll, row.violations);
+  if (!timeline || timeline.length === 0) return 0;
+
+  const startMs = row.startedAt ? new Date(row.startedAt).getTime() : null;
+  const elapsedLabel = (epochMs: number): string =>
+    startMs && epochMs >= startMs ? `+${fmtReportClock((epochMs - startMs) / 1000)}` : "";
+
+  // Section header page.
+  doc.addPage();
+  doc.setFillColor(26, 58, 42);
+  doc.rect(0, 0, W, 56, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text(`Snapshot Timeline — ${row.name} (${row.roll})`, M, 26);
+  doc.setFontSize(9);
+  const withViolations = timeline.filter((s) => s.violations.length > 0).length;
+  doc.text(
+    `${timeline.length} camera snapshot(s) · ${withViolations} under a violation — frames upload automatically every few seconds during the exam.`,
+    M,
+    42,
+  );
+
+  // Fetch thumbs in small batches to keep memory bounded.
+  const thumbs: (string | null)[] = new Array(timeline.length).fill(null);
+  const BATCH = 6;
+  for (let i = 0; i < timeline.length; i += BATCH) {
+    const slice = timeline.slice(i, i + BATCH);
+    const results = await Promise.all(slice.map((s) => snapshotThumbDataUrl(s.key)));
+    results.forEach((r, j) => { thumbs[i + j] = r; });
+  }
+
+  const gutter = 10;
+  const cellW = (CW - gutter) / SNAPS_PER_ROW;
+  const imgH = Math.round(cellW * 0.5625); // 16:9-ish camera crop
+  const captionH = 11;
+  const violationH = 9;
+  const rowH = imgH + captionH + violationH * 2 + 8;
+
+  let y = 74;
+  let placed = 0;
+  for (let i = 0; i < timeline.length; i++) {
+    const col = placed % SNAPS_PER_ROW;
+    if (col === 0) {
+      if (y + rowH > doc.internal.pageSize.getHeight() - 40) {
+        doc.addPage();
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(90, 90, 90);
+        doc.text(`Snapshot Timeline — ${row.name} (${row.roll}) · continued`, M, 34);
+        y = 52;
+      }
+    }
+    const snap = timeline[i];
+    const x = M + col * (cellW + gutter);
+
+    // Frame
+    doc.setDrawColor(180, 180, 180);
+    doc.setLineWidth(0.7);
+    doc.rect(x, y, cellW, imgH, "S");
+    const thumb = thumbs[i];
+    if (thumb) {
+      try {
+        doc.addImage(thumb, "JPEG", x, y, cellW, imgH, undefined, "FAST");
+      } catch { /* bad image — keep the empty frame */ }
+    } else {
+      doc.setTextColor(150, 150, 150);
+      doc.setFont("courier", "normal");
+      doc.setFontSize(6.5);
+      doc.text("(frame unavailable)", x + 4, y + imgH / 2);
+    }
+
+    // Caption: wall clock + elapsed exam time + violation count badge
+    doc.setFont("courier", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(30, 30, 30);
+    const elapsed = elapsedLabel(snap.epochMs);
+    doc.text(
+      `${fmtWallClock(snap.epochMs)}${elapsed ? ` · ${elapsed}` : ""}`,
+      x,
+      y + imgH + captionH - 3,
+    );
+    if (snap.violations.length > 0) {
+      doc.setTextColor(200, 0, 0);
+      doc.text(`${snap.violations.length} violation(s)`, x + cellW, y + imgH + captionH - 3, { align: "right" });
+    }
+
+    // Violations under THIS snapshot, with their timestamps.
+    let vy = y + imgH + captionH + 1;
+    doc.setFont("courier", "normal");
+    if (snap.violations.length > 0) {
+      for (const v of snap.violations.slice(0, 2)) {
+        doc.setFontSize(6.3);
+        doc.setTextColor(155, 28, 28);
+        const line = `! ${v.description || v.type}`.slice(0, 68);
+        doc.text(line, x, vy);
+        doc.setTextColor(110, 110, 110);
+        doc.text(fmtWallClock(new Date(v.created_at).getTime()), x + cellW, vy, { align: "right" });
+        vy += violationH;
+      }
+      if (snap.violations.length > 2) {
+        doc.setFontSize(6.3);
+        doc.setTextColor(155, 28, 28);
+        doc.text(`+ ${snap.violations.length - 2} more in violation detail`, x, vy);
+      }
+    } else {
+      doc.setFontSize(6.3);
+      doc.setTextColor(150, 150, 150);
+      doc.text("no violation under this snap", x, vy);
+    }
+
+    placed += 1;
+    if (placed % SNAPS_PER_ROW === 0) y += rowH;
+  }
+
+  return timeline.length;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PDF
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function downloadSessionReportPdf(
   examName: string,
   examId: string,
   rows: ReportRow[],
   generatedAt = new Date(),
-): void {
+  opts: { includeSnapshots?: boolean } = {},
+): Promise<void> {
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true });
   const W = doc.internal.pageSize.getWidth();
   const M = 32;
@@ -128,6 +368,18 @@ export function downloadSessionReportPdf(
       });
       y += 10;
     });
+  }
+
+  // Per-candidate snapshot timeline: every stored snap with the violations
+  // that occurred under it and their timestamps.
+  if (opts.includeSnapshots !== false) {
+    for (const r of rows) {
+      try {
+        await drawSnapshotTimeline(doc, r, examId);
+      } catch (err) {
+        console.warn(`[sessionReport] snapshot timeline failed for ${r.roll}:`, err);
+      }
+    }
   }
 
   doc.save(`Session_Report_${examId}.pdf`);

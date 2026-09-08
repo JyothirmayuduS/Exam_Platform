@@ -143,7 +143,7 @@ export default function StudentResults() {
                     {r.status === "published" ? (
                       <div className="flex items-center justify-between">
                         <span className="border border-success/50 bg-success/10 px-2 py-1 font-mono text-[11px] text-success">{grade(pct)}</span>
-                        <Link to={`/student/results/${r.code}`} className="font-mono text-[9px] uppercase tracking-wider text-ink hover:underline">View Details →</Link>
+                        <Link to={`/student/results/${r.code}`} className="font-mono text-[9px] uppercase tracking-wider text-ink hover:underline">View Details /</Link>
                       </div>
                     ) : (
                       <span className="text-ink-soft">—</span>

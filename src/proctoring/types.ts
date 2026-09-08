@@ -18,6 +18,7 @@ export type ProctorCategory =
   | "possible_phone_use" // phone CONFIRMED in view while head is tilted down
   // objects
   | "phone_detected"   // phone confirmed in view (head neutral)
+  | "earbuds_detected" // headphones/earbuds/airpods confirmed in view
   | "laptop_detected"  // laptop/tv/monitor confirmed in view
   // audio
   | "audio_detected";  // sustained voice / speech
@@ -30,7 +31,7 @@ export interface BBox {
   height: number;
 }
 
-export type ObjectKind = "phone" | "laptop" | "tv" | "monitor";
+export type ObjectKind = "phone" | "earbuds" | "laptop" | "tv" | "monitor";
 
 /**
  * A classified object detection coming out of the raw model output.

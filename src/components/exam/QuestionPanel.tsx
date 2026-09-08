@@ -19,8 +19,8 @@ type QuestionPanelProps = {
 const statusClassMap: Record<QuestionStatus, string> = {
   answered: "border-success bg-success text-paper",
   marked: "border-amber bg-amber text-paper",
-  visited: "border-line-strong bg-paper text-ink",
-  unvisited: "border-line bg-paper text-ink-soft",
+  visited: "border-line bg-paper text-ink",
+  unvisited: "border-line bg-paper text-soft",
 };
 
 export default function QuestionPanel({ questions, currentIndex, getStatus, onJump }: QuestionPanelProps) {
@@ -44,8 +44,8 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
   }, [questions, search]);
 
   return (
-    <aside className="space-y-3 border border-line bg-paper-raised p-4">
-      <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question navigator</p>
+    <aside className="space-y-3 border border-line bg-raised p-4">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Question navigator</p>
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
@@ -69,10 +69,10 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
           );
         })}
       </div>
-      <div className="space-y-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+      <div className="space-y-1 font-mono text-[9px] uppercase tracking-wider text-soft">
         <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 border border-success bg-success" />Answered</span>
         <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 border border-amber bg-amber" />Marked for review</span>
-        <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 border border-line-strong" />Visited</span>
+        <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 border border-line" />Visited</span>
         <span className="flex items-center gap-2"><span className="h-2.5 w-2.5 border border-line" />Not visited</span>
       </div>
     </aside>

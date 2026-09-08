@@ -156,14 +156,14 @@ export default function CreateTestModal({
             <legend className="text-[12px] text-ink-soft"><span className="font-medium text-ink">Assessment type</span></legend>
             <div className="mt-2 grid gap-3 sm:grid-cols-2">
               <button type="button" onClick={() => setAssessmentType("timed")} className={`flex items-start gap-3 border p-4 text-left transition ${assessmentType === "timed" ? "border-forest bg-success/5" : "border-line hover:border-line-strong"}`}>
-                <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${assessmentType === "timed" ? "border-forest" : "border-line-strong"}`}>{assessmentType === "timed" && <span className="h-2 w-2 rounded-full bg-forest" />}</span>
+                <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-none border ${assessmentType === "timed" ? "border-forest" : "border-line-strong"}`}>{assessmentType === "timed" && <span className="h-2 w-2 rounded-none bg-forest" />}</span>
                 <span>
                   <span className="block text-[13px] font-medium">Timed Assessment</span>
                   <span className="mt-1 block text-[11px] text-ink-soft">Candidates get a fixed window; auto-submit at 00:00.</span>
                 </span>
               </button>
               <button type="button" onClick={() => setAssessmentType("deadline")} className={`flex items-start gap-3 border p-4 text-left transition ${assessmentType === "deadline" ? "border-forest bg-success/5" : "border-line hover:border-line-strong"}`}>
-                <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${assessmentType === "deadline" ? "border-forest" : "border-line-strong"}`}>{assessmentType === "deadline" && <span className="h-2 w-2 rounded-full bg-forest" />}</span>
+                <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-none border ${assessmentType === "deadline" ? "border-forest" : "border-line-strong"}`}>{assessmentType === "deadline" && <span className="h-2 w-2 rounded-none bg-forest" />}</span>
                 <span>
                   <span className="block text-[13px] font-medium">Deadline Based Assessment</span>
                   <span className="mt-1 block text-[11px] text-ink-soft">Opens immediately, closes at a fixed date &amp; time.</span>

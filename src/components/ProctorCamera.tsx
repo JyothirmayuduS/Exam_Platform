@@ -352,7 +352,7 @@ export default function ProctorCamera({
         {internalViolationActive && (
           <div className="absolute inset-0 border-4 border-alert/80 pointer-events-none">
             <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-alert/90 px-2 py-1">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-paper" />
+              <span className="h-1.5 w-1.5 animate-pulse rounded-none bg-paper" />
               <span className="font-mono text-[9px] uppercase tracking-wider text-paper">Violation flagged</span>
               {violationElapsedSec > 0 && (
                 <span className="font-mono text-[9px] text-paper/70 ml-1">
@@ -371,7 +371,7 @@ export default function ProctorCamera({
               onClick={() => { setRetryCount(0); void connect(); }}
               className="mt-2 border border-white/20 px-3 py-1.5 font-mono text-[9px] uppercase tracking-wider text-paper/80 hover:bg-white/10"
             >
-              Reconnect →
+              Reconnect /
             </button>
           </div>
         )}
@@ -379,7 +379,7 @@ export default function ProctorCamera({
 
       {/* Status bar */}
       <div className="flex items-center gap-2 px-0.5">
-        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+        <span className={`h-1.5 w-1.5 rounded-none ${dot}`} />
         <span className="font-mono text-[9px] uppercase tracking-wider text-ink-soft flex-1">{label}</span>
         {state === "disconnected" && retryCount > 0 && (
           <span className="font-mono text-[9px] text-alert">Retrying…</span>

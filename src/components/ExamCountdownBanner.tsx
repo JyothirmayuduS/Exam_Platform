@@ -40,7 +40,7 @@ export default function ExamCountdownBanner({ exams }: ExamCountdownBannerProps)
         to={`/student/exams/${upcoming.id}/practice`}
         className="border border-maroon px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-maroon hover:bg-maroon hover:text-paper"
       >
-        Open practice mode →
+        Open practice mode /
       </Link>
     </div>
   );

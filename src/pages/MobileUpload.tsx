@@ -3,6 +3,46 @@ import { FiCamera } from "react-icons/fi";
 import { useParams, useSearchParams } from "react-router-dom";
 import ImageCropper from "../components/ImageCropper";
 import { getSupabase } from "../lib/supabase";
+
+/**
+ * Self-heal a dead upload session from the PHONE itself.
+ *
+ * The QR link is only as good as the `mobile_upload_sessions` row the exam
+ * client created — if that upsert failed (RLS hiccup, tab closed early, race
+ * against attempt creation) every scan returns "Invalid or expired token" and
+ * the student is stuck mid-exam. The table's RLS deliberately allows anon
+ * inserts (policy "ep mobile upload anon"), so the phone can recreate the
+ * missing row for the token it is holding and retry. This is capability-token
+ * auth: whoever holds the one-time token from the exam's own QR may upload.
+ */
+async function repairUploadSession(
+  db: NonNullable<ReturnType<typeof getSupabase>>,
+  opts: { token: string; studentId: string; questionId: string; examId: string },
+): Promise<boolean> {
+  try {
+    const { error } = await db
+      .from("mobile_upload_sessions")
+      .upsert(
+        {
+          token_hash: opts.token,
+          attempt_id: `pending_${opts.studentId}`,
+          question_id: String(opts.questionId),
+          student_id: opts.studentId,
+          status: "WAITING",
+          expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        },
+        { onConflict: "token_hash" },
+      );
+    if (error) {
+      console.error("[MobileUpload] session repair failed:", error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("[MobileUpload] session repair error:", err);
+    return false;
+  }
+}
 import { invokeMobileUploadWithRetry, type InvokeError } from "../lib/mobileUploadInvoke";
 import {
   compressImage,
@@ -97,6 +137,9 @@ export default function MobileUpload() {
       // The QR URL already carries the human question number (qId) — forward it
       // so the PDF header can show "QUESTION NO: 3" without a DB column.
       formData.append("qId", qId);
+      // Exam id for the storage folder when the session's attempt is still the
+      // `pending_` placeholder.
+      if (examId) formData.append("examId", examId);
       pages.forEach((p, i) => formData.append(`image_${i}`, p.blob, `page_${i}.jpg`));
 
       const db = getSupabase();
@@ -127,7 +170,28 @@ export default function MobileUpload() {
         })();
         setLastError({ message, raw: attempt.error.body });
 
-        // ── Resilient fallback ─────────────────────────────────────────────
+        // ── Self-heal a dead session, then retry once ──────────────────────
+        // A definitive 403 "invalid or expired token" means the session row
+        // the QR points at doesn't exist (or expired). Recreate it from the
+        // identity carried on the QR URL and give the upload one more shot.
+        if (status === 403 && /invalid or expired token/i.test(message) && studentId && token) {
+          const repaired = await repairUploadSession(db, {
+            token,
+            studentId,
+            questionId: qId,
+            examId,
+          });
+          if (repaired) {
+            const retry = await invokeMobileUploadWithRetry(db, formData, 2, undefined, 800);
+            if (retry.ok) {
+              setUploadedUrl(pages[0].url);
+              setStep("done");
+              return;
+            }
+          }
+        }
+
+        // ── Resilient fallback ─────────────────────────────────────────
         // Server misconfiguration (500) or a network/transport failure means the
         // token was never accepted/consumed server-side — the session row is
         // still untouched. In that case the phone can upload the images directly
@@ -333,7 +397,7 @@ export default function MobileUpload() {
                     </div>
                     <button
                       onClick={() => setPages(pages.filter((_, idx) => idx !== i))}
-                      className="absolute top-2 right-2 bg-alert text-white w-6 h-6 flex items-center justify-center rounded-full text-[12px]"
+                      className="absolute top-2 right-2 bg-alert text-white w-6 h-6 flex items-center justify-center rounded-none text-[12px]"
                     >
                       ✕
                     </button>
@@ -357,7 +421,7 @@ export default function MobileUpload() {
                   disabled={pages.length === 0}
                   className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper disabled:opacity-60"
                 >
-                  Submit Answer ({pages.length} Pages) →
+                  Submit Answer ({pages.length} Pages) /
                 </button>
               </div>
             </div>

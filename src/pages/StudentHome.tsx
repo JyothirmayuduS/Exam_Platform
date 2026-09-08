@@ -83,11 +83,11 @@ export default function StudentHome() {
     <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={nav}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Student dashboard</p>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Student dashboard</p>
           <h1 className="mt-2 font-serif text-3xl font-semibold">My enrolled exams</h1>
         </div>
-        <Link to="/student/exams" className="font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">
-          View full exams page →
+        <Link to="/student/exams" className="font-mono text-[10px] uppercase tracking-wider text-soft hover:text-ink">
+          View full exams page
         </Link>
       </div>
 
@@ -102,14 +102,14 @@ export default function StudentHome() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search exams"
-          className="min-w-[220px] border border-line bg-paper p-2 text-[13px]"
+          className="min-w-[220px] border border-line bg-raised px-3 py-2 text-[13px] outline-none focus:border-ink"
         />
         {(["all", "upcoming", "live", "completed"] as const).map((value) => (
           <button
             key={value}
             onClick={() => setFilter(value)}
-            className={`border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${
-              filter === value ? "border-maroon bg-maroon text-paper" : "border-line text-ink-soft"
+            className={`border px-3 py-2 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+              filter === value ? "border-maroon bg-maroon text-paper" : "border-line bg-raised text-soft hover:border-ink hover:text-ink"
             }`}
           >
             {value}
@@ -119,32 +119,32 @@ export default function StudentHome() {
 
       <section className="mt-5 space-y-3">
         {filtered.map((row) => (
-          <div key={row.id} className="flex flex-col gap-4 border border-line bg-paper p-5 md:flex-row md:items-center md:justify-between">
+          <div key={row.id} className="border border-line bg-paper p-5 transition-colors hover:bg-raised md:flex-row md:items-center md:justify-between">
             <div>
               <p className="font-serif text-[17px] font-medium">{row.name}</p>
-              <p className="mt-1 text-[12px] text-ink-soft">
+              <p className="mt-1 text-[12px] text-soft">
                 {row.batch} · {row.duration} minutes · {row.totalMarks} marks
               </p>
-              <p className="mt-2 text-[12px] text-ink-soft">Exam ID: {row.id}</p>
+              <p className="mt-1 font-mono text-[10px] text-soft">Exam ID: {row.id}</p>
               <ExamCountdown startAt={row.scheduledAt} durationMinutes={row.duration} className="mt-2 block" />
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2 md:mt-0">
               <Link
                 to={`/student/exams/${row.id}`}
-                className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink"
+                className="border border-line bg-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-ink hover:text-ink"
               >
                 Details
               </Link>
               <Link
                 to={`/student/exams/${row.id}/practice`}
-                className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink"
+                className="border border-line bg-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-ink hover:text-ink"
               >
-                Practice mode
+                Practice
               </Link>
               <Link
                 to={`/student/exams/${row.id}/system-check`}
-                className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink"
+                className="border border-line bg-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-ink hover:text-ink"
               >
                 System check
               </Link>
@@ -156,7 +156,7 @@ export default function StudentHome() {
                   Join exam
                 </Link>
               ) : (
-                <span className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                <span className="border border-line bg-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-soft">
                   {row.status}
                 </span>
               )}
@@ -165,15 +165,15 @@ export default function StudentHome() {
         ))}
 
         {!loading && filtered.length === 0 && (
-          <div className="border border-dashed border-line-strong p-8 text-center text-[13px] text-ink-soft">
+          <div className="border border-dashed border-line p-10 text-center text-[13px] text-soft">
             No matching exams found.
           </div>
         )}
 
         {loading && (
-          <div className="animate-pulse space-y-2">
+          <div className="space-y-2">
             {[0, 1].map((i) => (
-              <div key={i} className="h-24 border border-line bg-paper-raised" />
+              <div key={i} className="h-24 border border-line bg-raised" />
             ))}
           </div>
         )}

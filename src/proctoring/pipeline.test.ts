@@ -7,8 +7,8 @@ import type { Detection, ProctorCategory } from "./types";
 import { CADENCE, COOLDOWN_MS, TRACKING, OBJECT } from "./config";
 
 // ── Test harness ─────────────────────────────────────────────────────────────
-// Mirrors the wiring in ProctorAI.tsx: raw detections → ObjectTracker (temporal
-// confirmation) → decideObjectEvent (gaze/phone fusion) → ViolationGate
+// Mirrors the wiring in ProctorAI.tsx: raw detections / ObjectTracker (temporal
+// confirmation) / decideObjectEvent (gaze/phone fusion) / ViolationGate
 // (cooldown dedupe). Gaze_away events are emitted by the head-pose streak logic
 // in the component and are therefore exercised by the fusion/unit tests, not
 // here — this file validates the OBJECT pipeline end to end.
@@ -99,7 +99,7 @@ describe("Proctor pipeline — acceptance", () => {
     const emissions = run([
       { t: T, dets: [phone(0.7)] },
       { t: T * 2, dets: [] }, // one missed sample — persistence, no confirmation yet
-      { t: T * 3, dets: [phone(0.7)] }, // resumed hit → confirms here (hits survive the miss)
+      { t: T * 3, dets: [phone(0.7)] }, // resumed hit / confirms here (hits survive the miss)
       { t: T * 4, dets: [phone(0.7)] },
     ]);
     const phoneEvts = emissions.filter((e) => e.category === "phone_detected");
@@ -107,7 +107,7 @@ describe("Proctor pipeline — acceptance", () => {
     expect(phoneEvts[0]?.t).toBe(T * 3);
   });
 
-  it("confirmed phone + head tilted down → possible_phone_use (escalated)", () => {
+  it("confirmed phone + head tilted down / possible_phone_use (escalated)", () => {
     // The phone confirms on the MIN_HITS-th sample; the head is already tilted
     // down on that confirmation sample, so the emission escalates instead of
     // reporting a bare "phone detected".

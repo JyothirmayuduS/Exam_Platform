@@ -454,7 +454,7 @@ export default function RecordingReviewer({
         <span className="absolute right-2 top-2 bg-ink/75 px-2 py-1 font-mono text-[9px] uppercase text-paper">
           {videoSrc ? `REC · ${clock(current)}${visibleDuration ? ` / ${clock(visibleDuration)}` : ""}` : "NO RECORDING"}
         </span>
-        {playing && <span className="absolute left-2 top-2 h-2 w-2 animate-pulse rounded-full bg-alert" />}
+        {playing && <span className="absolute left-2 top-2 h-2 w-2 animate-pulse rounded-none bg-alert" />}
       </div>
 
       {/* Seek bar with RED violation markers */}

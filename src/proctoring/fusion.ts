@@ -4,9 +4,9 @@
 // The whole point of this module: a head-down pose and a phone in view are
 // DIFFERENT events and must never be conflated.
 //
-//   • head tilted down, no phone visible  → gaze_away ("looking away")
-//   • phone confirmed, head neutral       → phone_detected
-//   • phone confirmed WHILE head is down  → possible_phone_use (escalated)
+//   • head tilted down, no phone visible  / gaze_away ("looking away")
+//   • phone confirmed, head neutral       / phone_detected
+//   • phone confirmed WHILE head is down  / possible_phone_use (escalated)
 //
 // Only the last one claims the candidate may be using the phone — and it
 // requires two independent signals, each confirmed on its own.
@@ -33,11 +33,20 @@ export type FusionOutcome =
  * `track` is a freshly CONFIRMED tracked object (never a raw single frame).
  */
 export function decideObjectEvent(track: TrackedObject, gaze: GazeFusionState, now: number): FusionOutcome {
+  if (track.kind === "earbuds") {
+    const pct = Math.round(track.peak * 100);
+    return {
+      fired: true,
+      category: "earbuds_detected",
+      label: `Earbuds/headphones detected in view (${pct}% conf · ${track.hits} confirmed samples)`,
+      confidence: track.peak,
+    };
+  }
   if (track.kind === "phone") {
     const pct = Math.round(track.peak * 100);
     const hits = track.hits;
 
-    // Head down within the last ~1.5 s while the phone is confirmed → the one
+    // Head down within the last ~1.5 s while the phone is confirmed / the one
     // escalation that actually implicates the candidate.
     const headDownNow =
       gaze.headDown && gaze.headDownSince !== null && now - gaze.headDownSince <= 2_000;

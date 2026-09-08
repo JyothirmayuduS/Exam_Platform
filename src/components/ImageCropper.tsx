@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 // ── Interactive Image Cropper ─────────────────────────────────────────────────
 // Renders the image on a canvas and lets the user drag a crop rectangle.
-// On confirm → returns the cropped Blob via onCrop().
+// On confirm / returns the cropped Blob via onCrop().
 
 type CropRect = { x: number; y: number; w: number; h: number };
 
@@ -25,7 +25,7 @@ export default function ImageCropper({ blob, onCrop, onCancel }: ImageCropperPro
   const [ctxError, setCtxError] = useState(false);
 
   // ── Issue #5: RAF-based rendering ─────────────────────────────────────────
-  // Instead of calling draw() inside setCrop (which causes a re-render → draw
+  // Instead of calling draw() inside setCrop (which causes a re-render / draw
   // cascade at 100+ fps), we store the latest crop in a ref and schedule a
   // single rAF-throttled draw. This caps GPU work at 60fps and eliminates
   // wasteful re-renders during mouse drags.
@@ -241,7 +241,7 @@ export default function ImageCropper({ blob, onCrop, onCancel }: ImageCropperPro
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
         <button onClick={onCancel} className="font-mono text-[10px] uppercase tracking-wider text-paper/60 hover:text-paper">← Cancel</button>
         <p className="font-mono text-[11px] uppercase tracking-widest">Crop image</p>
-        <button onClick={confirmCrop} className="font-mono text-[10px] uppercase tracking-wider text-success hover:text-success/80">Confirm →</button>
+        <button onClick={confirmCrop} className="font-mono text-[10px] uppercase tracking-wider text-success hover:text-success/80">Confirm /</button>
       </div>
 
       <div className="flex-1 overflow-auto flex items-center justify-center p-2">

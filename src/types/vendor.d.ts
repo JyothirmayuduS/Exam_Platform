@@ -10,7 +10,7 @@ interface ImportMetaEnv {
   readonly VITE_LIVEKIT_URL: string;
   // Where the desktop lockdown app should boot straight into.
   readonly VITE_EXAM_ENTRY_PATH?: string;
-  // "true" turns on per-second proctoring screenshot capture → R2.
+  // "true" turns on per-second proctoring screenshot capture / R2.
   readonly VITE_PROCTOR_CAPTURE?: string;
   // Lockdown desktop app download destinations (see src/lib/platform.ts).
   readonly VITE_LOCKDOWN_DOWNLOAD_URL?: string;

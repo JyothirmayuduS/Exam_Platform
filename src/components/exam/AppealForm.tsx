@@ -15,11 +15,11 @@ export default function AppealForm({ questionNo, currentMarks, maxMarks, onSubmi
   return (
     <div className="border border-amber/50 bg-amber/5 p-5 mt-4 text-[13px]">
       <div className="flex items-center gap-2 mb-3">
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber/20 text-amber font-bold">!</span>
+        <span className="flex h-5 w-5 items-center justify-center rounded-none bg-amber/20 text-amber font-bold">!</span>
         <h3 className="font-mono text-[11px] uppercase tracking-widest text-amber">File an Appeal for Q{questionNo}</h3>
       </div>
       
-      <p className="text-ink-soft mb-4">
+      <p className="text-soft mb-4">
         You were awarded <strong className="text-ink">{currentMarks} / {maxMarks} marks</strong> for this question. 
         If you believe there was a grading error, you can submit an appeal for the examiner to review.
       </p>
@@ -41,7 +41,7 @@ export default function AppealForm({ questionNo, currentMarks, maxMarks, onSubmi
         </button>
         <button
           onClick={onCancel}
-          className="border border-line text-ink font-mono text-[10px] uppercase tracking-wider px-4 py-2 hover:bg-paper-raised"
+          className="border border-line text-ink font-mono text-[10px] uppercase tracking-wider px-4 py-2 hover:bg-raised"
         >
           Cancel
         </button>

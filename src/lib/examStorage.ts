@@ -395,7 +395,7 @@ async function storeArtifactWithRetry(
   return last;
 }
 
-/** Store an arbitrary blob (R2 primary → Supabase backup). */
+/** Store an arbitrary blob (R2 primary / Supabase backup). */
 export async function uploadArtifactBlob(
   key: string,
   blob: Blob,
@@ -573,7 +573,7 @@ export async function uploadExamRecords(opts: {
   const folder = storageFolderSegment(examId, examName);
   const uploaded = { recordingKey: null as string | null, pdfKey: null as string | null, snapshotKeys: [] as string[] };
 
-  // 1. Recording → Cloudflare R2 (primary), Supabase Storage (backup).
+  // 1. Recording / Cloudflare R2 (primary), Supabase Storage (backup).
   //    Retried — the merged video is the artifact the teacher reviews first.
   const recFilename = `recording_${Date.now()}.webm`;
   const rec = await storeArtifactWithRetry(

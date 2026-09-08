@@ -364,7 +364,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
                 <td className="px-5 py-4 text-[12px] text-ink-soft">{c.paper.length} questions · {paperMax(c.paper)} marks</td>
                 <td className="px-5 py-4">{c.flags.length ? <span className="border border-alert/30 bg-alert/5 px-2 py-1 font-mono text-[10px] text-alert">{c.flags.length} flag{c.flags.length > 1 ? "s" : ""}</span> : <span className="font-mono text-[10px] text-success">Clean</span>}</td>
                 <td className="px-5 py-4"><StatusChip status={c.status} awarded={c.awarded} /></td>
-                <td className="px-5 py-4 text-right"><button onClick={() => openReview(c.id)} className="font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Review →</button></td>
+                <td className="px-5 py-4 text-right"><button onClick={() => openReview(c.id)} className="font-mono text-[10px] uppercase tracking-wider text-forest hover:underline">Review /</button></td>
               </tr>
             ))}
           </tbody>
@@ -600,7 +600,7 @@ function RecPill({ state, seconds }: { state: CamState; seconds: number }) {
   const live = state === "live";
   return (
     <div className={`flex items-center gap-2 border px-3 py-2 ${live ? "border-alert/40 bg-alert/5" : "border-line-strong bg-paper"}`}>
-      <span className={`h-2 w-2 rounded-full ${live ? "animate-pulse bg-alert" : "bg-ink-soft"}`} />
+      <span className={`h-2 w-2 rounded-none ${live ? "animate-pulse bg-alert" : "bg-ink-soft"}`} />
       <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">{live ? "Rec" : state === "connecting" ? "Cam…" : "Cam off"}</span>
       {live && <span className="tabular font-mono text-[11px] text-ink">{fmt(seconds)}</span>}
     </div>
@@ -616,7 +616,7 @@ function CameraPip({ cam, minimized, onToggle, profileName, notify }: { cam: Ret
     <div className="absolute bottom-4 left-4 z-40 w-[210px] overflow-hidden border border-[#30493a] bg-[#1f3027] shadow-[0_12px_30px_-12px_rgba(0,0,0,0.5)] sm:w-[240px]">
       <div className="flex items-center justify-between bg-[#223528] px-2.5 py-1.5">
         <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-paper/85">
-          <span className={`h-1.5 w-1.5 rounded-full ${state === "live" ? "animate-pulse bg-alert" : "bg-paper/50"}`} />
+          <span className={`h-1.5 w-1.5 rounded-none ${state === "live" ? "animate-pulse bg-alert" : "bg-paper/50"}`} />
           {status}
         </span>
         <button onClick={onToggle} className="px-1 font-mono text-[12px] leading-none text-paper/70 hover:text-paper" title={minimized ? "Expand self-view" : "Minimize self-view"}>{minimized ? "▢" : "—"}</button>
@@ -649,7 +649,7 @@ function CameraPip({ cam, minimized, onToggle, profileName, notify }: { cam: Ret
           </>
         ) : (
           <div className="flex h-full flex-col items-center justify-center px-3 text-center text-paper">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full border border-paper/40 font-serif text-[13px]">V</span>
+            <span className="flex h-8 w-8 items-center justify-center rounded-none border border-paper/40 font-serif text-[13px]">V</span>
             <p className="mt-2 font-mono text-[9px] uppercase tracking-wider text-paper/80">{state === "denied" ? "Camera blocked" : "No camera"}</p>
             {(state === "denied" || state === "unavailable") && <button onClick={cam.retry} className="mt-2 border border-paper/40 px-2 py-1 font-mono text-[8px] uppercase tracking-wider text-paper/90 hover:bg-paper/10">Enable camera</button>}
           </div>
@@ -1034,7 +1034,7 @@ function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manu
       </div>
       <div className={`mt-3 flex items-center gap-1.5 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${done ? "border-success/40 bg-success/5 text-success" : "border-amber/40 bg-amber/5 text-amber"}`}>{done ? <><FiCheck /> Ready to record</> : `${manualCount - gradedManual} answer(s) still need a score`}</div>
       <div className="mt-4 grid gap-2">
-        {hasNext && <button onClick={onFinishNext} className="border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save &amp; next → {nextName}</button>}
+        {hasNext && <button onClick={onFinishNext} className="border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save &amp; next / {nextName}</button>}
         <button onClick={onFinish} className="border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5">{hasNext ? "Save & close" : "Save & finish"}</button>
         <button onClick={onDelegate} className="border border-line-strong px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Delegate for cross-check</button>
         <button onClick={onFlagModeration} className="border border-alert/50 text-alert bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10">Flag for Moderation</button>

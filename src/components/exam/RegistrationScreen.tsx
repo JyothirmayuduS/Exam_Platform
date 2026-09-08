@@ -49,22 +49,22 @@ export default function RegistrationScreen({
       <div className="mx-auto w-full max-w-4xl">
         <div className="border border-line bg-paper shadow-sm">
           {/* Header */}
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-paper-raised px-6 py-4 md:px-8">
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-raised px-6 py-4 md:px-8">
             <div className="flex items-center gap-3">
               <span className="flex h-9 w-9 items-center justify-center border-2 border-ink font-serif text-[15px] font-bold">V</span>
               <div>
                 <p className="text-[15px] font-semibold leading-tight tracking-wide">Vignan OS</p>
-                <p className="font-mono text-[9px] uppercase tracking-[0.25em] text-ink-soft">CDOE · Exam Platform</p>
+                <p className="font-mono text-[9px] uppercase tracking-[0.25em] text-soft">CDOE · Exam Platform</p>
               </div>
             </div>
-            <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Step 2 · Registration</span>
+            <span className="font-mono text-[10px] uppercase tracking-wider text-soft">Step 2 · Registration</span>
           </header>
 
           <div className="flex flex-col md:flex-row">
             {/* Left rail */}
             <div className="flex flex-col justify-between border-b border-line p-6 md:w-[42%] md:border-b-0 md:border-r md:p-8">
               <div>
-                <p className="text-[13px] text-ink-soft">Hi {studentName || "Candidate"},</p>
+                <p className="text-[13px] text-soft">Hi {studentName || "Candidate"},</p>
                 <p className="mt-4 text-[15px]">Welcome to</p>
                 <h1 className="mt-1 font-serif text-2xl font-semibold leading-tight md:text-3xl">{examName || "Your exam"}</h1>
                 <div className="mt-5 border-t border-line" />
@@ -81,7 +81,7 @@ export default function RegistrationScreen({
             <div className="flex-1 px-6 py-7 md:px-8 md:py-8">
               <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Pre-exam · Step 2 of 3</p>
               <h2 className="mt-1 font-serif text-2xl font-semibold">Confirm your details</h2>
-              <p className="mt-2 text-[12.5px] leading-relaxed text-ink-soft">
+              <p className="mt-2 text-[12.5px] leading-relaxed text-soft">
                 These details identify your answer paper. Fields marked with <span className="font-semibold text-ink">*</span> are required.
               </p>
 
@@ -94,7 +94,7 @@ export default function RegistrationScreen({
                 <Field label="University Seat Number (USN)" required value={form.usn} onChange={(v) => set("usn", v)} placeholder="Enter USN" mono />
               </div>
 
-              <label className="mt-6 flex cursor-pointer items-start gap-3 border border-line bg-paper-raised p-4 text-[12.5px] leading-relaxed">
+              <label className="mt-6 flex cursor-pointer items-start gap-3 border border-line bg-raised p-4 text-[12.5px] leading-relaxed">
                 <input type="checkbox" checked={terms} onChange={(e) => setTerms(e.target.checked)} className="mt-0.5 h-4 w-4 accent-forest" />
                 <span>
                   By continuing you agree to the Terms of Service, the{" "}
@@ -104,24 +104,24 @@ export default function RegistrationScreen({
               </label>
 
               <div className="mt-7 flex items-center justify-between gap-3">
-                <button onClick={onBack} className="border border-line-strong px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-ink hover:text-ink">
+                <button onClick={onBack} className="border border-line px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-soft transition hover:border-ink hover:text-ink">
                   Back
                 </button>
                 <button
                   onClick={() => onDone(form)}
                   disabled={!valid}
-                  className="border border-forest bg-forest px-8 py-3 text-[14px] font-medium text-paper transition hover:bg-forest-light disabled:cursor-not-allowed disabled:border-line-strong disabled:bg-line/40 disabled:text-ink-soft"
+                  className="border border-forest bg-forest px-8 py-3 text-[14px] font-medium text-paper transition hover:bg-forest-soft disabled:cursor-not-allowed disabled:border-line disabled:bg-line/40 disabled:text-soft"
                 >
                   Submit
                 </button>
               </div>
               {!valid && (
-                <p className="mt-3 text-[11.5px] text-ink-soft">Complete the required fields and accept the terms to continue.</p>
+                <p className="mt-3 text-[11.5px] text-soft">Complete the required fields and accept the terms to continue.</p>
               )}
             </div>
           </div>
 
-          <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-line bg-paper-raised px-6 py-2.5 font-mono text-[10px] text-ink-soft">
+          <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-line bg-raised px-6 py-2.5 font-mono text-[10px] text-soft">
             <span>Vignan OS · Secure Examination Platform</span>
             <span>Identity verified · Monitored assessment</span>
           </footer>
@@ -147,7 +147,7 @@ export function Steps({ current }: { current: number }) {
                 ? "border-forest bg-forest text-paper"
                 : i === current
                   ? "border-forest text-forest"
-                  : "border-line-strong text-ink-soft"
+                  : "border-line text-soft"
             }`}
           >
             {s.done ? (
@@ -156,7 +156,7 @@ export function Steps({ current }: { current: number }) {
               i + 1
             )}
           </span>
-          <span className={`text-[11px] ${s.done || i === current ? "font-medium text-ink" : "text-ink-soft"}`}>{s.label}</span>
+          <span className={`text-[11px] ${s.done || i === current ? "font-medium text-ink" : "text-soft"}`}>{s.label}</span>
           {i < items.length - 1 && <span className="ml-1 h-3 w-px bg-line" />}
         </div>
       ))}
@@ -167,7 +167,7 @@ export function Steps({ current }: { current: number }) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">{label}</p>
+      <p className="font-mono text-[9px] uppercase tracking-wider text-soft">{label}</p>
       <p className="mt-1 font-serif text-[15px] font-semibold leading-tight">{value}</p>
     </div>
   );
@@ -202,7 +202,7 @@ function Field({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-soft/50 focus:border-forest ${mono ? "font-mono uppercase" : ""}`}
+        className={`mt-1 block w-full border border-line bg-paper px-3 py-2.5 text-[13px] text-ink outline-none transition-colors placeholder:text-soft/50 focus:border-forest ${mono ? "font-mono uppercase" : ""}`}
       />
       {error && <span className="mt-0.5 block text-[11px] text-alert">{error}</span>}
     </label>

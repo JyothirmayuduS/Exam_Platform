@@ -43,7 +43,7 @@ export default function InvigilatorVoice({
 
   return (
     <div className="flex items-center gap-2 border border-amber/60 bg-amber/10 px-3 py-2">
-      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber" />
+      <span className="h-1.5 w-1.5 animate-pulse rounded-none bg-amber" />
       <span className="font-mono text-[9px] uppercase tracking-widest text-amber">Invigilator speaking</span>
       <span className="text-[11px] text-ink-soft">— listen carefully</span>
     </div>

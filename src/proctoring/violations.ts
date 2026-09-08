@@ -16,6 +16,7 @@ export function severityFor(category: ProctorCategory): ProctorSeverity {
     case "multiple_faces": return "critical";
     case "possible_phone_use":
     case "phone_detected":
+    case "earbuds_detected":
     case "no_face":
     case "audio_detected":
       return "high";

@@ -71,7 +71,7 @@ export default function StudentExams() {
       if (!active) return;
       setLive(true);
       setLoading(false);
-      // null = query failed → keep last-known rows; only a real result replaces.
+      // null = query failed / keep last-known rows; only a real result replaces.
       if (data) {
         setRows(data.map(e => {
           const row = toRow(e);
@@ -134,10 +134,10 @@ export default function StudentExams() {
                 }}
                 className="border border-maroon bg-maroon px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-maroon/90"
               >
-                Enter exam →
+                Enter exam /
               </button>
             ) : r.status === "completed" ? (
-              <Link to="/student/results" className="border border-line-strong px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">View result →</Link>
+              <Link to="/student/results" className="border border-line-strong px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">View result /</Link>
             ) : (
               <span className="border border-line px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-ink-soft">Scheduled</span>
             )}
@@ -173,7 +173,7 @@ export default function StudentExams() {
                 href={`/student/exam?examId=${encodeURIComponent(rows.find(x => x.name === enterModal)?.id || "")}`}
                 className="flex-1 border border-maroon bg-maroon py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon/90"
               >
-                Install Lockdown Browser →
+                Install Lockdown Browser /
               </a>
               <button
                 onClick={() => setEnterModal(null)}

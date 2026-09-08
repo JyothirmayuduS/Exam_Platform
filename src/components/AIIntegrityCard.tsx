@@ -151,7 +151,7 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
         <button
           onClick={() => void load(true)}
           disabled={loading}
-          className="font-mono text-[9px] uppercase tracking-wider text-ink-soft underline-offset-2 hover:text-forest hover:underline disabled:opacity-40"
+          className="font-mono text-[9px] uppercase tracking-wider text-soft underline-offset-2 hover:text-forest hover:underline disabled:opacity-40"
         >
           {loading ? "Analysing…" : report ? "Regenerate" : "Generate"}
         </button>
@@ -159,14 +159,14 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
 
       <div className="px-4 py-3">
         {loading && (
-          <p className="flex items-center gap-2 text-[12px] text-ink-soft">
-            <span className="h-3 w-3 animate-spin rounded-full border border-forest border-t-transparent" />
+          <p className="flex items-center gap-2 text-[12px] text-soft">
+            <span className="h-3 w-3 animate-spin rounded-none border border-forest border-t-transparent" />
             Summarising the violation timeline…
           </p>
         )}
 
         {!loading && state === "unconfigured" && (
-          <p className="text-[12px] leading-relaxed text-ink-soft">
+          <p className="text-[12px] leading-relaxed text-soft">
             AI integrity report is not configured on this deployment. Deploy it and set the{" "}
             <code className="font-mono text-[11px] text-ink">LLM_API_KEY</code> secret on the{" "}
             <code className="font-mono text-[11px] text-ink">proctor-ai-report</code> function (see SETUP.md §4b).
@@ -175,7 +175,7 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
         {!loading && state === "notdeployed" && (
           <p className="text-[12px] leading-relaxed text-alert">
             <span className="font-medium">Report unavailable:</span> {errorMsg}
-            <span className="mt-1 block text-ink-soft">Deploy it once with <code className="font-mono text-[11px]">supabase functions deploy proctor-ai-report</code> (see SETUP.md §4b).</span>
+            <span className="mt-1 block text-soft">Deploy it once with <code className="font-mono text-[11px]">supabase functions deploy proctor-ai-report</code> (see SETUP.md §4b).</span>
           </p>
         )}
         {!loading && state === "error" && (
@@ -187,7 +187,7 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
             <div className="flex items-end gap-6">
               <div>
                 <p className={`font-serif text-[40px] leading-none ${meta.tone}`}>{report.risk_score ?? 0}</p>
-                <p className="mt-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft">Risk score / 100</p>
+                <p className="mt-1 font-mono text-[9px] uppercase tracking-wider text-soft">Risk score / 100</p>
               </div>
               {report.summary?.summary && (
                 <p className="max-w-md flex-1 text-[12px] leading-relaxed text-ink">{report.summary.summary}</p>
@@ -196,17 +196,17 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
 
             {incidents.length > 0 && (
               <div>
-                <p className="mb-1.5 font-mono text-[9px] uppercase tracking-widest text-ink-soft">
+                <p className="mb-1.5 font-mono text-[9px] uppercase tracking-widest text-soft">
                   Key incidents ({incidents.length})
                 </p>
                 <ul className="space-y-1">
                   {incidents.slice(0, 8).map((inc, i) => (
                     <li key={i} className="flex items-start justify-between gap-3 border border-line/60 px-2.5 py-1.5">
                       <span className="min-w-0 text-[11px] text-ink">
-                        <span className="text-ink-soft">{String(inc.type ?? "event").toUpperCase()}</span>
-                        {inc.note ? <span className="text-ink-soft"> — {inc.note}</span> : null}
+                        <span className="text-soft">{String(inc.type ?? "event").toUpperCase()}</span>
+                        {inc.note ? <span className="text-soft"> — {inc.note}</span> : null}
                       </span>
-                      <span className="shrink-0 font-mono text-[9px] text-ink-soft">
+                      <span className="shrink-0 font-mono text-[9px] text-soft">
                         {inc.at ? String(inc.at).slice(11, 19) : ""} · {String(inc.severity ?? "medium").toLowerCase()}
                       </span>
                     </li>
@@ -215,7 +215,7 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
               </div>
             )}
             {incidents.length === 0 && report.risk_score === 0 && (
-              <p className="text-[12px] text-ink-soft">No integrity incidents in the violation timeline.</p>
+              <p className="text-[12px] text-soft">No integrity incidents in the violation timeline.</p>
             )}
           </div>
         )}

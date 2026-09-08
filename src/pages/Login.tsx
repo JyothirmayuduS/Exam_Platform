@@ -203,7 +203,7 @@ export default function Login() {
               className="mt-4 flex w-full items-center justify-center gap-2 bg-ink py-3.5 text-sm font-medium text-paper transition-colors hover:bg-ink/90 disabled:opacity-50"
             >
               {loading ? (
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-paper border-t-transparent inline-block" />
+                <span className="h-4 w-4 animate-spin rounded-none border-2 border-paper border-t-transparent inline-block" />
               ) : (
                 `Access ${mode.charAt(0).toUpperCase() + mode.slice(1)} Console`
               )}

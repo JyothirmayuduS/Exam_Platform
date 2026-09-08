@@ -142,7 +142,7 @@ export default function SystemCheckPage() {
           }}
           className="mt-4 border border-success bg-success/10 px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-success hover:bg-success hover:text-paper transition-colors"
         >
-          All Good → Return to Exam
+          All Good / Return to Exam
         </button>
       )}
     </section>

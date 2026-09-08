@@ -1,0 +1,7 @@
+path: /Users/s.jyothirmayudu/Downloads/exam-platform/training/datasets/exam_proctor
+train: images/train
+val: images/val
+names:
+  0: phone
+  1: earbuds
+nc: 2

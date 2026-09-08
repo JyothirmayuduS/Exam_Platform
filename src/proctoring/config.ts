@@ -9,11 +9,11 @@ import type { ProctorCategory } from "./types";
 
 // ── Detection cadence ────────────────────────────────────────────────────────
 // The heavy models NEVER run at camera fps. Cadence:
-//   camera frames      → rAF (gaze/face read the same <video>)
-//   face landmark/gaze → GAZE_MS
-//   face detector      → FACE_MS
-//   object detector    → OBJECT_MS (heaviest model — slowest cadence)
-//   audio RMS          → AUDIO_MS
+//   camera frames      / rAF (gaze/face read the same <video>)
+//   face landmark/gaze / GAZE_MS
+//   face detector      / FACE_MS
+//   object detector    / OBJECT_MS (heaviest model — slowest cadence)
+//   audio RMS          / AUDIO_MS
 export const CADENCE = {
   GAZE_MS: 250,     // head-pose / gaze estimation
   FACE_MS: 500,     // face count
@@ -55,8 +55,14 @@ export const FACE = {
 // ── Object detection thresholds ──────────────────────────────────────────────
 export const OBJECT = {
   SCORE_THRESHOLD: 0.15, // passed to the model (keep low — gating happens here)
-  MAX_RESULTS: 6,
-  PHONE_MIN_CONF: 0.28,
+  MAX_RESULTS: 10,
+  // Dropped from 0.28 / 0.22: real-world tests showed phones held at arm's
+  // length or half-hidden behind a hand top out at 22–30% confidence, which
+  // the old gate silently discarded. The temporal confirmation (MIN_HITS
+  // inside CONFIRM_WINDOW_MS) still filters one-frame flukes, so a lower
+  // per-sample gate is safe.
+  PHONE_MIN_CONF: 0.22,
+  EARBUDS_MIN_CONF: 0.25,
   LAPTOP_MIN_CONF: 0.40,
   // MediaPipe object detector only sees a phone when it's big enough in the
   // frame. Small phones slip through — candidates keep track of the lower
@@ -103,6 +109,7 @@ export const COOLDOWN_MS: Record<ProctorCategory, number> = {
   gaze_away:      10_000,
   possible_phone_use: 12_000,
   phone_detected: 10_000,
+  earbuds_detected: 15_000,
   laptop_detected: 10_000,
   audio_detected:  8_000,
 };
@@ -118,6 +125,7 @@ export const RISK = {
     gaze_away:         8,
     possible_phone_use: 55,
     phone_detected:   35,
+    earbuds_detected: 40,
     laptop_detected:  15,
     audio_detected:   12,
   } as Record<ProctorCategory, number>,

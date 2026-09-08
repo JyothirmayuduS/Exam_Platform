@@ -77,7 +77,7 @@ export default function StudentExamDetail() {
           </p>
           {exam?.resources_url && (
             <a href={exam.resources_url} className="mt-4 inline-block border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">
-              Download resources (PDF) →
+              Download resources (PDF) /
             </a>
           )}
         </div>
@@ -104,7 +104,7 @@ export default function StudentExamDetail() {
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Practice</p>
           <p className="mt-3 text-[13px] text-ink-soft">Try sample questions before starting the real exam.</p>
           <Link to={`/student/exams/${examId}/practice`} className="mt-4 inline-block border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">
-            Open practice mode →
+            Open practice mode /
           </Link>
 
           {startVisible && (

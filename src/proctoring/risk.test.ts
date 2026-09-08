@@ -8,12 +8,12 @@ describe("RiskEngine", () => {
     expect(r.state.score).toBe(35);
     expect(r.state.level).toBe("low");
 
-    r.add("multiple_faces"); // +50 → 85
+    r.add("multiple_faces"); // +50 / 85
     expect(r.state.score).toBe(85);
     expect(r.state.level).toBe("critical");
 
-    r.add("gaze_away"); // +8 → 93
-    r.add("possible_phone_use"); // would be 148 → clamped 100
+    r.add("gaze_away"); // +8 / 93
+    r.add("possible_phone_use"); // would be 148 / clamped 100
     expect(r.state.score).toBe(100);
   });
 
@@ -21,7 +21,7 @@ describe("RiskEngine", () => {
     const r = new RiskEngine();
     const now = 1_000_000;
     r.add("phone_detected", now);
-    r.add("phone_detected", now + 5_000); // same incident → no extra points
+    r.add("phone_detected", now + 5_000); // same incident / no extra points
     expect(r.state.score).toBe(35);
   });
 
@@ -31,7 +31,7 @@ describe("RiskEngine", () => {
     r.add("no_face", now); // +20
     expect(r.state.score).toBe(20);
 
-    // ~3 minutes later (one full decay constant) → ~7 points.
+    // ~3 minutes later (one full decay constant) / ~7 points.
     r.advance(now + 180_000);
     expect(r.state.score).toBeLessThan(20);
     expect(r.state.score).toBeGreaterThan(5);

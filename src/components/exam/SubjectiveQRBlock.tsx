@@ -39,6 +39,7 @@ export default function SubjectiveQRBlock({
   questionId,
   questionIndex,
   studentId,
+  studentName,
   examName,
   onAnswerUploaded,
 }: Props) {
@@ -180,13 +181,17 @@ export default function SubjectiveQRBlock({
     qId: String(questionIndex || questionId),
     student: studentId || "",
     examName: examName || "",
+    // Display-only name so the phone page can show WHO is uploading without a
+    // DB round trip. It is not an auth credential — the edge function resolves
+    // the authoritative identity from the session's student_id.
+    studentName: studentName || "",
   });
   const uploadUrl = token ? `${base}/mobile-upload/${token}?${queryParams.toString()}` : "";
 
   return (
-    <div className="mt-4 border border-dashed border-line-strong bg-paper p-5">
+    <div className="mt-4 border border-dashed border-line bg-paper p-5">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-soft">
           Subjective answer — {showUploader ? "upload from desktop" : "scan to upload from phone"}
         </p>
         <button
@@ -202,8 +207,8 @@ export default function SubjectiveQRBlock({
           <p className="font-mono text-[10px] uppercase tracking-wider text-amber font-bold mb-1">
             ℹ Local dev mode
           </p>
-          <p className="text-ink-soft">
-            The QR code points to <code className="bg-paper-raised px-1 font-mono text-[11px]">{base}</code>. Both devices <strong>MUST be on the same Wi-Fi network</strong>.
+          <p className="text-soft">
+            The QR code points to <code className="bg-raised px-1 font-mono text-[11px]">{base}</code>. Both devices <strong>MUST be on the same Wi-Fi network</strong>.
           </p>
         </div>
       )}
@@ -216,7 +221,7 @@ export default function SubjectiveQRBlock({
             <FiAlertTriangle className="text-amber" aria-hidden /> Upload session could not be created
           </p>
           <p className="mt-1 text-ink">{sessionError}</p>
-          <p className="mt-1 text-[11px] text-ink-soft">
+          <p className="mt-1 text-[11px] text-soft">
             The QR code is disabled until this is fixed — scanning it would just fail with
             “Invalid or expired token”. You can still use “Upload from Desktop” below, or retry
             creating the session.
@@ -238,14 +243,14 @@ export default function SubjectiveQRBlock({
         </div>
       ) : showUploader ? (
         <div className="space-y-3">
-          <p className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-soft">
             Upload a photo of your handwritten answer directly from this device
           </p>
           <label className="flex cursor-pointer items-center gap-3 border border-forest/40 bg-forest/5 px-4 py-3 hover:bg-forest/10">
             <span className="text-xl text-forest"><FiCamera aria-hidden /></span>
             <div>
               <p className="font-mono text-[11px] uppercase tracking-wider text-forest font-bold">Choose image file</p>
-              <p className="font-mono text-[10px] text-ink-soft">JPG, PNG, HEIC — max 10 MB</p>
+              <p className="font-mono text-[10px] text-soft">JPG, PNG, HEIC — max 10 MB</p>
             </div>
             <input
               type="file"
@@ -259,7 +264,7 @@ export default function SubjectiveQRBlock({
               <div className="h-1.5 w-full overflow-hidden rounded bg-line">
                 <div className="h-full bg-forest transition-all" style={{ width: `${uploadProgress}%` }} />
               </div>
-              <p className="font-mono text-[10px] text-ink-soft">Uploading… {uploadProgress}%</p>
+              <p className="font-mono text-[10px] text-soft">Uploading… {uploadProgress}%</p>
             </div>
           )}
           {uploadError && <p className="flex items-center gap-1.5 text-[12px] text-alert"><FiAlertTriangle aria-hidden /> {uploadError}</p>}
@@ -277,8 +282,8 @@ export default function SubjectiveQRBlock({
                 includeMargin={false}
               />
             ) : (
-              <div className="w-[180px] h-[180px] bg-paper-raised animate-pulse flex items-center justify-center">
-                <span className="font-mono text-[10px] text-ink-soft uppercase tracking-widest text-center px-4">Generating Secure QR...</span>
+              <div className="w-[180px] h-[180px] bg-raised animate-pulse flex items-center justify-center">
+                <span className="font-mono text-[10px] text-soft uppercase tracking-widest text-center px-4">Generating Secure QR...</span>
               </div>
             )}
           </div>

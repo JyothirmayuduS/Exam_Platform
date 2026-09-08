@@ -13,3 +13,5 @@ src-tauri/gen/
 # Committed build/test artifacts
 playwright-report/
 test-results/
+.env.local
+.env

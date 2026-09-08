@@ -52,7 +52,7 @@ const TYPE_LABEL: Record<string, string> = {
   Subjective: "Descriptive", Coding: "Coding", LONG_ANSV: "Descriptive",
 };
 
-const inputCls = "border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none placeholder:text-ink-soft/60 focus:border-forest";
+const inputCls = "border border-line bg-paper px-3 py-2.5 text-[13px] text-ink outline-none placeholder:text-soft/60 focus:border-forest";
 
 export default function ExamStudio({
   examId, notify, navigate, onSaved,
@@ -182,8 +182,8 @@ export default function ExamStudio({
     else notify("Could not save options — database unavailable");
   };
 
-  if (loading) return <div className="p-14 text-center font-mono text-[11px] uppercase tracking-widest text-ink-soft">Loading paper builder…</div>;
-  if (!exam) return <div className="border border-dashed border-line-strong p-14 text-center"><p className="font-serif text-xl">Test not found</p><p className="mt-2 text-[13px] text-ink-soft">It may have been deleted.</p></div>;
+  if (loading) return <div className="p-14 text-center font-mono text-[11px] uppercase tracking-widest text-soft">Loading paper builder…</div>;
+  if (!exam) return <div className="border border-dashed border-line p-14 text-center"><p className="font-serif text-xl">Test not found</p><p className="mt-2 text-[13px] text-soft">It may have been deleted.</p></div>;
 
   return (
     <div>
@@ -192,11 +192,11 @@ export default function ExamStudio({
         <div>
           <Button size="sm" variant="ghost" icon={<FiArrowLeft />} onClick={() => navigate(`/teacher/exams/${examId}`)}>Back to test</Button>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <span className="border border-line-strong bg-paper-raised px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-ink-soft">{exam.id}</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Test name" className="min-w-0 flex-1 border border-transparent bg-transparent px-1 font-serif text-3xl font-semibold tracking-tight text-ink outline-none transition hover:border-line-strong focus:border-forest sm:min-w-[280px]" />
-            <span className="flex h-8 w-8 items-center justify-center text-ink-soft" aria-hidden><FiEdit3 /></span>
+            <span className="border border-line bg-raised px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-soft">{exam.id}</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Test name" className="min-w-0 flex-1 border border-transparent bg-transparent px-1 font-serif text-3xl font-semibold tracking-tight text-ink outline-none transition hover:border-line focus:border-forest sm:min-w-[280px]" />
+            <span className="flex h-8 w-8 items-center justify-center text-soft" aria-hidden><FiEdit3 /></span>
           </div>
-          <p className="mt-1 text-[12px] text-ink-soft">{exam.batch} · {String(s.language ?? "English")} · {String(s.purpose ?? "")} · <span className={exam.status === "draft" ? "text-amber" : "text-success"}>{exam.status}</span></p>
+          <p className="mt-1 text-[12px] text-soft">{exam.batch} · {String(s.language ?? "English")} · {String(s.purpose ?? "")} · <span className={exam.status === "draft" ? "text-amber" : "text-success"}>{exam.status}</span></p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="lg" onClick={() => void saveAndExit()} disabled={saving} icon={<FiCheck />}>{saving ? "Saving…" : "Save & exit"}</Button>
@@ -208,20 +208,20 @@ export default function ExamStudio({
       <div className="mt-6 border border-line bg-paper p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
           <div className="min-w-0 flex-1">
-            <p className="text-[12px] text-ink-soft">Search and add question to test</p>
+            <p className="text-[12px] text-soft">Search and add question to test</p>
             <div className="relative mt-1">
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Type a question, ID, unit or the test it came from…" className={`block w-full ${inputCls}`} />
               {search.trim() !== "" && (
-                <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto border border-line-strong bg-paper shadow-xl">
-                  {matches.length === 0 && <p className="px-4 py-3 text-[12px] text-ink-soft">No matching questions in your bank.</p>}
+                <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto border border-line bg-paper shadow-xl">
+                  {matches.length === 0 && <p className="px-4 py-3 text-[12px] text-soft">No matching questions in your bank.</p>}
                   {matches.map((q) => (
-                    <button key={q.id} onClick={() => { addToPool(q.id); setSearch(""); }} className="flex w-full items-start justify-between gap-4 border-b border-line px-4 py-3 text-left transition last:border-0 hover:bg-paper-raised">
+                    <button key={q.id} onClick={() => { addToPool(q.id); setSearch(""); }} className="flex w-full items-start justify-between gap-4 border-b border-line px-4 py-3 text-left transition last:border-0 hover:bg-raised">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-[10px] text-ink-soft">{q.id}</span>
-                          <span className="bg-paper-raised px-1.5 py-0.5 font-mono text-[9px] text-ink-soft">{q.type}</span>
+                          <span className="font-mono text-[10px] text-soft">{q.id}</span>
+                          <span className="bg-raised px-1.5 py-0.5 font-mono text-[9px] text-soft">{q.type}</span>
                           <span className={`px-1.5 py-0.5 font-mono text-[9px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>{q.difficulty ?? "Medium"}</span>
-                          {q.exam_name && <span className="font-mono text-[9px] text-ink-soft">from {q.exam_name}</span>}
+                          {q.exam_name && <span className="font-mono text-[9px] text-soft">from {q.exam_name}</span>}
                         </div>
                         <p className="mt-1.5 truncate text-[13px]">{q.title}</p>
                       </div>
@@ -232,10 +232,10 @@ export default function ExamStudio({
               )}
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="border border-line-strong bg-paper px-2.5 py-1.5 text-[12px] outline-none focus:border-forest">
+              <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="border border-line bg-paper px-2.5 py-1.5 text-[12px] outline-none focus:border-forest">
                 <option>All</option><option>MCQ</option><option>MSQ</option><option>Numerical</option><option>True / False</option><option>Subjective</option><option>Coding</option>
               </select>
-              <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="border border-line-strong bg-paper px-2.5 py-1.5 text-[12px] outline-none focus:border-forest">
+              <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="border border-line bg-paper px-2.5 py-1.5 text-[12px] outline-none focus:border-forest">
                 <option>All</option><option>Easy</option><option>Medium</option><option>Hard</option>
               </select>
               <Button size="sm" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Write new question</Button>
@@ -243,7 +243,7 @@ export default function ExamStudio({
             </div>
           </div>
           <div className="flex flex-wrap items-end gap-3">
-            <label className="block text-[12px] text-ink-soft">
+            <label className="block text-[12px] text-soft">
               <span className="font-medium text-ink">Test duration (min)</span>
               <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Test duration in minutes" className={`mt-1 block w-28 ${inputCls}`} />
             </label>
@@ -253,15 +253,15 @@ export default function ExamStudio({
               {menuOpen && (
                 <>
                   <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
-                  <div className="absolute right-0 top-full z-30 mt-1 w-72 border border-line-strong bg-paper py-2 shadow-xl">
+                  <div className="absolute right-0 top-full z-30 mt-1 w-72 border border-line bg-paper py-2 shadow-xl">
                     {([
                       ["test", "Test Options", "Duration, mode, marking, results & calculator"],
                       ["sections", "Section Options", "Random draw, shuffle, section order & timing"],
                       ["registration", "Candidate Registration Fields", "What candidates fill in before the test"],
                     ] as const).map(([key, label, detail]) => (
-                      <button key={key} onClick={() => { setMenuOpen(false); setDialog(key); }} className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-paper-raised">
-                        <span><span className="block text-[13px] font-medium">{label}</span><span className="mt-0.5 block text-[11px] leading-snug text-ink-soft">{detail}</span></span>
-                        <FiChevronRight className="shrink-0 text-ink-soft" aria-hidden />
+                      <button key={key} onClick={() => { setMenuOpen(false); setDialog(key); }} className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-raised">
+                        <span><span className="block text-[13px] font-medium">{label}</span><span className="mt-0.5 block text-[11px] leading-snug text-soft">{detail}</span></span>
+                        <FiChevronRight className="shrink-0 text-soft" aria-hidden />
                       </button>
                     ))}
                   </div>
@@ -284,7 +284,7 @@ export default function ExamStudio({
       <div className="mt-6 overflow-x-auto border border-line bg-paper">
         <table className="w-full min-w-[820px] text-left text-[13px]">
           <thead>
-            <tr className="border-b border-line bg-paper-raised font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+            <tr className="border-b border-line bg-raised font-mono text-[10px] uppercase tracking-wider text-soft">
               <th className="px-4 py-3">Section</th>
               <th className="px-4 py-3">Question</th>
               <th className="px-4 py-3">Skill / Unit</th>
@@ -297,20 +297,20 @@ export default function ExamStudio({
           </thead>
           <tbody>
             {questions.map((q) => (
-              <tr key={q.id} className="group border-b border-line last:border-0 hover:bg-paper-raised/60">
+              <tr key={q.id} className="group border-b border-line last:border-0 hover:bg-raised/60">
                 <td className="px-4 py-3">
                   <span className="bg-forest/10 px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-forest">{TYPE_LABEL[q.type] ?? q.type}</span>
                 </td>
                 <td className="max-w-[380px] px-4 py-3">
-                  <span className="font-mono text-[10px] text-ink-soft">{q.id}</span>
+                  <span className="font-mono text-[10px] text-soft">{q.id}</span>
                   <p className="mt-0.5 truncate">{q.title}</p>
                 </td>
-                <td className="px-4 py-3 text-ink-soft">{q.unit || "General"}</td>
-                <td className="px-4 py-3 font-mono text-[10px] uppercase text-ink-soft">Self</td>
+                <td className="px-4 py-3 text-soft">{q.unit || "General"}</td>
+                <td className="px-4 py-3 font-mono text-[10px] uppercase text-soft">Self</td>
                 <td className="px-4 py-3">
                   <span className={`font-mono text-[10px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>{q.difficulty ?? "Medium"}</span>
                 </td>
-                <td className="px-4 py-3 font-mono text-[10px] text-ink-soft">{q.type}</td>
+                <td className="px-4 py-3 font-mono text-[10px] text-soft">{q.type}</td>
                 <td className="px-4 py-3 text-right">{q.marks || 1}</td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex items-center justify-end gap-2 opacity-0 transition group-hover:opacity-100">
@@ -323,13 +323,13 @@ export default function ExamStudio({
             {questions.length === 0 && (
               <tr><td colSpan={8} className="px-4 py-14 text-center">
                 <p className="font-serif text-xl">Your paper is empty</p>
-                <p className="mt-2 text-[12px] text-ink-soft">Search your question bank above, write a new question, or import a CSV. Section rows appear here as you add them.</p>
+                <p className="mt-2 text-[12px] text-soft">Search your question bank above, write a new question, or import a CSV. Section rows appear here as you add them.</p>
               </td></tr>
             )}
           </tbody>
         </table>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-paper-raised px-4 py-3">
-          <p className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">Tip: rows are grouped by section — questions of the same type form one section for candidates.</p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-raised px-4 py-3">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-soft">Tip: rows are grouped by section — questions of the same type form one section for candidates.</p>
           <div className="flex flex-wrap gap-2">
             {["Easy", "Medium", "Hard"].map((d) => {
               const n = questions.filter((q) => (q.difficulty || "Medium") === d).length;
@@ -373,24 +373,24 @@ export default function ExamStudio({
       )}
       {result && (
         <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-ink/50 p-4 backdrop-blur-sm sm:items-center">
-          <div className="w-full max-w-xl border border-line-strong bg-paper shadow-2xl">
+          <div className="w-full max-w-xl border border-line bg-paper shadow-2xl">
             <div className={`px-8 py-10 text-center ${result.status === "draft" ? "" : "bg-success/5"}`}>
-              <span className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full text-paper ${result.status === "scheduled" ? "bg-amber" : "bg-success"}`}>{result.status === "scheduled" ? <FiClock size={24} /> : <FiCheck size={24} />}</span>
+              <span className={`mx-auto flex h-14 w-14 items-center justify-center rounded-none text-paper ${result.status === "scheduled" ? "bg-amber" : "bg-success"}`}>{result.status === "scheduled" ? <FiClock size={24} /> : <FiCheck size={24} />}</span>
               <h2 className="mt-4 font-serif text-3xl font-semibold">{result.status === "scheduled" ? "Test scheduled" : result.status === "draft" ? "Draft saved" : "Test published"}</h2>
-              <p className="mt-2 text-[13px] text-ink-soft">{result.status === "scheduled" ? `${name} opens on ${result.when}.` : result.status === "draft" ? `Draft of ${name} saved.` : `${name} is live now for ${exam.batch}.`}</p>
+              <p className="mt-2 text-[13px] text-soft">{result.status === "scheduled" ? `${name} opens on ${result.when}.` : result.status === "draft" ? `Draft of ${name} saved.` : `${name} is live now for ${exam.batch}.`}</p>
             </div>
             <div className="border-t border-line px-6 py-5">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Candidate join link</p>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Candidate join link</p>
               <div className="mt-2 flex flex-col gap-3 sm:flex-row">
-                <code className="min-w-0 flex-1 truncate border border-line bg-paper-raised px-3 py-3 font-mono text-[12px]">{result.link}</code>
-                <button onClick={() => { navigator.clipboard?.writeText(result.link).catch(() => undefined); notify("Join link copied"); }} className="border border-forest bg-forest px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Copy link</button>
+                <code className="min-w-0 flex-1 truncate border border-line bg-raised px-3 py-3 font-mono text-[12px]">{result.link}</code>
+                <button onClick={() => { navigator.clipboard?.writeText(result.link).catch(() => undefined); notify("Join link copied"); }} className="border border-forest bg-forest px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-soft">Copy link</button>
               </div>
               {typeof result.notified === "number" && result.notified > 0 && <p className="mt-3 border border-forest bg-success/5 px-4 py-3 text-[12px]">Join link emailed to {result.notified} students.</p>}
-              {typeof result.notified === "number" && result.notified === 0 && <p className="mt-3 border border-line bg-paper-raised px-4 py-3 text-[12px] text-ink-soft">No email sent — share the join link above.</p>}
+              {typeof result.notified === "number" && result.notified === 0 && <p className="mt-3 border border-line bg-raised px-4 py-3 text-[12px] text-soft">No email sent — share the join link above.</p>}
             </div>
             <div className="flex justify-end gap-2 border-t border-line px-6 py-5">
-              <button onClick={() => { setResult(null); navigate(`/teacher/exams/${examId}`); }} className="border border-line-strong px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-forest">Done — test overview</button>
-              <button onClick={() => setResult(null)} className="border border-forest bg-forest px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-paper transition hover:bg-forest-light">Keep building</button>
+              <button onClick={() => { setResult(null); navigate(`/teacher/exams/${examId}`); }} className="border border-line px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-soft transition hover:border-forest hover:text-forest">Done — test overview</button>
+              <button onClick={() => setResult(null)} className="border border-forest bg-forest px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-paper transition hover:bg-forest-soft">Keep building</button>
             </div>
           </div>
         </div>
@@ -400,11 +400,11 @@ export default function ExamStudio({
 }
 
 function Metric({ value, label, detail, tone = "text-ink" }: { value: string; label: string; detail: string; tone?: string }) {
-  return <div className="bg-paper px-5 py-4"><p className={`font-serif text-3xl ${tone}`}>{value}</p><p className="mt-1 text-[12px] font-medium">{label}</p><p className="mt-0.5 truncate text-[11px] text-ink-soft">{detail}</p></div>;
+  return <div className="bg-paper px-5 py-4"><p className={`font-serif text-3xl ${tone}`}>{value}</p><p className="mt-1 text-[12px] font-medium">{label}</p><p className="mt-0.5 truncate text-[11px] text-soft">{detail}</p></div>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Settings dialog (Advance options → Test / Section / Registration fields)
+// Settings dialog (Advance options / Test / Section / Registration fields)
 // ─────────────────────────────────────────────────────────────────────────────
 function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onClose, onSave }: {
   dialog: "test" | "sections" | "registration";
@@ -414,13 +414,13 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
 }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-ink/50 p-4 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true">
-      <div className="w-full max-w-xl border border-line-strong bg-paper shadow-2xl">
+      <div className="w-full max-w-xl border border-line bg-paper shadow-2xl">
         <div className="flex items-start justify-between border-b border-line px-6 py-5">
           <div>
             <h2 className="font-serif text-2xl font-semibold">{dialog === "test" ? "Test Options" : dialog === "sections" ? "Section Options" : "Candidate Registration Fields"}</h2>
-            <p className="mt-1 text-[12px] text-ink-soft">for {examName}</p>
+            <p className="mt-1 text-[12px] text-soft">for {examName}</p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="text-xl leading-none text-ink-soft transition hover:text-ink">×</button>
+          <button onClick={onClose} aria-label="Close" className="text-xl leading-none text-soft transition hover:text-ink">×</button>
         </div>
         <div className="max-h-[55vh] space-y-1 overflow-y-auto px-6 py-4">
           {dialog === "test" && (
@@ -428,16 +428,16 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
               <Group label="Exam mode">
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   {(["practice", "lockdown"] as const).map((m) => (
-                    <button key={m} onClick={() => patch("mode", m)} className={`border p-3 text-left ${s.mode === m ? "border-forest bg-success/5" : "border-line hover:border-line-strong"}`}>
+                    <button key={m} onClick={() => patch("mode", m)} className={`border p-3 text-left ${s.mode === m ? "border-forest bg-success/5" : "border-line hover:border-line"}`}>
                       <span className="block text-[13px] font-medium capitalize">{m}</span>
-                      <span className="mt-0.5 block text-[11px] text-ink-soft">{m === "lockdown" ? "Proctored, single attempt" : "Relaxed, retakes allowed"}</span>
+                      <span className="mt-0.5 block text-[11px] text-soft">{m === "lockdown" ? "Proctored, single attempt" : "Relaxed, retakes allowed"}</span>
                     </button>
                   ))}
                 </div>
               </Group>
               <Group label="Duration">
-                <label className="mt-2 block text-[12px] text-ink-soft">Minutes
-                  <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Minutes" className="mt-1 block w-28 border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                <label className="mt-2 block text-[12px] text-soft">Minutes
+                  <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Minutes" className="mt-1 block w-28 border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                 </label>
               </Group>
               <Group label="Test options">
@@ -452,14 +452,14 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
                 <Check label="Show report to test-taker after test finishes" detail="Auto-release the score + answer key once submitted (overrides manual release)." checked={!!s.showReportToTaker} onChange={(v) => patch("showReportToTaker", v)} />
                 <Check label="Make comments mandatory for manual evaluation" detail="Evaluators must leave a comment when grading descriptive answers." checked={!!s.commentsMandatory} onChange={(v) => patch("commentsMandatory", v)} />
                 <Check label="Don't ask for feedback post test completion" checked={!!s.skipFeedback} onChange={(v) => patch("skipFeedback", v)} />
-                <label className="mt-3 block text-[12px] text-ink-soft">Custom watermark text (optional)
-                  <input value={s.watermarkText ?? ""} onChange={(e) => patch("watermarkText", e.target.value)} placeholder="e.g. {registration number} · {name} — do not share" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
-                  <span className="mt-1.5 block text-[11px] leading-snug text-ink-soft">
-                    Placeholders are filled with each candidate's own details and tiled across their exam screen. Supported: <code className="bg-paper-raised px-1">{"{"}name{"}"}</code> <code className="bg-paper-raised px-1">{"{"}registration number{"}"}</code> <code className="bg-paper-raised px-1">{"{"}email{"}"}</code> <code className="bg-paper-raised px-1">{"{"}exam{"}"}</code> <code className="bg-paper-raised px-1">{"{"}date{"}"}</code>. Example: <code className="bg-paper-raised px-1">{"{"}registration number{"}"} {"{"}name{"}"}</code> → <span className="whitespace-nowrap">221FA12345 · Ravi Teja</span>.
+                <label className="mt-3 block text-[12px] text-soft">Custom watermark text (optional)
+                  <input value={s.watermarkText ?? ""} onChange={(e) => patch("watermarkText", e.target.value)} placeholder="e.g. {registration number} · {name} — do not share" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                  <span className="mt-1.5 block text-[11px] leading-snug text-soft">
+                    Placeholders are filled with each candidate's own details and tiled across their exam screen. Supported: <code className="bg-raised px-1">{"{"}name{"}"}</code> <code className="bg-raised px-1">{"{"}registration number{"}"}</code> <code className="bg-raised px-1">{"{"}email{"}"}</code> <code className="bg-raised px-1">{"{"}exam{"}"}</code> <code className="bg-raised px-1">{"{"}date{"}"}</code>. Example: <code className="bg-raised px-1">{"{"}registration number{"}"} {"{"}name{"}"}</code> / <span className="whitespace-nowrap">221FA12345 · Ravi Teja</span>.
                   </span>
                 </label>
-                <label className="mt-3 block text-[12px] text-ink-soft">Redirect test-takers after finish (optional URL)
-                  <input value={s.redirectAfter ?? ""} onChange={(e) => patch("redirectAfter", e.target.value)} placeholder="https://…" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                <label className="mt-3 block text-[12px] text-soft">Redirect test-takers after finish (optional URL)
+                  <input value={s.redirectAfter ?? ""} onChange={(e) => patch("redirectAfter", e.target.value)} placeholder="https://…" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                 </label>
               </Group>
               <Group label="Security & access">
@@ -471,24 +471,24 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
                   onChange={(v) => patch("violationLimitEnabled", v)}
                 />
                 <div className={`mt-3 grid gap-3 sm:grid-cols-2 ${s.violationLimitEnabled ? "" : "pointer-events-none opacity-40"}`} aria-disabled={!s.violationLimitEnabled}>
-                  <label className="block text-[12px] text-ink-soft">Max flags before action
-                    <NumberField value={Number(s.violationLimit) || 3} onChange={(n) => patch("violationLimit", n)} min={1} max={20} fallback={Number(s.violationLimit) || 3} aria-label="Max flags before action" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                  <label className="block text-[12px] text-soft">Max flags before action
+                    <NumberField value={Number(s.violationLimit) || 3} onChange={(n) => patch("violationLimit", n)} min={1} max={20} fallback={Number(s.violationLimit) || 3} aria-label="Max flags before action" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                   </label>
-                  <label className="block text-[12px] text-ink-soft">When threshold is met
-                    <select value={s.violationAction} onChange={(e) => patch("violationAction", e.target.value as S["violationAction"])} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest">
+                  <label className="block text-[12px] text-soft">When threshold is met
+                    <select value={s.violationAction} onChange={(e) => patch("violationAction", e.target.value as S["violationAction"])} className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest">
                       <option value="warn">Warn student only</option><option value="submit">Auto-submit exam</option>
                     </select>
                   </label>
                 </div>
-                {!s.violationLimitEnabled && <p className="mt-2 text-[11px] text-ink-soft">Tick the checkbox above to enable the flag limit — until then proctoring flags are logged but never trigger an action.</p>}
+                {!s.violationLimitEnabled && <p className="mt-2 text-[11px] text-soft">Tick the checkbox above to enable the flag limit — until then proctoring flags are logged but never trigger an action.</p>}
               </Group>
             </>
           )}
 
           {dialog === "sections" && (
             <>
-              <Group label="Question delivery">                  <label className="mt-2 block text-[12px] text-ink-soft">Questions per student
-                  <NumberField value={Number(s.perStudent) || 1} onChange={(n) => patch("perStudent", n)} min={1} max={500} fallback={Number(s.perStudent) || 1} aria-label="Questions per student" className="mt-1 block w-28 border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+              <Group label="Question delivery">                  <label className="mt-2 block text-[12px] text-soft">Questions per student
+                  <NumberField value={Number(s.perStudent) || 1} onChange={(n) => patch("perStudent", n)} min={1} max={500} fallback={Number(s.perStudent) || 1} aria-label="Questions per student" className="mt-1 block w-28 border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                 </label>
                 <Check label="Randomly select questions" detail="Each candidate gets a different set drawn from the pool." checked={!!s.randomSelect} onChange={(v) => patch("randomSelect", v)} />
                 <Check label="Shuffle question order" checked={!!s.shuffleOrder} onChange={(v) => patch("shuffleOrder", v)} />
@@ -504,7 +504,7 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
 
           {dialog === "registration" && (
             <div>
-              <p className="text-[12px] leading-relaxed text-ink-soft">Fields below appear on the registration screen every candidate sees before the test. Fields marked required block the start until filled.</p>
+              <p className="text-[12px] leading-relaxed text-soft">Fields below appear on the registration screen every candidate sees before the test. Fields marked required block the start until filled.</p>
               <div className="mt-4 space-y-1">
                 <Check label="Email Address *" checked={s.regEmail !== false} onChange={(v) => patch("regEmail", v)} />
                 <Check label="First & Last Name *" checked={s.regName !== false} onChange={(v) => patch("regName", v)} />
@@ -517,8 +517,8 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
           )}
         </div>
         <div className="flex justify-end gap-2 border-t border-line px-6 py-5">
-          <button onClick={onClose} className="border border-line-strong px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-ink">Cancel</button>
-          <button onClick={onSave} className="border border-forest bg-forest px-6 py-3 font-mono text-[10px] uppercase tracking-wider text-paper transition hover:bg-forest-light">Save</button>
+          <button onClick={onClose} className="border border-line px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-soft transition hover:border-forest hover:text-ink">Cancel</button>
+          <button onClick={onSave} className="border border-forest bg-forest px-6 py-3 font-mono text-[10px] uppercase tracking-wider text-paper transition hover:bg-forest-soft">Save</button>
         </div>
       </div>
     </div>
@@ -531,7 +531,7 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
 function Check({ label, detail, checked, onChange }: { label: string; detail?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="mt-3 flex cursor-pointer items-start justify-between gap-4 first:mt-0">
-      <span><span className="block text-[13px] font-medium">{label}</span>{detail && <span className="mt-0.5 block text-[11px] leading-snug text-ink-soft">{detail}</span>}</span>
+      <span><span className="block text-[13px] font-medium">{label}</span>{detail && <span className="mt-0.5 block text-[11px] leading-snug text-soft">{detail}</span>}</span>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-forest" />
     </label>
   );
@@ -548,17 +548,17 @@ function PreviewDialog({ exam, sections, questions, duration, perStudent, s, onC
   const shown = showAll ? questions : questions.slice(0, 6);
   return (
     <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-ink/50 p-4 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true">
-      <div className="w-full max-w-2xl border border-line-strong bg-paper shadow-2xl">
+      <div className="w-full max-w-2xl border border-line bg-paper shadow-2xl">
         <div className="flex items-start justify-between border-b border-line px-6 py-5">
-          <div><h2 className="font-serif text-2xl font-semibold">Preview — {exam.name}</h2><p className="mt-1 text-[12px] text-ink-soft">{exam.id} · {sections.length} section{sections.length === 1 ? "" : "s"} · {questions.length} questions · {duration} min</p></div>
-          <button onClick={onClose} aria-label="Close" className="text-xl leading-none text-ink-soft hover:text-ink">×</button>
+          <div><h2 className="font-serif text-2xl font-semibold">Preview — {exam.name}</h2><p className="mt-1 text-[12px] text-soft">{exam.id} · {sections.length} section{sections.length === 1 ? "" : "s"} · {questions.length} questions · {duration} min</p></div>
+          <button onClick={onClose} aria-label="Close" className="text-xl leading-none text-soft hover:text-ink">×</button>
         </div>
         <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
           <div className="grid grid-cols-2 gap-px border border-line bg-line sm:grid-cols-4">
             {sections.map((sec) => (
               <div key={sec.type} className="bg-paper px-4 py-3">
                 <p className="font-serif text-xl text-forest">{sec.count}</p>
-                <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">{sec.type}</p>
+                <p className="font-mono text-[9px] uppercase tracking-wider text-soft">{sec.type}</p>
               </div>
             ))}
           </div>
@@ -569,13 +569,13 @@ function PreviewDialog({ exam, sections, questions, duration, perStudent, s, onC
           <div className="mt-4 divide-y divide-line border border-line">
             {shown.map((q, i) => (
               <div key={q.id} className="px-4 py-3">
-                <div className="flex items-center gap-2"><span className="font-mono text-[10px] text-ink-soft">{i + 1}</span><span className="bg-paper-raised px-1.5 py-0.5 font-mono text-[9px] text-ink-soft">{q.type}</span><span className={`px-1.5 py-0.5 font-mono text-[9px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>{q.difficulty}</span><span className="ml-auto font-mono text-[10px] text-ink-soft">{q.marks || 1} mark{q.marks === 1 ? "" : "s"}</span></div>
+                <div className="flex items-center gap-2"><span className="font-mono text-[10px] text-soft">{i + 1}</span><span className="bg-raised px-1.5 py-0.5 font-mono text-[9px] text-soft">{q.type}</span><span className={`px-1.5 py-0.5 font-mono text-[9px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>{q.difficulty}</span><span className="ml-auto font-mono text-[10px] text-soft">{q.marks || 1} mark{q.marks === 1 ? "" : "s"}</span></div>
                 <p className="mt-1.5 text-[13px] leading-relaxed">{q.title}</p>
               </div>
             ))}
           </div>
           {!showAll && questions.length > shown.length && (
-            <button onClick={() => setShowAll(true)} className="mt-3 w-full border border-line-strong px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-forest">Show all {questions.length} questions</button>
+            <button onClick={() => setShowAll(true)} className="mt-3 w-full border border-line px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-soft transition hover:border-forest hover:text-forest">Show all {questions.length} questions</button>
           )}
         </div>
       </div>
@@ -647,79 +647,79 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
 
   return (
     <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-ink/50 p-4 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true">
-      <div className="w-full max-w-2xl border border-line-strong bg-paper shadow-2xl">
+      <div className="w-full max-w-2xl border border-line bg-paper shadow-2xl">
         <div className="flex items-start justify-between border-b border-line px-6 py-5">
-          <div><h2 className="font-serif text-2xl font-semibold">Publish &amp; share — {name}</h2><p className="mt-1 text-[12px] text-ink-soft">{exam.id} · {exam.batch} · {pool} questions · {duration} min</p></div>
-          <button onClick={onClose} aria-label="Close" className="text-xl leading-none text-ink-soft hover:text-ink">×</button>
+          <div><h2 className="font-serif text-2xl font-semibold">Publish &amp; share — {name}</h2><p className="mt-1 text-[12px] text-soft">{exam.id} · {exam.batch} · {pool} questions · {duration} min</p></div>
+          <button onClick={onClose} aria-label="Close" className="text-xl leading-none text-soft hover:text-ink">×</button>
         </div>
         <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
           <div className="grid grid-cols-2 gap-px border border-line bg-line sm:grid-cols-4">
-            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{pool}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Questions</p></div>
-            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{perStudent}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Per student</p></div>
-            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{totalMarks}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Marks</p></div>
-            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{s.mode === "lockdown" ? <FiLock /> : <FiEdit3 />}</p><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">{s.mode}</p></div>
+            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{pool}</p><p className="font-mono text-[9px] uppercase tracking-wider text-soft">Questions</p></div>
+            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{perStudent}</p><p className="font-mono text-[9px] uppercase tracking-wider text-soft">Per student</p></div>
+            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{totalMarks}</p><p className="font-mono text-[9px] uppercase tracking-wider text-soft">Marks</p></div>
+            <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{s.mode === "lockdown" ? <FiLock /> : <FiEdit3 />}</p><p className="font-mono text-[9px] uppercase tracking-wider text-soft">{s.mode}</p></div>
           </div>
 
           <p className="mt-5 font-mono text-[10px] uppercase tracking-widest text-forest">Who will take this test?</p>
           <div className="mt-2 grid gap-3 sm:grid-cols-2">
-            <button onClick={() => setMode("all")} className={`border p-4 text-left ${mode === "all" ? "border-forest bg-success/5" : "border-line hover:border-line-strong"}`}>
-              <span className="flex items-center gap-2"><span className={`flex h-4 w-4 items-center justify-center rounded-full border ${mode === "all" ? "border-forest" : "border-line-strong"}`}>{mode === "all" && <span className="h-2 w-2 rounded-full bg-forest" />}</span><span className="text-[13px] font-medium">Entire {exam.batch} batch</span></span>
-              <span className="mt-1 block pl-6 text-[11px] text-ink-soft">{loading ? "Loading roster…" : `${roster.length} students in this program`}</span>
+            <button onClick={() => setMode("all")} className={`border p-4 text-left ${mode === "all" ? "border-forest bg-success/5" : "border-line hover:border-line"}`}>
+              <span className="flex items-center gap-2"><span className={`flex h-4 w-4 items-center justify-center rounded-none border ${mode === "all" ? "border-forest" : "border-line"}`}>{mode === "all" && <span className="h-2 w-2 rounded-none bg-forest" />}</span><span className="text-[13px] font-medium">Entire {exam.batch} batch</span></span>
+              <span className="mt-1 block pl-6 text-[11px] text-soft">{loading ? "Loading roster…" : `${roster.length} students in this program`}</span>
             </button>
-            <button onClick={() => setMode("manual")} className={`border p-4 text-left ${mode === "manual" ? "border-forest bg-success/5" : "border-line hover:border-line-strong"}`}>
-              <span className="flex items-center gap-2"><span className={`flex h-4 w-4 items-center justify-center rounded-full border ${mode === "manual" ? "border-forest" : "border-line-strong"}`}>{mode === "manual" && <span className="h-2 w-2 rounded-full bg-forest" />}</span><span className="text-[13px] font-medium">Hand-pick candidates</span></span>
-              <span className="mt-1 block pl-6 text-[11px] text-ink-soft">Select specific students below</span>
+            <button onClick={() => setMode("manual")} className={`border p-4 text-left ${mode === "manual" ? "border-forest bg-success/5" : "border-line hover:border-line"}`}>
+              <span className="flex items-center gap-2"><span className={`flex h-4 w-4 items-center justify-center rounded-none border ${mode === "manual" ? "border-forest" : "border-line"}`}>{mode === "manual" && <span className="h-2 w-2 rounded-none bg-forest" />}</span><span className="text-[13px] font-medium">Hand-pick candidates</span></span>
+              <span className="mt-1 block pl-6 text-[11px] text-soft">Select specific students below</span>
             </button>
           </div>
 
           {mode === "manual" && (
             <div className="mt-3 border border-line p-3">
               <div className="flex items-center justify-between">
-                <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">{selected.length} selected</p>
+                <p className="font-mono text-[9px] uppercase tracking-wider text-soft">{selected.length} selected</p>
                 <button onClick={() => setSelected(allSelected ? [] : roster.map((r) => r.roll))} className="font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">{allSelected ? "Deselect all" : "Select all"}</button>
               </div>
               <div className="mt-2 max-h-44 space-y-0.5 overflow-y-auto">
-                {roster.length === 0 && !loading && <p className="py-3 text-[12px] text-ink-soft">No students found in this batch yet — add candidates from the Students page first.</p>}
+                {roster.length === 0 && !loading && <p className="py-3 text-[12px] text-soft">No students found in this batch yet — add candidates from the Students page first.</p>}
                 {roster.map((st) => (
-                  <label key={st.roll} className="flex cursor-pointer items-center gap-3 px-2 py-1.5 transition hover:bg-paper-raised">
+                  <label key={st.roll} className="flex cursor-pointer items-center gap-3 px-2 py-1.5 transition hover:bg-raised">
                     <input type="checkbox" checked={selected.includes(st.roll)} onChange={() => setSelected((cur) => cur.includes(st.roll) ? cur.filter((r) => r !== st.roll) : [...cur, st.roll])} className="accent-forest" />
-                    <span className="text-[13px]">{st.full_name} <span className="text-ink-soft">({st.roll})</span></span>
+                    <span className="text-[13px]">{st.full_name} <span className="text-soft">({st.roll})</span></span>
                   </label>
                 ))}
               </div>
             </div>
           )}
 
-          <div className="mt-5 flex items-start justify-between gap-4 border border-line bg-paper-raised px-4 py-4">
+          <div className="mt-5 flex items-start justify-between gap-4 border border-line bg-raised px-4 py-4">
             <div>
               <p className="text-[13px] font-medium">Email the join link</p>
-              <p className="mt-0.5 text-[11px] text-ink-soft">{notifyStudents ? `An email goes to ${emails.length} candidate${emails.length === 1 ? "" : "s"} when you publish.` : "No email is sent — share the link yourself."}</p>
+              <p className="mt-0.5 text-[11px] text-soft">{notifyStudents ? `An email goes to ${emails.length} candidate${emails.length === 1 ? "" : "s"} when you publish.` : "No email is sent — share the link yourself."}</p>
             </div>
-            <button role="switch" aria-checked={notifyStudents} onClick={() => setNotifyStudents((v) => !v)} className={`mt-1 flex h-6 w-11 shrink-0 items-center rounded-full border transition ${notifyStudents ? "justify-end border-forest bg-forest" : "justify-start border-line-strong bg-paper"}`}><span className="mx-0.5 h-4 w-4 rounded-full bg-paper" /></button>
+            <button role="switch" aria-checked={notifyStudents} onClick={() => setNotifyStudents((v) => !v)} className={`mt-1 flex h-6 w-11 shrink-0 items-center rounded-none border transition ${notifyStudents ? "justify-end border-forest bg-forest" : "justify-start border-line bg-paper"}`}><span className="mx-0.5 h-4 w-4 rounded-none bg-paper" /></button>
           </div>
           {notifyStudents && emails.length > 0 && (
             <div className="mt-3 border border-line px-4 py-3">
-              <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Recipients preview</p>
+              <p className="font-mono text-[9px] uppercase tracking-wider text-soft">Recipients preview</p>
               <div className="mt-1.5 space-y-0.5">
-                {visibleEmails.map((e) => <p key={e} className="truncate font-mono text-[11px] text-ink-soft">{e}</p>)}
+                {visibleEmails.map((e) => <p key={e} className="truncate font-mono text-[11px] text-soft">{e}</p>)}
                 {!expanded && emails.length > 5 && <button onClick={() => setExpanded(true)} className="font-mono text-[11px] text-forest hover:underline">+ {emails.length - 5} more…</button>}
               </div>
             </div>
           )}
-          {notifyStudents && emails.length === 0 && <p className="mt-3 border border-amber/40 bg-amber/5 px-4 py-3 text-[12px] text-ink-soft">No student emails found for this batch — publish without email, then share the join link.</p>}
+          {notifyStudents && emails.length === 0 && <p className="mt-3 border border-amber/40 bg-amber/5 px-4 py-3 text-[12px] text-soft">No student emails found for this batch — publish without email, then share the join link.</p>}
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-4 border-t border-line px-6 py-5">
           <div className="flex flex-wrap items-center gap-2">
-            <label className="text-[11px] text-ink-soft">Or schedule:
-              <input type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} className="ml-1 border border-line-strong bg-paper px-2 py-2 text-[12px] outline-none focus:border-forest" />
-              <input type="time" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} className="ml-1 border border-line-strong bg-paper px-2 py-2 text-[12px] outline-none focus:border-forest" />
+            <label className="text-[11px] text-soft">Or schedule:
+              <input type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} className="ml-1 border border-line bg-paper px-2 py-2 text-[12px] outline-none focus:border-forest" />
+              <input type="time" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} className="ml-1 border border-line bg-paper px-2 py-2 text-[12px] outline-none focus:border-forest" />
             </label>
-            <button onClick={() => { if (schedDate && schedTime) void publish("scheduled", new Date(`${schedDate}T${schedTime}`).toISOString(), `${schedDate} · ${schedTime}`); }} disabled={!ready || !schedDate || !schedTime || busy} className={`border px-4 py-3 font-mono text-[10px] uppercase tracking-wider ${ready && schedDate && schedTime && !busy ? "border-line-strong text-ink-soft hover:border-forest hover:text-forest" : "cursor-not-allowed border-line text-ink-soft/40"}`}>◷ Schedule</button>
+            <button onClick={() => { if (schedDate && schedTime) void publish("scheduled", new Date(`${schedDate}T${schedTime}`).toISOString(), `${schedDate} · ${schedTime}`); }} disabled={!ready || !schedDate || !schedTime || busy} className={`border px-4 py-3 font-mono text-[10px] uppercase tracking-wider ${ready && schedDate && schedTime && !busy ? "border-line text-soft hover:border-forest hover:text-forest" : "cursor-not-allowed border-line text-soft/40"}`}>◷ Schedule</button>
           </div>
           <div className="flex gap-2">
-            <button onClick={onClose} className="border border-line-strong px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:border-forest hover:text-ink">Cancel</button>
-            <button onClick={() => void publish("published", null)} disabled={!ready || busy} className={`inline-flex items-center justify-center gap-2 border px-6 py-3 font-mono text-[10px] uppercase tracking-wider ${ready && !busy ? "border-forest bg-forest text-paper hover:bg-forest-light" : "cursor-not-allowed border-line-strong bg-line/30 text-ink-soft"}`}>{busy ? "Publishing…" : notifyStudents && emails.length > 0 ? <><FiMail /> Publish &amp; email {emails.length}</> : <><FiCheck /> Publish now</>}</button>
+            <button onClick={onClose} className="border border-line px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-soft transition hover:border-forest hover:text-ink">Cancel</button>
+            <button onClick={() => void publish("published", null)} disabled={!ready || busy} className={`inline-flex items-center justify-center gap-2 border px-6 py-3 font-mono text-[10px] uppercase tracking-wider ${ready && !busy ? "border-forest bg-forest text-paper hover:bg-forest-soft" : "cursor-not-allowed border-line bg-line/30 text-soft"}`}>{busy ? "Publishing…" : notifyStudents && emails.length > 0 ? <><FiMail /> Publish &amp; email {emails.length}</> : <><FiCheck /> Publish now</>}</button>
           </div>
         </div>
       </div>

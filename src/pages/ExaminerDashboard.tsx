@@ -1,8 +1,8 @@
 // Examiner Dashboard — mirrors the Mettl "Test Administrator Dashboard"
 // pattern: metric cards (Total tests / test takers / evaluators), a daily
 // progress chart, Test / Evaluator / Due-date tabs, and the allocation table
-// with the "Auto-assign Test Reports" flow (role → evaluators → due date →
-// per-evaluator distribution confirmation → real grading_delegations rows).
+// with the "Auto-assign Test Reports" flow (role / evaluators / due date /
+// per-evaluator distribution confirmation / real grading_delegations rows).
 // Everything is read from Supabase; nothing is hard-coded demo data.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -132,9 +132,9 @@ export default function ExaminerDashboard({
     <div>
       <div className="flex flex-col justify-between gap-4 border-b border-line pb-6 md:flex-row md:items-end">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Examiner / Test Administrator Dashboard</p>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Examiner / Test Administrator Dashboard</p>
           <h1 className="mt-1 font-serif text-3xl font-semibold tracking-tight">Examiner dashboard</h1>
-          <p className="mt-2 text-[13px] text-ink-soft">Test allocation and evaluation at a glance — assign submitted reports to evaluators, set due dates, and track grading.</p>
+          <p className="mt-2 text-[13px] text-soft">Test allocation and evaluation at a glance — assign submitted reports to evaluators, set due dates, and track grading.</p>
         </div>
         <Button primary onClick={() => navigate("/teacher/exams/new")}>+ Create new test</Button>
       </div>
@@ -152,20 +152,20 @@ export default function ExaminerDashboard({
         <section className="border border-line bg-paper p-5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Progress chart</p>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Progress chart</p>
               <h2 className="mt-1 font-serif text-lg font-semibold">Submissions — last 14 days</h2>
             </div>
-            <div className="flex items-center gap-4 font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+            <div className="flex items-center gap-4 font-mono text-[9px] uppercase tracking-wider text-soft">
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 bg-forest" /> Graded</span>
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 bg-amber" /> Not graded</span>
             </div>
           </div>
           {loading ? (
-            <div className="flex h-40 items-center justify-center text-[12px] text-ink-soft">Loading…</div>
+            <div className="flex h-40 items-center justify-center text-[12px] text-soft">Loading…</div>
           ) : (data?.daily ?? []).every((d) => d.submitted === 0) ? (
             <div className="flex h-40 flex-col items-center justify-center text-center">
               <p className="font-serif text-lg">No submissions yet</p>
-              <p className="mt-1 text-[12px] text-ink-soft">Published exams will appear here as candidates submit.</p>
+              <p className="mt-1 text-[12px] text-soft">Published exams will appear here as candidates submit.</p>
             </div>
           ) : (
             <div className="mt-6 flex h-40 items-end gap-2">
@@ -178,7 +178,7 @@ export default function ExaminerDashboard({
                       <div className="w-full bg-amber/70" style={{ height: h - gradedH }} />
                       <div className="w-full bg-forest" style={{ height: gradedH }} />
                     </div>
-                    {i % 2 === 0 ? <span className="font-mono text-[8px] text-ink-soft">{d.label}</span> : <span className="h-[10px]" />}
+                    {i % 2 === 0 ? <span className="font-mono text-[8px] text-soft">{d.label}</span> : <span className="h-[10px]" />}
                   </div>
                 );
               })}
@@ -188,21 +188,21 @@ export default function ExaminerDashboard({
 
         {/* Quick allocation list */}
         <section className="border border-line bg-paper p-5">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Allocation queue</p>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Allocation queue</p>
           <h2 className="mt-1 font-serif text-lg font-semibold">Awaiting evaluators</h2>
           <div className="mt-4 space-y-3">
             {(data?.exams ?? []).filter((e) => e.unassigned > 0).length === 0 && (
-              <p className="border border-dashed border-line-strong p-6 text-center text-[12px] text-ink-soft">Nothing pending — submitted reports are all allocated or auto-graded.</p>
+              <p className="border border-dashed border-line p-6 text-center text-[12px] text-soft">Nothing pending — submitted reports are all allocated or auto-graded.</p>
             )}
             {(data?.exams ?? [])
               .filter((e) => e.unassigned > 0)
               .slice(0, 5)
               .map((e) => (
-                <div key={e.id} className="border border-line bg-paper-raised p-4">
+                <div key={e.id} className="border border-line bg-raised p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-[13px] font-medium">{e.name}</p>
-                      <p className="mt-0.5 font-mono text-[9px] text-ink-soft">{e.batch} · {e.unassigned} unassigned</p>
+                      <p className="mt-0.5 font-mono text-[9px] text-soft">{e.batch} · {e.unassigned} unassigned</p>
                     </div>
                     <button onClick={() => { setAssignExam(e); }} className="shrink-0 border border-forest px-2.5 py-1.5 font-mono text-[9px] uppercase tracking-wider text-forest hover:bg-forest hover:text-paper">
                       Auto-assign
@@ -215,21 +215,21 @@ export default function ExaminerDashboard({
       </div>
 
       {/* Search + filters */}
-      <div className="mt-8 flex flex-wrap items-end gap-3 border border-line bg-paper-raised p-4">
-        <label className="min-w-[220px] flex-1 text-[11px] text-ink-soft">
+      <div className="mt-8 flex flex-wrap items-end gap-3 border border-line bg-raised p-4">
+        <label className="min-w-[220px] flex-1 text-[11px] text-soft">
           Search by Test Name / ID
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="e.g. D24MC001 or Probability and Statistics" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] outline-none focus:border-forest" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="e.g. D24MC001 or Probability and Statistics" className="mt-1 block w-full border border-line bg-paper px-3 py-2.5 text-[13px] outline-none focus:border-forest" />
         </label>
-        <label className="text-[11px] text-ink-soft">
+        <label className="text-[11px] text-soft">
           Program
-          <select value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)} className="mt-1 block border border-line-strong bg-paper px-3 py-2.5 text-[13px] outline-none">
+          <select value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)} className="mt-1 block border border-line bg-paper px-3 py-2.5 text-[13px] outline-none">
             <option>All programs</option>
             {batches.map((b) => <option key={b}>{b}</option>)}
           </select>
         </label>
-        <label className="text-[11px] text-ink-soft">
+        <label className="text-[11px] text-soft">
           Status
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="mt-1 block border border-line-strong bg-paper px-3 py-2.5 text-[13px] outline-none">
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="mt-1 block border border-line bg-paper px-3 py-2.5 text-[13px] outline-none">
             <option>All statuses</option>
             <option value="draft">Draft</option>
             <option value="scheduled">Scheduled</option>
@@ -246,8 +246,8 @@ export default function ExaminerDashboard({
             ["evaluators", "Evaluator Information", evaluatorRows.length],
             ["due", "Due Date Information", dueRows.length],
           ] as const).map(([key, label, count]) => (
-            <button key={key} onClick={() => setTab(key)} className={`border-b-2 px-1 pb-3 font-mono text-[11px] uppercase tracking-wider ${tab === key ? "border-forest text-forest" : "border-transparent text-ink-soft hover:text-ink"}`}>
-              {label} <span className="ml-1 rounded-full bg-paper-raised px-1.5 py-0.5 text-[9px]">{count}</span>
+            <button key={key} onClick={() => setTab(key)} className={`border-b-2 px-1 pb-3 font-mono text-[11px] uppercase tracking-wider ${tab === key ? "border-forest text-forest" : "border-transparent text-soft hover:text-ink"}`}>
+              {label} <span className="ml-1 rounded-none bg-raised px-1.5 py-0.5 text-[9px]">{count}</span>
             </button>
           ))}
         </div>
@@ -259,7 +259,7 @@ export default function ExaminerDashboard({
         <div className="mt-6 overflow-x-auto border border-line bg-paper">
           <table className="w-full min-w-[980px] text-left text-[13px]">
             <thead>
-              <tr className="border-b border-line bg-paper-raised font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+              <tr className="border-b border-line bg-raised font-mono text-[9px] uppercase tracking-wider text-soft">
                 <th className="px-4 py-3">Test name</th>
                 <th className="px-4 py-3">Allocation</th>
                 <th className="px-4 py-3">Evaluators</th>
@@ -273,43 +273,43 @@ export default function ExaminerDashboard({
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="p-10 text-center text-[12px] text-ink-soft">Loading…</td></tr>
+                <tr><td colSpan={9} className="p-10 text-center text-[12px] text-soft">Loading…</td></tr>
               ) : exams.length === 0 ? (
                 <tr><td colSpan={9} className="p-10 text-center">
                   <p className="font-serif text-lg">No tests match</p>
-                  <p className="mt-1 text-[12px] text-ink-soft">Create a test to see it here.</p>
+                  <p className="mt-1 text-[12px] text-soft">Create a test to see it here.</p>
                 </td></tr>
               ) : exams.map((e) => {
                 const badge = allocBadge(e);
                 const cancels = 0; // cancelled state not yet in the attempt lifecycle
                 return (
-                  <tr key={e.id} className="border-b border-line last:border-0 hover:bg-paper-raised">
+                  <tr key={e.id} className="border-b border-line last:border-0 hover:bg-raised">
                     <td className="px-4 py-4">
                       <p className="font-medium leading-snug">{e.name}</p>
-                      <p className="mt-1 font-mono text-[9px] text-ink-soft">{e.id} · {e.pool_count} questions · {e.duration_minutes} min · {e.status}</p>
+                      <p className="mt-1 font-mono text-[9px] text-soft">{e.id} · {e.pool_count} questions · {e.duration_minutes} min · {e.status}</p>
                     </td>
                     <td className="px-4 py-4">
                       {badge.allocated ? (
                         <span className="inline-flex items-center gap-1 border border-forest/40 bg-success/10 px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-forest">
-                          <span className="h-1 w-1 rounded-full bg-forest" /> {badge.label}
+                          <span className="h-1 w-1 rounded-none bg-forest" /> {badge.label}
                         </span>
                       ) : (
                         <span className="border border-forest/50 px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-forest">Not Allocated</span>
                       )}
-                      <button onClick={() => setAssignExam(e)} className="mt-1.5 block font-mono text-[9px] uppercase tracking-wider text-ink-soft underline-offset-2 hover:text-forest hover:underline">
+                      <button onClick={() => setAssignExam(e)} className="mt-1.5 block font-mono text-[9px] uppercase tracking-wider text-soft underline-offset-2 hover:text-forest hover:underline">
                         ↻ Auto-assign Test Reports
                       </button>
                     </td>
                     <td className="px-4 py-4">{e.delegates || (badge.allocated ? badge.evaluators.length : 0)}</td>
                     <td className="px-4 py-4">{e.roster_count}</td>
                     <td className="px-4 py-4">
-                      {e.unassigned > 0 ? <span className="font-mono text-[12px] text-amber">{e.unassigned}</span> : <span className="font-mono text-[12px] text-ink-soft">0</span>}
+                      {e.unassigned > 0 ? <span className="font-mono text-[12px] text-amber">{e.unassigned}</span> : <span className="font-mono text-[12px] text-soft">0</span>}
                     </td>
                     <td className="px-4 py-4">{badge.assigned}</td>
-                    <td className="px-4 py-4 font-mono text-[12px] text-ink-soft">{cancels}</td>
+                    <td className="px-4 py-4 font-mono text-[12px] text-soft">{cancels}</td>
                     <td className="px-4 py-4">{e.auto_graded}</td>
                     <td className="px-4 py-4 text-right">
-                      <button onClick={() => navigate(`/teacher/exams/${e.id}`)} className="font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">Open →</button>
+                      <button onClick={() => navigate(`/teacher/exams/${e.id}`)} className="font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">Open /</button>
                     </td>
                   </tr>
                 );
@@ -324,7 +324,7 @@ export default function ExaminerDashboard({
         <div className="mt-6 overflow-x-auto border border-line bg-paper">
           <table className="w-full min-w-[760px] text-left text-[13px]">
             <thead>
-              <tr className="border-b border-line bg-paper-raised font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+              <tr className="border-b border-line bg-raised font-mono text-[9px] uppercase tracking-wider text-soft">
                 <th className="px-4 py-3">Evaluator</th>
                 <th className="px-4 py-3">Email</th>
                 <th className="px-4 py-3">Tests</th>
@@ -336,12 +336,12 @@ export default function ExaminerDashboard({
               {evaluatorRows.length === 0 ? (
                 <tr><td colSpan={5} className="p-10 text-center">
                   <p className="font-serif text-lg">No evaluators yet</p>
-                  <p className="mt-1 text-[12px] text-ink-soft">Use Auto-assign Test Reports on a test to bring evaluators here.</p>
+                  <p className="mt-1 text-[12px] text-soft">Use Auto-assign Test Reports on a test to bring evaluators here.</p>
                 </td></tr>
               ) : evaluatorRows.map((r) => (
-                <tr key={r.email} className="border-b border-line last:border-0 hover:bg-paper-raised">
+                <tr key={r.email} className="border-b border-line last:border-0 hover:bg-raised">
                   <td className="px-4 py-4 font-medium">{r.name}</td>
-                  <td className="px-4 py-4 font-mono text-[11px] text-ink-soft">{r.email}</td>
+                  <td className="px-4 py-4 font-mono text-[11px] text-soft">{r.email}</td>
                   <td className="px-4 py-4">{r.exams}</td>
                   <td className="px-4 py-4">{r.reports}</td>
                   <td className="px-4 py-4">{r.due ? new Date(r.due).toLocaleDateString() : "—"}</td>
@@ -357,7 +357,7 @@ export default function ExaminerDashboard({
         <div className="mt-6 overflow-x-auto border border-line bg-paper">
           <table className="w-full min-w-[760px] text-left text-[13px]">
             <thead>
-              <tr className="border-b border-line bg-paper-raised font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+              <tr className="border-b border-line bg-raised font-mono text-[9px] uppercase tracking-wider text-soft">
                 <th className="px-4 py-3">Test name</th>
                 <th className="px-4 py-3">Due date</th>
                 <th className="px-4 py-3">Reports assigned</th>
@@ -368,13 +368,13 @@ export default function ExaminerDashboard({
               {dueRows.length === 0 ? (
                 <tr><td colSpan={4} className="p-10 text-center">
                   <p className="font-serif text-lg">No due dates set</p>
-                  <p className="mt-1 text-[12px] text-ink-soft">Set a due date when you auto-assign test reports.</p>
+                  <p className="mt-1 text-[12px] text-soft">Set a due date when you auto-assign test reports.</p>
                 </td></tr>
               ) : dueRows.map((r) => (
-                <tr key={r.id} className="border-b border-line last:border-0 hover:bg-paper-raised">
+                <tr key={r.id} className="border-b border-line last:border-0 hover:bg-raised">
                   <td className="px-4 py-4">
                     <p className="font-medium">{r.exam}</p>
-                    <p className="mt-0.5 font-mono text-[9px] text-ink-soft">{r.id}</p>
+                    <p className="mt-0.5 font-mono text-[9px] text-soft">{r.id}</p>
                   </td>
                   <td className="px-4 py-4">{r.due.toLocaleDateString()}</td>
                   <td className="px-4 py-4">{r.reports}</td>
@@ -405,10 +405,10 @@ export default function ExaminerDashboard({
 
 function DashMetric({ label, value, detail, onClick }: { label: string; value: string; detail: string; onClick?: () => void }) {
   return (
-    <div onClick={onClick} className={`border border-line bg-paper-raised p-5 ${onClick ? "cursor-pointer transition hover:border-forest" : ""}`}>
-      <p className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">{label}</p>
+    <div onClick={onClick} className={`border border-line bg-raised p-5 ${onClick ? "cursor-pointer transition hover:border-forest" : ""}`}>
+      <p className="font-mono text-[9px] uppercase tracking-widest text-soft">{label}</p>
       <p className="mt-2 font-serif text-3xl font-semibold">{value}</p>
-      <p className="mt-1 text-[11px] text-ink-soft">{detail}</p>
+      <p className="mt-1 text-[11px] text-soft">{detail}</p>
     </div>
   );
 }
@@ -494,26 +494,26 @@ function AutoAssignPanel({
       <div onClick={(e) => e.stopPropagation()} className="fixed right-0 top-0 flex h-full w-full max-w-[520px] flex-col bg-paper shadow-2xl">
         <div className="flex items-center justify-between border-b border-line px-6 py-5">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-soft">
               {step === 1 ? "Allocation" : "Assignment Confirmation"}
             </p>
             <h2 className="mt-1 font-serif text-2xl font-semibold">{step === 1 ? "Auto-assign Test Reports" : "Confirm assignment"}</h2>
-            <p className="mt-1 text-[12px] text-ink-soft">
+            <p className="mt-1 text-[12px] text-soft">
               {step === 1 ? "Test reports will be randomly assigned to new evaluator(s)." : "Review the distribution and assign the reports."}
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 text-ink-soft transition hover:text-ink"><FiX size={18} /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 text-soft transition hover:text-ink"><FiX size={18} /></button>
         </div>
 
         {step === 1 ? (
           <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
-            <div className="border border-line bg-paper-raised p-4 text-[12px] text-ink-soft">
+            <div className="border border-line bg-raised p-4 text-[12px] text-soft">
               Target: <strong className="text-ink">{exam.name}</strong> · {exam.batch} · {available} unassigned report(s)
             </div>
 
             <label className="block text-[13px]">
-              <span className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Select Evaluator Role</span>
-              <select value={role} onChange={(e) => setRole(e.target.value)} className="mt-2 block w-full border border-line-strong bg-paper px-3 py-3 text-[13px] outline-none focus:border-forest">
+              <span className="font-mono text-[10px] uppercase tracking-widest text-soft">Select Evaluator Role</span>
+              <select value={role} onChange={(e) => setRole(e.target.value)} className="mt-2 block w-full border border-line bg-paper px-3 py-3 text-[13px] outline-none focus:border-forest">
                 <option>Evaluator</option>
                 <option>Senior Evaluator</option>
                 <option>Reviewer</option>
@@ -521,20 +521,20 @@ function AutoAssignPanel({
             </label>
 
             <div>
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Select Evaluators</p>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Select Evaluators</p>
               <div className="mt-3 max-h-64 space-y-1.5 overflow-y-auto border border-line p-2">
                 {pickable.length === 0 && (
-                  <p className="p-4 text-center text-[12px] text-ink-soft">No faculty found in the teachers directory.</p>
+                  <p className="p-4 text-center text-[12px] text-soft">No faculty found in the teachers directory.</p>
                 )}
                 {pickable.map((f) => {
                   const on = selected.some((x) => x.id === f.id);
                   return (
-                    <button key={f.id} onClick={() => toggle(f)} className={`flex w-full items-center justify-between gap-3 border px-3 py-2.5 text-left text-[13px] transition ${on ? "border-forest bg-success/5 text-ink" : "border-line text-ink-soft hover:border-line-strong"}`}>
+                    <button key={f.id} onClick={() => toggle(f)} className={`flex w-full items-center justify-between gap-3 border px-3 py-2.5 text-left text-[13px] transition ${on ? "border-forest bg-success/5 text-ink" : "border-line text-soft hover:border-line"}`}>
                       <span className="min-w-0">
                         <span className="block font-medium">{f.name}</span>
-                        <span className="block truncate font-mono text-[10px] text-ink-soft">{f.email ?? "no email on file"}</span>
+                        <span className="block truncate font-mono text-[10px] text-soft">{f.email ?? "no email on file"}</span>
                       </span>
-                      <span className={`font-mono text-[11px] ${on ? "text-forest" : "text-ink-soft"}`}>{on ? <FiCheck /> : <FiPlus />}</span>
+                      <span className={`font-mono text-[11px] ${on ? "text-forest" : "text-soft"}`}>{on ? <FiCheck /> : <FiPlus />}</span>
                     </button>
                   );
                 })}
@@ -542,11 +542,11 @@ function AutoAssignPanel({
             </div>
 
             <label className="block text-[13px]">
-              <span className="flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+              <span className="flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-soft">
                 <span>Select a new Due Date</span>
                 <button type="button" onClick={() => setDueDate(new Date().toISOString().slice(0, 10))} className="normal-case text-forest hover:underline">Set to current date</button>
               </span>
-              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="mt-2 block w-full border border-line-strong bg-paper px-3 py-3 text-[13px] outline-none focus:border-forest" />
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="mt-2 block w-full border border-line bg-paper px-3 py-3 text-[13px] outline-none focus:border-forest" />
             </label>
           </div>
         ) : (
@@ -554,41 +554,41 @@ function AutoAssignPanel({
             <div className="border border-line">
               {summary.map((row) => (
                 <div key={row.label} className="flex items-start gap-3 border-b border-line px-4 py-3 text-[13px] last:border-0">
-                  <span className="text-ink-soft">{row.icon}</span>
+                  <span className="text-soft">{row.icon}</span>
                   <div className="min-w-0">
-                    <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">{row.label}</p>
+                    <p className="font-mono text-[9px] uppercase tracking-wider text-soft">{row.label}</p>
                     <p className="mt-0.5 break-words font-medium">{row.value}</p>
                   </div>
                 </div>
               ))}
             </div>
 
-            <p className="mt-6 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Distribution details of Test Reports among selected Evaluators</p>
-            <p className="mt-1 text-[12px] text-ink-soft">You may change the count of test reports assigned to each evaluator. Total: {available} report(s).</p>
+            <p className="mt-6 font-mono text-[10px] uppercase tracking-widest text-soft">Distribution details of Test Reports among selected Evaluators</p>
+            <p className="mt-1 text-[12px] text-soft">You may change the count of test reports assigned to each evaluator. Total: {available} report(s).</p>
             <div className="mt-3 divide-y divide-line border border-line">
               {selected.map((f) => (
                 <div key={f.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
                     <p className="text-[13px] font-medium">{f.name}</p>
-                    <p className="truncate font-mono text-[10px] text-ink-soft">{f.email ?? ""}</p>
+                    <p className="truncate font-mono text-[10px] text-soft">{f.email ?? ""}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
                       type="number" min={0} max={available}
                       value={counts[f.id] ?? 0}
                       onChange={(e) => setCount(f.id, parseInt(e.target.value) || 0)}
-                      className="w-20 border border-line-strong bg-paper px-2 py-1.5 text-right font-mono text-[13px] outline-none focus:border-forest"
+                      className="w-20 border border-line bg-paper px-2 py-1.5 text-right font-mono text-[13px] outline-none focus:border-forest"
                     />
-                    <span className="font-mono text-[10px] text-ink-soft">report(s)</span>
+                    <span className="font-mono text-[10px] text-soft">report(s)</span>
                   </div>
                 </div>
               ))}
             </div>
             <div className="mt-4 flex items-center justify-between border-t border-line pt-4">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Total Test Report</p>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Total Test Report</p>
               <p className="font-mono text-[13px]">
                 <span className={totalCount === available ? "text-forest" : "text-alert"}>{totalCount}</span>
-                <span className="text-ink-soft"> / {available} report(s)</span>
+                <span className="text-soft"> / {available} report(s)</span>
               </p>
             </div>
           </div>

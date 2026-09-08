@@ -184,19 +184,17 @@ fn main() {
             #[cfg(target_os = "macos")]
             {
                 // Lock down macOS to create a true kiosk mode (disables Cmd+Tab, Dock, Menu Bar, Spaces)
-                unsafe {
-                    use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
-                    if let Some(mtm) = objc2::MainThreadMarker::new() {
-                        let app = NSApplication::sharedApplication(mtm);
-                        let opts = NSApplicationPresentationOptions::HideDock
-                            | NSApplicationPresentationOptions::HideMenuBar
-                            | NSApplicationPresentationOptions::DisableAppleMenu
-                            | NSApplicationPresentationOptions::DisableProcessSwitching
-                            | NSApplicationPresentationOptions::DisableForceQuit
-                            | NSApplicationPresentationOptions::DisableSessionTermination
-                            | NSApplicationPresentationOptions::DisableHideApplication;
-                        app.setPresentationOptions(opts);
-                    }
+                use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
+                if let Some(mtm) = objc2::MainThreadMarker::new() {
+                    let app = NSApplication::sharedApplication(mtm);
+                    let opts = NSApplicationPresentationOptions::HideDock
+                        | NSApplicationPresentationOptions::HideMenuBar
+                        | NSApplicationPresentationOptions::DisableAppleMenu
+                        | NSApplicationPresentationOptions::DisableProcessSwitching
+                        | NSApplicationPresentationOptions::DisableForceQuit
+                        | NSApplicationPresentationOptions::DisableSessionTermination
+                        | NSApplicationPresentationOptions::DisableHideApplication;
+                    app.setPresentationOptions(opts);
                 }
             }
             if let Some(win) = app.get_webview_window("exam") {
@@ -212,16 +210,28 @@ fn main() {
                             // 1000 is usually CGShieldingWindowLevel or NSScreenSaverWindowLevel
                             // This ensures the window is above notifications and other overlay apps.
                             let _: () = objc2::msg_send![ns_win, setLevel: 1000_isize];
-                            // 0 is NSWindowSharingTypeNone (prevents screenshots/screen recording)
-                            let _: () = objc2::msg_send![ns_win, setSharingType: 0_isize];
+                            // NOTE: NSWindowSharingTypeNone was deliberately REMOVED.
+                            // Setting sharing type 0 made the window invisible to EVERY
+                            // screen-capture API — including the exam's own screen
+                            // recording and the live proctor screen feed, which came
+                            // through as black/absent. The proctor MUST be able to
+                            // record this window; anti-cheat is enforced by the kiosk
+                            // lockdown (no app switching, no devtools, etc) instead.
+                            // 2 is NSWindowSharingReadWrite (capturable).
+                            let _: () = objc2::msg_send![ns_win, setSharingType: 2_isize];
                         }
                     }
                 }
                 #[cfg(target_os = "windows")]
                 {
+                    // NOTE: WDA_EXCLUDEFROMCAPTURE was deliberately REMOVED — it
+                    // excluded the exam window from the screen recording, so the
+                    // proctor's screen feed/recording showed the desktop with a
+                    // black hole where the exam was (or fully black in fullscreen).
+                    // The window is now capturable for proctoring evidence.
                     if let Ok(hwnd) = win.hwnd() {
                         unsafe {
-                            SetWindowDisplayAffinity(hwnd.0 as *mut _, 0x00000011); // WDA_EXCLUDEFROMCAPTURE
+                            SetWindowDisplayAffinity(hwnd.0 as *mut _, 0x00000000); // WDA_NONE
                         }
                     }
                 }

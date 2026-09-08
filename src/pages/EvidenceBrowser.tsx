@@ -293,7 +293,7 @@ export default function EvidenceBrowser() {
                 className="group flex w-full items-center justify-between gap-4 border border-line bg-paper p-4 text-left hover:border-forest"
               >
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-forest/10 font-mono text-[12px] font-semibold text-forest">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-none bg-forest/10 font-mono text-[12px] font-semibold text-forest">
                     {(s.name ?? s.roll).slice(0, 2).toUpperCase()}
                   </span>
                   <div className="min-w-0">
@@ -329,7 +329,7 @@ export default function EvidenceBrowser() {
 function Loading() {
   return (
     <div className="flex items-center gap-2 border border-dashed border-line-strong p-8 font-mono text-[11px] text-ink-soft">
-      <span className="h-3 w-3 animate-spin rounded-full border border-forest border-t-transparent" />
+      <span className="h-3 w-3 animate-spin rounded-none border border-forest border-t-transparent" />
       Reading Cloudflare R2…
     </div>
   );

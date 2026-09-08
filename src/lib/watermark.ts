@@ -1,10 +1,10 @@
 // ────────────────────────────────────────────────────────────────────────────
-// Watermark templates — Test Options → "Custom watermark text".
+// Watermark templates — Test Options / "Custom watermark text".
 //
 // Teachers write placeholder tokens; each candidate's exam screen renders the
 // text with THEIR details substituted, tiled across the page:
 //
-//   "{registration number} {name}"  →  "221FA12345 Ravi Teja"
+//   "{registration number} {name}"  /  "221FA12345 Ravi Teja"
 //
 // Tokens are matched case-insensitively and tolerate the common
 // "registraion" typo. Unknown tokens are left untouched so a mistake is
@@ -54,7 +54,7 @@ export function renderWatermarkTemplate(template: string, ctx: WatermarkContext)
   if (!template || !template.trim()) return "";
   const out = template.replace(TOKEN_RE, (whole, rawKey: string) => {
     const token = TOKENS[rawKey.trim().toLowerCase()];
-    return token ? token(ctx) : whole; // unknown token → keep it visible
+    return token ? token(ctx) : whole; // unknown token / keep it visible
   });
   // Collapse whitespace runs left behind by empty substitutions.
   return out.replace(/[ \t]{2,}/g, " ").trim();

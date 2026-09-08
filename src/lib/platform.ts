@@ -22,7 +22,7 @@ export function isTauri(): boolean {
 
 /**
  * Demo/preview escape hatch: `?lockdown=1` (or `#lockdown`) lets you walk the
- * full in-app pre-flight → exam flow in a normal browser without building the
+ * full in-app pre-flight / exam flow in a normal browser without building the
  * desktop exe. Never true in production because the real link has no such flag.
  */
 export function lockdownBypass(): boolean {
@@ -230,9 +230,9 @@ async function probeCrossOrigin(href: string): Promise<InstallerProbe> {
 /**
  * Verify that the download gate's installer link really points at installer
  * bytes before a "Download" button is offered. Returns:
- *   - "ready"   → binary installer confirmed (or best-effort for CORS hosts);
- *   - "release" → reachable HTML page — open it in a tab, don't save it as .dmg;
- *   - "missing" → unreachable or definitely not an installer — no download button.
+ *   - "ready"   / binary installer confirmed (or best-effort for CORS hosts);
+ *   - "release" / reachable HTML page — open it in a tab, don't save it as .dmg;
+ *   - "missing" / unreachable or definitely not an installer — no download button.
  */
 export async function probeInstaller(href: string, os: DesktopOS = detectOS()): Promise<InstallerProbe> {
   if (!href) return "missing";

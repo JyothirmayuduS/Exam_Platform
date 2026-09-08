@@ -15,15 +15,15 @@ const BTN_BASE =
 
 const BTN_VARIANT: Record<ButtonVariant, string> = {
   primary:
-    "border-forest bg-forest text-paper shadow-sm hover:bg-forest-light hover:shadow",
+    "border-forest bg-forest text-paper shadow-sm hover:bg-forest-soft",
   secondary:
-    "border-line-strong bg-paper-raised text-ink hover:border-forest hover:text-forest",
+    "border-line bg-raised text-ink hover:border-forest hover:text-forest hover:bg-raised2",
   ghost:
-    "border-transparent bg-transparent text-ink-soft hover:bg-paper-raised hover:text-ink",
+    "border-transparent bg-transparent text-soft hover:bg-raised hover:text-ink",
   danger:
     "border-alert/70 bg-alert text-paper shadow-sm hover:bg-alert/90",
   outline:
-    "border-line-strong bg-transparent text-ink hover:border-forest hover:text-forest",
+    "border-line bg-transparent text-ink hover:border-forest hover:text-forest",
 };
 
 const BTN_SIZE: Record<ButtonSize, string> = {
@@ -103,7 +103,7 @@ export function Badge({
   className?: string;
 }) {
   const tones: Record<string, string> = {
-    neutral: "bg-paper-raised text-ink-soft",
+    neutral: "bg-raised2 text-soft",
     green: "bg-success/10 text-success",
     amber: "bg-amber/10 text-amber",
     red: "bg-alert/10 text-alert",
@@ -130,7 +130,7 @@ export function EmptyState({
   return (
     <div className={`flex flex-col items-center justify-center px-6 py-14 text-center ${className}`}>
       <p className="font-serif text-xl text-ink">{title}</p>
-      <p className="mt-2 max-w-md text-[13px] text-ink-soft">{detail}</p>
+      <p className="mt-2 max-w-md text-[13px] text-soft">{detail}</p>
       {action && <div className="mt-6">{action}</div>}
     </div>
   );
@@ -151,7 +151,7 @@ export function Segmented<T extends string>({
   const active =
     tone === "alert" ? "bg-alert text-paper" : "bg-forest text-paper";
   return (
-    <div className="inline-flex flex-wrap gap-px border border-line bg-paper-raised p-1" role="tablist">
+    <div className="inline-flex flex-wrap gap-px border border-line bg-raised p-1" role="tablist">
       {options.map((o) => (
         <button
           key={o}
@@ -159,7 +159,7 @@ export function Segmented<T extends string>({
           aria-selected={value === o}
           onClick={() => onChange(o)}
           className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${
-            value === o ? active : "text-ink-soft hover:bg-paper hover:text-ink"
+            value === o ? active : "text-soft hover:bg-paper hover:text-ink"
           }`}
         >
           {o}
@@ -174,7 +174,7 @@ export function Segmented<T extends string>({
 // A number input the user can actually CLEAR. The naive pattern
 //   onChange={(e) => setN(Math.max(5, Number(e.target.value) || 45))}
 // snaps the field back to the fallback the moment backspace empties it, so
-// "45" can never be deleted digit-by-digit ("4" → "" → instantly "45").
+// "45" can never be deleted digit-by-digit ("4" / "" / instantly "45").
 // NumberField keeps the RAW text while focused (empty is allowed mid-edit),
 // commits a clamped value on every valid keystroke, and settles clamped
 // fallback-or-value on blur.

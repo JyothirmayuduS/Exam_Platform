@@ -51,7 +51,7 @@ import DeviceAccessFull from "../components/exam/DeviceAccessFull";
 
 type Question = { id: string; text: string; options: string[]; category: string; type?: "mcq" | "subjective" };
 
-// Map a DB question row → the shape the exam UI renders. The id is the DB
+// Map a DB question row / the shape the exam UI renders. The id is the DB
 // question id, so answers (keyed by id) survive paper slicing and match the
 // grading side. MCQ options only; subjective questions still render (options
 // fall back to none) so the paper is complete even if the pool mixes types.
@@ -84,9 +84,9 @@ function runCompatChecks(): CheckResult[] {
   ];
 }
 
-// Steps (mirrors the reference flow): gate (browser download) → check → access
-// (devices) → register (name/email/USN + terms) → start (pick section) → exam
-// → submitted. "installed" is a transient gate sub-state.
+// Steps (mirrors the reference flow): gate (browser download) / check / access
+// (devices) / register (name/email/USN + terms) / start (pick section) / exam
+// / submitted. "installed" is a transient gate sub-state.
 type Step = "gate" | "installed" | "check" | "access" | "register" | "start" | "exam" | "submitted";
 
 export default function StudentExam() {
@@ -184,6 +184,9 @@ export default function StudentExam() {
   const [isFullscreen, setIsFullscreen] = useState<boolean>(!!document.fullscreenElement);
   // Where the exam recording actually landed after submit — surfaced on the
   // submitted screen so a silently lost recording can't happen unnoticed.
+  // Where the exam recording actually landed after submit — tracked internally
+  // (console only). The student UI deliberately does NOT show storage details:
+  // candidates should never see infrastructure names like "Cloudflare".
   const [artifactStatus, setArtifactStatus] = useState<{ state: "uploading" | "stored" | "partial" | "failed"; detail?: string } | null>(null);
   // True when the final submitAttempt write failed (answers stayed local and
   // will retry on reconnect) — the submitted screen warns instead of faking it.
@@ -284,9 +287,9 @@ export default function StudentExam() {
       });
       mr.ondataavailable = (e) => {
         if (e.data.size <= 0) return;
-        // 1) Local accumulation → merged full video at submit (unchanged).
+        // 1) Local accumulation / merged full video at submit (unchanged).
         recordedChunksRef.current.push(e.data);
-        // 2) Live upload of this chunk → crash-proof parts in R2.
+        // 2) Live upload of this chunk / crash-proof parts in R2.
         queueRecordingPart(e.data);
       };
       mr.start(10_000); // 10 s chunk cadence (final video is identical)
@@ -616,7 +619,7 @@ export default function StudentExam() {
     onTimeUp: () => void doSubmit(),
   });
 
-  // ── Flag-limit action (Test Options → Security & access) ──────────────────
+  // ── Flag-limit action (Test Options / Security & access) ──────────────────
   // When the teacher enabled "Take action after a number of proctoring flags",
   // crossing the limit either warns the candidate ONCE or auto-submits the
   // exam ONCE. Without the toggle, flags are recorded but never trigger
@@ -643,7 +646,7 @@ export default function StudentExam() {
 
   // ── Watermark line tiled across the exam screen ───────────────────────────
   // Test Options accepts placeholders ({registration number}, {name}, …) that
-  // resolve to THIS candidate's details; empty template → classic fallback.
+  // resolve to THIS candidate's details; empty template / classic fallback.
   const watermarkLine = (() => {
     const template = String(examSettings.watermarkText ?? "").trim();
     if (!template) return defaultWatermarkText({ name: studentName, roll: STUDENT_ROLL });
@@ -680,8 +683,11 @@ export default function StudentExam() {
     return () => window.clearTimeout(id);
   }, [broadcast]);
 
-  // React to the invigilator pausing/resuming this attempt (realtime on the
-  // attempts row). The teacher console sets state="paused" via the DB.
+  // React to the invigilator pausing/resuming/FORCE-SUBMITTING this attempt
+  // (realtime on the attempts row). The teacher console writes state directly
+  // via the DB, so this channel is how a proctor's Force Submit reaches the
+  // candidate even though the student never clicked anything.
+  const forceSubmitFiredRef = useRef(false);
   useEffect(() => {
     if (step !== "exam" || !supabaseConfigured || !studentIdRef.current) return;
     let stopped = false;
@@ -703,6 +709,14 @@ export default function StudentExam() {
             const state = payload.new?.state;
             setProctorPaused(state === "paused");
             if (state === "paused") flag("Session paused by invigilator");
+            // Force submit: the invigilator ended this attempt remotely.
+            // Guard so a realtime echo / double event can't submit twice —
+            // doSubmit() itself is idempotent per attempt via the DB state.
+            if (state === "submitted" && !forceSubmitFiredRef.current) {
+              forceSubmitFiredRef.current = true;
+              flag("Exam submitted by invigilator");
+              void doSubmit();
+            }
           },
         )
         .subscribe();
@@ -711,6 +725,32 @@ export default function StudentExam() {
     return () => { stopped = true; cleanup?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, flag]);
+
+  // Safety net for missed/late realtime events: while the exam is running,
+  // poll the attempt row every 10 s — if the DB says "submitted" but this
+  // client is still on the exam screen, force-submit locally too.
+  useEffect(() => {
+    if (step !== "exam" || !supabaseConfigured || !studentIdRef.current) return;
+    const id = window.setInterval(() => {
+      if (forceSubmitFiredRef.current) return;
+      void (async () => {
+        const db = (await import("../lib/supabase")).getSupabase();
+        if (!db || !studentIdRef.current) return;
+        const { data: att } = await db
+          .from("attempts")
+          .select("state")
+          .eq("exam_id", EXAM_ID)
+          .eq("student_id", studentIdRef.current)
+          .maybeSingle();
+        if (att?.state === "submitted" && !forceSubmitFiredRef.current) {
+          forceSubmitFiredRef.current = true;
+          void doSubmit();
+        }
+      })();
+    }, 10_000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   const screenStream = screenStreamRef.current;
   const cameraStream = cameraStreamRef.current;
@@ -793,7 +833,7 @@ export default function StudentExam() {
     onSubmit: () => setShowSubmitDialog(true),
     onShowHelp: () => setShowShortcuts((prev) => !prev),
     onToggleAnswer: () => {
-      // Spacebar: for T/F questions cycle 0→1→clear, for MCQ clear current answer
+      // Spacebar: for T/F questions cycle 0/1/clear, for MCQ clear current answer
       if (!q) return;
       if (q.options.length === 2) {
         // T/F: 0 = True, 1 = False
@@ -881,9 +921,27 @@ export default function StudentExam() {
     // Screen share — request the entire monitor (not just a tab or window).
     try {
       if (isTauri()) {
-        // macOS WKWebView does not support getDisplayMedia(). Since the Tauri app
-        // is already natively locking down the OS (kiosk mode, no alt-tab, etc),
-        // we can safely bypass the screen recording requirement here.
+        // Tauri WebView2 (Windows) and recent WKWebView builds DO support
+        // getDisplayMedia — try it first so the proctor gets a REAL screen
+        // recording + live screen feed. Only fall back to the legacy bypass
+        // (kiosk lockdown already prevents app-switching) when the WebView
+        // genuinely can't capture, e.g. older macOS WKWebView.
+        const mdTauri = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
+        if (mdTauri.getDisplayMedia) {
+          try {
+            const disp = await mdTauri.getDisplayMedia({
+              video: { displaySurface: "monitor" } as MediaTrackConstraints,
+              audio: false,
+            });
+            screenStreamRef.current = disp;
+            disp.getVideoTracks()[0]?.addEventListener("ended", () => {
+              handleScreenTrackEnded();
+            });
+          } catch {
+            // Student dismissed the picker / capture unavailable — proceed
+            // locked-down without a screen stream (camera evidence continues).
+          }
+        }
         setScreen("granted");
       } else {
         const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
@@ -968,7 +1026,7 @@ export default function StudentExam() {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
-    setArtifactStatus({ state: "uploading", detail: "Uploading recording and evidence to Cloudflare…" });
+    setArtifactStatus({ state: "uploading", detail: "Securing your exam recording…" });
     // Stop per-second screenshot capture
     if (screenshotHandleRef.current) {
       screenshotHandleRef.current.stop();
@@ -1027,19 +1085,15 @@ export default function StudentExam() {
         // invigilator) can see storage worked instead of silently losing a
         // recording. Parts uploaded live during the exam are the crash fallback.
         if (result.recordingKey) {
-          setArtifactStatus({
-            state: "stored",
-            detail: `${result.recordingKey.replace(/\/[^/]+\/[^/]+$/, "")}`,
-          });
+          console.info("[StudentExam] recording stored:", result.recordingKey);
+          setArtifactStatus({ state: "stored", detail: "Exam recording secured." });
         } else {
-          setArtifactStatus({
-            state: "partial",
-            detail: "Full video upload failed — crash-safe segments were still uploaded live and can be replayed by the invigilator.",
-          });
+          console.warn("[StudentExam] merged recording upload failed — crash-safe parts remain in storage");
+          setArtifactStatus({ state: "partial", detail: "Recording partially stored." });
         }
       } catch (err) {
         console.error("Failed to upload recording:", err);
-        setArtifactStatus({ state: "failed", detail: "Recording upload failed — contact the invigilator." });
+        setArtifactStatus({ state: "failed", detail: "Recording upload failed." });
       }
     })();
 
@@ -1113,7 +1167,7 @@ export default function StudentExam() {
     );
   }
 
-  // ---------- Step: installed → Enter exam via deep link ----------
+  // ---------- Step: installed / Enter exam via deep link ----------
   // Student installed the Vignan Exam Browser. Now "Enter exam" fires the
   // vignan-exam:// URL scheme — the OS opens the app with the exam pre-loaded.
   // If the scheme is not handled (app not actually installed / wrong OS),
@@ -1259,7 +1313,7 @@ export default function StudentExam() {
       {proctorPaused && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-ink/95 p-6">
           <div className="w-full max-w-md border border-amber/60 bg-paper p-8 text-center shadow-2xl">
-            <span className="mx-auto block h-3 w-3 animate-pulse rounded-full bg-amber" />
+            <span className="mx-auto block h-3 w-3 animate-pulse rounded-none bg-amber" />
             <p className="mt-4 font-mono text-[10px] uppercase tracking-widest text-amber">Session paused</p>
             <h2 className="mt-2 font-serif text-2xl font-semibold">The invigilator has paused your exam</h2>
             <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
@@ -1273,7 +1327,7 @@ export default function StudentExam() {
       {broadcast && (
         <div className="fixed inset-x-0 top-0 z-[65] flex justify-center px-4 py-3">
           <div className="flex w-full max-w-xl items-start gap-3 border border-amber bg-amber px-4 py-3 text-paper shadow-2xl">
-            <span className="mt-1 h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-paper" />
+            <span className="mt-1 h-2.5 w-2.5 shrink-0 animate-pulse rounded-none bg-paper" />
             <div className="flex-1">
               <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">{broadcast.sender} · broadcast</p>
               <p className="mt-0.5 text-[14px] font-medium">{broadcast.body}</p>
@@ -1313,7 +1367,7 @@ export default function StudentExam() {
         <div className={`fixed inset-x-0 top-0 z-[70] flex items-center justify-center gap-2 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-paper ${
           secondsLeft <= 60 ? "bg-alert" : "bg-amber"
         }`}>
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-paper" />
+          <span className="h-1.5 w-1.5 animate-pulse rounded-none bg-paper" />
           {timerWarning.toUpperCase()}
         </div>
       )}
@@ -1529,7 +1583,7 @@ export default function StudentExam() {
       {showShortcuts && (
         <div className="fixed bottom-4 right-4 z-[65] w-full max-w-sm border border-line bg-paper p-4 text-[12px] shadow-xl">
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Keyboard shortcuts</p>
-          <p className="mt-2">↑/↓ Prev/Next · ← First · → Last</p>
+          <p className="mt-2">↑/↓ Prev/Next · ← First · / Last</p>
           <p>R or Ctrl+B Toggle review</p>
           <p>Ctrl+S Save · Alt+S Submit · ? hide</p>
         </div>

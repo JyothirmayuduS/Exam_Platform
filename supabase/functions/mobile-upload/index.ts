@@ -28,6 +28,9 @@ serve(async (req) => {
     const token = (formData.get("token") as string ?? "").trim();
     // Human question number forwarded from the QR URL (falls back to question_id).
     const qId = (formData.get("qId") as string | null) || null;
+    // Exam id forwarded from the QR URL — used for the storage folder when the
+    // session's attempt is still the `pending_<studentId>` placeholder.
+    const formExamId = ((formData.get("examId") as string | null) || "").trim() || null;
     const imageFiles: File[] = [];
     
     let i = 0;
@@ -111,9 +114,31 @@ serve(async (req) => {
       const { data: att } = await supabaseAdmin.from("attempts").select("exam_id").eq("id", session.attempt_id).maybeSingle();
       examId = att?.exam_id ?? null;
     }
+    if (!examId && formExamId) examId = formExamId;
     const examFolder = examId ?? "no-exam"; // upload still succeeds when the attempt is still pending
     const bucketName = Deno.env.get("SUPABASE_BUCKET_NAME") || "exam-records";
     const ts = Date.now();
+
+    // The submission row needs a REAL attempt uuid (FK to attempts). Sessions
+    // created from the phone-side self-heal carry the `pending_` placeholder —
+    // resolve the candidate's latest attempt for this exam instead, so the
+    // upload lands in the gradeable attempt rather than erroring out.
+    let submissionAttemptId: string | null =
+      session.attempt_id && UUID_RE.test(session.attempt_id) ? session.attempt_id : null;
+    if (!submissionAttemptId && session.student_id) {
+      let q = supabaseAdmin
+        .from("attempts")
+        .select("id, exam_id")
+        .eq("student_id", session.student_id)
+        .order("started_at", { ascending: false })
+        .limit(1);
+      if (examId) q = q.eq("exam_id", examId);
+      const { data: att } = await q.maybeSingle();
+      if (att?.id) {
+        submissionAttemptId = att.id as string;
+        if (!examId && att.exam_id) examId = att.exam_id as string;
+      }
+    }
 
     let pdfPath = "";
     let firstOriginalPath = "";
@@ -253,17 +278,23 @@ serve(async (req) => {
       // Fallback: If PDF fails, we at least have the original image.
     }
 
-    // 5. Create submission record
-    await supabaseAdmin.from("question_submissions").insert({
-      attempt_id: session.attempt_id,
-      question_id: session.question_id,
-      student_id: session.student_id,
-      original_storage_path: firstOriginalPath,
-      pdf_storage_path: pdfPath || firstOriginalPath, // Fallback if PDF fails
-      status: "COMPLETED",
-      mime_type: pdfPath ? "application/pdf" : "image/jpeg",
-      file_size: 0,
-    });
+    // 5. Create submission record (skipped only when the candidate genuinely
+    // has no attempt row yet — the files are still stored and the session is
+    // still completed, so the upload never hard-fails).
+    if (submissionAttemptId) {
+      await supabaseAdmin.from("question_submissions").insert({
+        attempt_id: submissionAttemptId,
+        question_id: session.question_id,
+        student_id: session.student_id,
+        original_storage_path: firstOriginalPath,
+        pdf_storage_path: pdfPath || firstOriginalPath, // Fallback if PDF fails
+        status: "COMPLETED",
+        mime_type: pdfPath ? "application/pdf" : "image/jpeg",
+        file_size: 0,
+      });
+    } else {
+      console.warn("[mobile-upload] no real attempt row — files stored without a question_submissions record");
+    }
 
     // 6. Complete Session (Triggers Realtime for Desktop)
     await supabaseAdmin.from("mobile_upload_sessions").update({ status: "COMPLETED" }).eq("id", session.id);
@@ -282,7 +313,7 @@ serve(async (req) => {
         const { count } = await supabaseAdmin
           .from("question_submissions")
           .select("id", { count: "exact", head: true })
-          .eq("attempt_id", session.attempt_id)
+          .eq("attempt_id", submissionAttemptId ?? session.attempt_id)
           .eq("question_id", session.question_id);
         if (!count) {
           await supabaseAdmin.from("mobile_upload_sessions").update({ status: "WAITING", used_at: null }).eq("id", session.id);

@@ -46,7 +46,7 @@ export default function QuestionDisplay({
   const isSubjective = question.type === "subjective" || question.options.length === 0;
 
   return (
-    <section className="border border-line bg-paper-raised p-5 sm:p-7">
+    <section className="border border-line bg-raised p-5 sm:p-7">
       {/* Question text (category/unit removed — it duplicated the top label) */}
       <h2 className="mt-2 font-serif text-[22px] leading-snug text-ink sm:text-[26px]">{question.text}</h2>
 
@@ -62,7 +62,7 @@ export default function QuestionDisplay({
                 className={`flex w-full items-center gap-3 border px-4 py-3 text-left text-[13.5px] transition-colors ${
                   selected
                     ? "border-maroon bg-maroon/[0.06] text-ink"
-                    : "border-line text-ink hover:border-line-strong hover:bg-paper"
+                    : "border-line text-ink hover:border-line hover:bg-paper"
                 }`}
                 aria-label={`Option ${String.fromCharCode(65 + i)}`}
               >
@@ -70,7 +70,7 @@ export default function QuestionDisplay({
                   className={`flex h-5 w-5 shrink-0 items-center justify-center border font-mono text-[10px] transition-colors ${
                     selected
                       ? "border-maroon bg-maroon text-paper"
-                      : "border-line-strong text-ink-soft"
+                      : "border-line text-soft"
                   }`}
                 >
                   {String.fromCharCode(65 + i)}
@@ -82,7 +82,7 @@ export default function QuestionDisplay({
 
           {/* Keyboard hint for T/F */}
           {question.options.length === 2 && (
-            <p className="font-mono text-[9px] text-ink-soft mt-1">
+            <p className="font-mono text-[9px] text-soft mt-1">
               Tip: Press <kbd className="border border-line px-1 py-0.5 font-mono text-[9px]">Space</kbd> to toggle T/F
             </p>
           )}
@@ -93,7 +93,7 @@ export default function QuestionDisplay({
       {isSubjective && (
         <div className="mt-6 space-y-4">
           {typeof answer === "string" && answer.startsWith("[Uploaded answer:") ? (
-            <div className="border border-line bg-paper-raised p-4">
+            <div className="border border-line bg-raised p-4">
               <div className="flex justify-between items-center mb-3">
                 <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-bold">✓ Handwritten Answer Uploaded</p>
                 <button 
@@ -113,7 +113,7 @@ export default function QuestionDisplay({
             <>
               {(!question.subjective_mode || question.subjective_mode === "both" || question.subjective_mode === "textbox") && (
                 <div>
-                  <label className="block font-mono text-[10px] uppercase tracking-wider text-ink-soft mb-1.5">
+                  <label className="block font-mono text-[10px] uppercase tracking-wider text-soft mb-1.5">
                     {question.subjective_mode === "both" ? "Option 1: Type your answer" : "Type your answer"}
                   </label>
                   <textarea
@@ -170,8 +170,8 @@ export default function QuestionDisplay({
             disabled={answer === undefined}
             className={`flex items-center gap-1.5 border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition ${
               answer === undefined
-                ? "cursor-not-allowed border-line text-ink-soft/40"
-                : "border-line-strong text-ink-soft hover:border-alert hover:text-alert"
+                ? "cursor-not-allowed border-line text-soft/40"
+                : "border-line text-soft hover:border-alert hover:text-alert"
             }`}
           >
             ⌫ Clear response

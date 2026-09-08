@@ -191,7 +191,7 @@ export default function ProctorGrid() {
         setViewerState((s) => (s === "off" ? "connecting" : s));
         return;
       }
-      // Connect failed — retry (3s → 6s → … capped at 10s) until it heals.
+      // Connect failed — retry (3s / 6s / … capped at 10s) until it heals.
       const delay = Math.min(3_000 * attempt, 10_000);
       timer = window.setTimeout(() => void connectOnce(), delay);
     };
@@ -216,7 +216,7 @@ export default function ProctorGrid() {
     return () => window.clearInterval(id);
   }, [examId]);
 
-  // Live voice toggle for the focused candidate (speak → they hear you live).
+  // Live voice toggle for the focused candidate (speak / they hear you live).
   const toggleSpeak = async () => {
     if (!selected) return;
     const roll = selected.roll;
@@ -236,7 +236,7 @@ export default function ProctorGrid() {
     pushLog(`Speaking live to ${selected.name} — they can hear you now.`);
   };
 
-  // Map a tile → its live feed. LiveKit student identities are now always
+  // Map a tile / its live feed. LiveKit student identities are now always
   // `student:<roll>`, so match by roll first; fall back to the DB uuid in case
   // an identity came through as a uuid (older clients / unlinked accounts).
   // Matching is CASE-INSENSITIVE: the LiveKit token function can resolve the
@@ -393,6 +393,7 @@ export default function ProctorGrid() {
       roll: a.student?.roll ?? "—",
       state: a.state === "submitted" ? "Submitted" : a.state === "paused" ? "Paused" : a.state === "in_progress" ? "Writing" : "Not started",
       progress: a.total ? Math.round((a.answered / a.total) * 100) : 0,
+      startedAt: a.started_at,
       violations: (a.violations ?? []).map((v) => ({
         description: v.description || v.violation_type,
         type: v.violation_type,
@@ -403,15 +404,15 @@ export default function ProctorGrid() {
     }));
 
   const connLabel = !live ? "Not connected" : viewerState === "connected" ? `${cameraCount} cam · ${screenCount} screen` : "DB synced · feeds off";
-  const connTone = live ? (viewerState === "connected" ? "text-success" : "text-amber") : "text-ink-soft";
+  const connTone = live ? (viewerState === "connected" ? "text-success" : "text-amber") : "text-soft";
 
   // No assigned exams yet: real empty state instead of demo candidates.
   if (!loadingExam && !examId) {
     return (
       <RoleLayout role="Proctor" name={profile?.full_name ?? "Proctor"} subtitle="Invigilator" tone={TONE} items={NAV} status="No exam assigned">
-        <div className="mx-auto mt-16 max-w-xl border border-dashed border-line-strong p-10 text-center">
+        <div className="mx-auto mt-16 max-w-xl border border-dashed border-line p-10 text-center">
           <p className="font-serif text-2xl font-semibold">No exams assigned yet</p>
-          <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+          <p className="mt-3 text-[13px] leading-relaxed text-soft">
             The exams you are assigned to monitor appear here, with live camera/screen feeds, violation flags, and
             speak / warn / pause / escalate tools. Ask the exam teacher to add you via{" "}
             <span className="font-mono text-[11px] text-ink">Assign Proctors</span> on their Live proctoring page — you will
@@ -426,7 +427,7 @@ export default function ProctorGrid() {
     <RoleLayout role="Proctor" name={profile?.full_name ?? "Proctor"} subtitle="Invigilator" tone={TONE} items={NAV} status={live ? "Live monitoring active" : "Not connected"}>
       <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Proctor console / {mainTab === "live" ? "Live monitoring" : "Dashboard & Reports"}</p>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Proctor console / {mainTab === "live" ? "Live monitoring" : "Dashboard & Reports"}</p>
           <div className="mt-2 flex items-center gap-4">
             <h1 className="font-serif text-3xl font-semibold">Live proctoring</h1>
             {examOptions.length > 1 && (
@@ -434,7 +435,7 @@ export default function ProctorGrid() {
                 value={examId ?? ""}
                 onChange={(e) => { setExamId(e.target.value); setSelectedId(null); }}
                 aria-label="Select assigned exam to monitor"
-                className="border border-line-strong bg-paper px-3 py-1 font-serif text-lg font-semibold text-maroon hover:border-maroon focus:border-maroon focus:outline-none cursor-pointer"
+                className="border border-line bg-paper px-3 py-1 font-serif text-lg font-semibold text-maroon hover:border-maroon focus:border-maroon focus:outline-none cursor-pointer"
               >
                 {examOptions.map((ex) => (
                   <option key={ex.id} value={ex.id}>{ex.name} ({ex.batch || ex.id})</option>
@@ -442,12 +443,12 @@ export default function ProctorGrid() {
               </select>
             )}
             <div className="flex border border-line bg-paper">
-              <button onClick={() => setMainTab("live")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider ${mainTab === "live" ? "bg-forest text-paper" : "text-ink-soft hover:bg-paper-raised"}`}>Live Grid</button>
-              <button onClick={() => setMainTab("reports")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider border-l border-line ${mainTab === "reports" ? "bg-forest text-paper" : "text-ink-soft hover:bg-paper-raised"}`}>Reports & Dashboard</button>
-              <button onClick={() => setMainTab("recordings")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider border-l border-line ${mainTab === "recordings" ? "bg-forest text-paper" : "text-ink-soft hover:bg-paper-raised"}`}>Recordings</button>
+              <button onClick={() => setMainTab("live")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider ${mainTab === "live" ? "bg-forest text-paper" : "text-soft hover:bg-raised"}`}>Live Grid</button>
+              <button onClick={() => setMainTab("reports")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider border-l border-line ${mainTab === "reports" ? "bg-forest text-paper" : "text-soft hover:bg-raised"}`}>Reports & Dashboard</button>
+              <button onClick={() => setMainTab("recordings")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider border-l border-line ${mainTab === "recordings" ? "bg-forest text-paper" : "text-soft hover:bg-raised"}`}>Recordings</button>
             </div>
           </div>
-          <p className="mt-2 text-[13px] text-ink-soft">
+          <p className="mt-2 text-[13px] text-soft">
             {examId
               ? <>{examName || "Assigned exam"}{examBatch ? ` · ${examBatch}` : ""}</>
               : "Assigned exam — none selected"}
@@ -475,9 +476,9 @@ export default function ProctorGrid() {
             >
               Broadcast to all
             </button>
-            <span className="flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-alert" /> Session live</span>
+            <span className="flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-none bg-alert" /> Session live</span>
           </div>
-          <span className="font-mono text-[9px] text-ink-soft tracking-wider">
+          <span className="font-mono text-[9px] text-soft tracking-wider">
             {tiles.length} candidate{tiles.length === 1 ? "" : "s"} · {feeds.length} live feed{feeds.length === 1 ? "" : "s"} · {viewerState === "connected" ? `${roomDiag.participants} in room · ${roomDiag.remoteTracks} remote track${roomDiag.remoteTracks === 1 ? "" : "s"}` : "feeds connecting"}
           </span>
         </div>
@@ -496,21 +497,21 @@ export default function ProctorGrid() {
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex gap-1">
             {(["split", "camera", "screen"] as ViewMode[]).map((v) => (
-              <button key={v} onClick={() => setView(v)} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === v ? "text-ink" : "border-transparent text-ink-soft hover:text-ink"}`} style={view === v ? { borderColor: TONE, color: TONE } : undefined}>
+              <button key={v} onClick={() => setView(v)} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === v ? "text-ink" : "border-transparent text-soft hover:text-ink"}`} style={view === v ? { borderColor: TONE, color: TONE } : undefined}>
                 {v === "split" ? "Camera + screen" : v === "camera" ? "Camera wall" : "Screen wall"}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-1 border-l border-line pl-4">
-            <span className="font-mono text-[9px] uppercase tracking-wider text-ink-soft mr-2">Grid:</span>
-            {(["S", "M", "L"] as const).map(s => <button key={s} onClick={() => setSize(s)} className={`px-2 py-1 font-mono text-[10px] border ${size === s ? "border-forest bg-forest text-paper" : "border-line text-ink-soft hover:border-forest"}`}>{s}</button>)}
+            <span className="font-mono text-[9px] uppercase tracking-wider text-soft mr-2">Grid:</span>
+            {(["S", "M", "L"] as const).map(s => <button key={s} onClick={() => setSize(s)} className={`px-2 py-1 font-mono text-[10px] border ${size === s ? "border-forest bg-forest text-paper" : "border-line text-soft hover:border-forest"}`}>{s}</button>)}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 font-mono text-[9px] uppercase text-ink-soft"><input type="checkbox" checked={autoFocus} onChange={e => setAutoFocus(e.target.checked)} className="accent-forest"/> Auto-focus violations</label>
-          <span className={`inline-flex items-center gap-1.5 font-mono text-[10px] ${connTone}`}><span className={`h-1.5 w-1.5 rounded-full ${!live ? "bg-line-strong" : viewerState === "connected" ? "bg-success" : "bg-amber"}`} /> {connLabel}</span>
-          <input type="text" placeholder="Search ID/Name..." value={search} onChange={e => setSearch(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] outline-none focus:border-forest w-32" />
-          <select value={filter} onChange={(e) => setFilter(e.target.value as Filter)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider">
+          <label className="flex items-center gap-2 font-mono text-[9px] uppercase text-soft"><input type="checkbox" checked={autoFocus} onChange={e => setAutoFocus(e.target.checked)} className="accent-forest"/> Auto-focus violations</label>
+          <span className={`inline-flex items-center gap-1.5 font-mono text-[10px] ${connTone}`}><span className={`h-1.5 w-1.5 rounded-none ${!live ? "bg-line" : viewerState === "connected" ? "bg-success" : "bg-amber"}`} /> {connLabel}</span>
+          <input type="text" placeholder="Search ID/Name..." value={search} onChange={e => setSearch(e.target.value)} className="border border-line bg-paper px-3 py-2 font-mono text-[10px] outline-none focus:border-forest w-32" />
+          <select value={filter} onChange={(e) => setFilter(e.target.value as Filter)} className="border border-line bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider">
             <option value="all">All candidates</option>
             <option value="flagged">Flagged only</option>
             <option value="submitted">Submitted</option>
@@ -526,7 +527,7 @@ export default function ProctorGrid() {
             ))}
           </div>
           {visible.length === 0 && (
-            <div className="border border-dashed border-line-strong p-12 text-center font-mono text-[11px] text-ink-soft">
+            <div className="border border-dashed border-line p-12 text-center font-mono text-[11px] text-soft">
               {filter === "all" ? "Waiting for candidates to begin the exam…" : "No candidates match this filter."}
             </div>
           )}
@@ -566,10 +567,10 @@ export default function ProctorGrid() {
 
 function StatCard({ label, value, sub, alert = false }: { label: string; value: string; sub: string; alert?: boolean }) {
   return (
-    <div className={`border bg-paper-raised p-5 ${alert ? "border-alert/40" : "border-line"}`}>
-      <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">{label}</p>
+    <div className={`border bg-raised p-5 ${alert ? "border-alert/40" : "border-line"}`}>
+      <p className="font-mono text-[10px] uppercase tracking-widest text-soft">{label}</p>
       <p className={`mt-2 font-serif text-3xl ${alert ? "text-alert" : "text-ink"}`}>{value}</p>
-      <p className="mt-1 text-[12px] text-ink-soft">{sub}</p>
+      <p className="mt-1 text-[12px] text-soft">{sub}</p>
     </div>
   );
 }
@@ -589,13 +590,13 @@ function FeedVideo({ el, initials, label, isScreen = false }: { el: HTMLVideoEle
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#1F231D]">
       <div ref={holderRef} className="absolute inset-0" />
       {!el && (isScreen ? <FiMonitor aria-hidden className="h-7 w-7 text-paper/30" /> : <span className="font-serif text-2xl text-paper/30">{initials}</span>)}
-      {el && <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 bg-ink/75 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper"><span className="h-1 w-1 rounded-full bg-alert" /> {label}</span>}
+      {el && <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 bg-ink/75 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper"><span className="h-1 w-1 rounded-none bg-alert" /> {label}</span>}
     </div>
   );
 }
 
 function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; feed: RemoteFeed | null; view: ViewMode; selected: boolean; onSelect: () => void }) {
-  const border = tile.severity === "high" ? "border-alert ring-1 ring-alert" : tile.severity === "low" ? "border-amber" : selected ? "ring-1" : "border-line hover:border-line-strong";
+  const border = tile.severity === "high" ? "border-alert ring-1 ring-alert" : tile.severity === "low" ? "border-amber" : selected ? "ring-1" : "border-line hover:border-line";
   return (
     <button onClick={onSelect} className={`overflow-hidden border text-left ${border}`} style={selected && tile.severity === "none" ? { borderColor: TONE, boxShadow: `0 0 0 1px ${TONE}` } : undefined}>
       {view === "split" ? (
@@ -609,12 +610,12 @@ function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; fee
       <div className="flex items-center justify-between gap-2 border-t border-line px-2.5 py-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tile.progress > 80 ? "bg-success" : tile.progress > 40 ? "bg-amber" : "bg-alert"}`} title="Connection Status"></span>
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-none ${tile.progress > 80 ? "bg-success" : tile.progress > 40 ? "bg-amber" : "bg-alert"}`} title="Connection Status"></span>
             <p className="truncate text-[12px] font-medium">{tile.name}</p>
           </div>
-          <p className="truncate font-mono text-[9px] text-ink-soft ml-3">{tile.roll} · {tile.status}{tile.status === "Writing" ? ` ${tile.progress}%` : ""}</p>
+          <p className="truncate font-mono text-[9px] text-soft ml-3">{tile.roll} · {tile.status}{tile.status === "Writing" ? ` ${tile.progress}%` : ""}</p>
         </div>
-        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: severityTone[tile.severity] }} title={severityLabel[tile.severity]} />
+        <span className="h-2 w-2 shrink-0 rounded-none" style={{ backgroundColor: severityTone[tile.severity] }} title={severityLabel[tile.severity]} />
       </div>
     </button>
   );
@@ -629,14 +630,14 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
 }) {
   const feedRef = useRef<HTMLDivElement | null>(null);
   const [audioOn, setAudioOn] = useState(false);
-  if (!selected) return <aside className="border border-line p-6 font-mono text-[11px] text-ink-soft">No candidate selected.</aside>;
+  if (!selected) return <aside className="border border-line p-6 font-mono text-[11px] text-soft">No candidate selected.</aside>;
   return (
     <aside className="space-y-4">
       <div className="border border-line bg-paper">
         <div className="border-b border-line px-4 py-3">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Focused candidate</p>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Focused candidate</p>
           <div className="mt-1 flex items-center justify-between gap-3">
-            <div className="min-w-0"><h2 className="truncate font-serif text-lg font-semibold">{selected.name}</h2><p className="font-mono text-[10px] text-ink-soft">{selected.roll} · {selected.status} · {selected.progress}%</p></div>
+            <div className="min-w-0"><h2 className="truncate font-serif text-lg font-semibold">{selected.name}</h2><p className="font-mono text-[10px] text-soft">{selected.roll} · {selected.status} · {selected.progress}%</p></div>
             <span className="shrink-0 font-mono text-[10px] uppercase" style={{ color: severityTone[selected.severity] }}>{severityLabel[selected.severity]}</span>
           </div>
         </div>
@@ -670,16 +671,16 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
             </button>
           </div>
         </div>
-        <div className="border-t border-line px-4 py-3 text-[12px] text-ink-soft">{selected.reason ?? "No active proctoring flags. All checks passing."}</div>
+        <div className="border-t border-line px-4 py-3 text-[12px] text-soft">{selected.reason ?? "No active proctoring flags. All checks passing."}</div>
       </div>
 
       <div className="border border-line p-4">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Intervention Tools</p>
+        <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Intervention Tools</p>
         
         {/* Chat / Warning */}
         <div className="mt-3 flex gap-2">
-          <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onSend(); }} placeholder="Type a warning or note…" className="min-w-0 flex-1 border border-line-strong bg-paper px-3 py-2 text-[12px] outline-none focus:border-ink" />
-          <button onClick={onSend} disabled={!note.trim()} className="border border-forest bg-forest px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:cursor-not-allowed disabled:border-line disabled:bg-line disabled:text-ink-soft">Send</button>
+          <input value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onSend(); }} placeholder="Type a warning or note…" className="min-w-0 flex-1 border border-line bg-paper px-3 py-2 text-[12px] outline-none focus:border-ink" />
+          <button onClick={onSend} disabled={!note.trim()} className="border border-forest bg-forest px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-soft disabled:cursor-not-allowed disabled:border-line disabled:bg-line disabled:text-soft">Send</button>
           <button
             onClick={onSpeak}
             disabled={voiceBusy}
@@ -694,10 +695,10 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
 
         {/* Action Grid */}
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <button onClick={onFlag} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Flag Activity</button>
-          <button onClick={onLogViolation} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Log Violation</button>
-          <button onClick={onExtend} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Extend (+5m)</button>
-          <button onClick={onScreenshot} className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Screenshot</button>
+          <button onClick={onFlag} className="border border-line py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-forest hover:text-ink">Flag Activity</button>
+          <button onClick={onLogViolation} className="border border-line py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-forest hover:text-ink">Log Violation</button>
+          <button onClick={onExtend} className="border border-line py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-forest hover:text-ink">Extend (+5m)</button>
+          <button onClick={onScreenshot} className="border border-line py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-forest hover:text-ink">Screenshot</button>
         </div>
 
         {/* Critical Actions */}
@@ -721,11 +722,11 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
       </div>
 
       <div className="border border-line p-4">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Proctor action log</p>
+        <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Proctor action log</p>
         <div className="mt-3 space-y-2">
-          {log.length === 0 && <p className="font-mono text-[10px] text-ink-soft">No actions yet this session.</p>}
+          {log.length === 0 && <p className="font-mono text-[10px] text-soft">No actions yet this session.</p>}
           {log.map((e, i) => (
-            <div key={i} className="flex gap-3 border-l-2 border-line pl-3"><span className="font-mono text-[10px] text-ink-soft">{e.time}</span><p className="text-[12px]">{e.text}</p></div>
+            <div key={i} className="flex gap-3 border-l-2 border-line pl-3"><span className="font-mono text-[10px] text-soft">{e.time}</span><p className="text-[12px]">{e.text}</p></div>
           ))}
         </div>
       </div>
@@ -777,8 +778,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
   const runExportPdf = () => {
     setExporting("pdf");
     window.setTimeout(() => {
-      downloadSessionReportPdf(examName, examId, reportRows);
-      setExporting(null);
+      void downloadSessionReportPdf(examName, examId, reportRows).finally(() => setExporting(null));
     }, 50);
   };
   const runExportCsv = () => {
@@ -832,17 +832,17 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
         <div className="space-y-8">
           <div className="border border-line bg-paper p-6">
             <h2 className="font-serif text-xl font-semibold">High-Risk Candidates</h2>
-            <p className="mt-1 text-[13px] text-ink-soft">Candidates with active violation events. Click an incident to replay the recording with red markers.</p>
+            <p className="mt-1 text-[13px] text-soft">Candidates with active violation events. Click an incident to replay the recording with red markers.</p>
             <div className="mt-4 space-y-2">
               {flagged.length === 0 && (
-                <p className="border border-dashed border-line-strong p-6 text-center font-mono text-[11px] text-ink-soft">No candidates are currently flagged.</p>
+                <p className="border border-dashed border-line p-6 text-center font-mono text-[11px] text-soft">No candidates are currently flagged.</p>
               )}
               {flagged.map((r) => (
-                <div key={r.roll} className="border border-line p-3 hover:border-line-strong">
+                <div key={r.roll} className="border border-line p-3 hover:border-line">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-[13px] font-medium">{r.name} ({r.roll})</p>
-                      <p className="font-mono text-[10px] text-ink-soft">
+                      <p className="font-mono text-[10px] text-soft">
                         {r.violations.filter((v) => v.severity === "critical" || v.severity === "high").length} critical · {r.violations.length} total
                       </p>
                     </div>
@@ -868,11 +868,11 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
           <div className="border border-line bg-paper p-6">
             <h2 className="font-serif text-xl font-semibold">Violation Summary</h2>
             {flagged.length === 0 ? (
-              <p className="mt-3 text-[12px] text-ink-soft">No violation events recorded for this exam.</p>
+              <p className="mt-3 text-[12px] text-soft">No violation events recorded for this exam.</p>
             ) : (
               <div className="mt-4 overflow-hidden border border-line">
                 <table className="w-full text-left text-[12px]">
-                  <thead className="border-b border-line font-mono text-[9px] uppercase tracking-wider text-ink-soft">
+                  <thead className="border-b border-line font-mono text-[9px] uppercase tracking-wider text-soft">
                     <tr><th className="px-3 py-2">Candidate</th><th className="px-3 py-2">Violation</th><th className="px-3 py-2">Severity</th><th className="px-3 py-2">Time</th></tr>
                   </thead>
                   <tbody>
@@ -882,7 +882,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
                           <td className="px-3 py-2">{r.name}</td>
                           <td className="px-3 py-2 text-alert">{v.description || v.type}</td>
                           <td className="px-3 py-2 font-mono text-[10px] uppercase">{v.severity}</td>
-                          <td className="px-3 py-2 font-mono text-[10px] text-ink-soft">
+                          <td className="px-3 py-2 font-mono text-[10px] text-soft">
                             {v.offset_seconds != null ? `@ ${v.offset_seconds}s` : new Date(v.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                           </td>
                         </tr>
@@ -897,22 +897,22 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
 
         <div className="space-y-4">
           <div className="border border-line bg-paper p-5">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exports & Evidence</p>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Exports & Evidence</p>
             <div className="mt-4 grid gap-2">
-              <button onClick={() => void runExportZip()} disabled={zipping} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:cursor-not-allowed disabled:opacity-60">
+              <button onClick={() => void runExportZip()} disabled={zipping} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-soft disabled:cursor-not-allowed disabled:opacity-60">
                 <span>{zipping ? "Zipping recordings & screenshots…" : "Download Evidence ZIP"}</span> <FiDownload aria-hidden />
               </button>
-              {zipMsg && <p className="px-1 font-mono text-[10px] text-ink-soft">{zipMsg}</p>}
-              <button onClick={runExportPdf} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
+              {zipMsg && <p className="px-1 font-mono text-[10px] text-soft">{zipMsg}</p>}
+              <button onClick={runExportPdf} className="flex w-full items-center justify-between border border-forest bg-forest px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-soft">
                 <span>{exporting === "pdf" ? "Generating…" : "Session Report (PDF)"}</span> <FiDownload aria-hidden />
               </button>
-              <button onClick={onShowRecordings} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
+              <button onClick={onShowRecordings} className="flex w-full items-center justify-between border border-line px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-raised">
                 <span>Review recordings</span> <FiPlay aria-hidden />
               </button>
-              <button onClick={() => navigate("/teacher/evidence")} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
+              <button onClick={() => navigate("/teacher/evidence")} className="flex w-full items-center justify-between border border-line px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-raised">
                 <span>Evidence archive (all exams)</span> <FiFolder aria-hidden />
               </button>
-              <button onClick={runExportCsv} className="flex w-full items-center justify-between border border-line-strong px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-paper-raised">
+              <button onClick={runExportCsv} className="flex w-full items-center justify-between border border-line px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider hover:bg-raised">
                 <span>{exporting === "csv" ? "Exporting…" : "Proctor Activity Log (CSV)"}</span> <FiDownload aria-hidden />
               </button>
             </div>
@@ -976,7 +976,7 @@ function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] })
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-line pb-4">
         <div>
           <h2 className="font-serif text-xl font-semibold">Session Recordings Archive</h2>
-          <p className="mt-1 text-[13px] text-ink-soft">
+          <p className="mt-1 text-[13px] text-soft">
             Recordings and flagged snapshots stream from Cloudflare R2. Red markers on the timeline show each violation's timestamp — click to jump.
           </p>
         </div>
@@ -985,14 +985,14 @@ function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] })
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by name/ID..."
-          className="w-full border border-line-strong bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest sm:w-64"
+          className="w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest sm:w-64"
         />
       </div>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[280px_1fr]">
         <div className="space-y-2 border border-line bg-paper">
           {visible.length === 0 && (
-            <p className="p-6 text-center font-mono text-[11px] text-ink-soft">No candidates found.</p>
+            <p className="p-6 text-center font-mono text-[11px] text-soft">No candidates found.</p>
           )}
           {visible.map((item) => {
             const isSelected = selected?.id === item.id;
@@ -1001,17 +1001,17 @@ function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] })
               <button
                 key={item.id}
                 onClick={() => setSelectedId(item.id)}
-                className={`flex w-full items-center justify-between border-l-2 p-3 text-left hover:bg-paper-raised ${isSelected ? "border-forest bg-paper-raised" : "border-transparent"}`}
+                className={`flex w-full items-center justify-between border-l-2 p-3 text-left hover:bg-raised ${isSelected ? "border-forest bg-raised" : "border-transparent"}`}
               >
                 <div className="min-w-0">
                   <p className="truncate text-[13px] font-medium text-ink">{item.name}</p>
-                  <p className="mt-0.5 truncate font-mono text-[10px] text-ink-soft">
+                  <p className="mt-0.5 truncate font-mono text-[10px] text-soft">
                     {item.roll} · {item.status}
                   </p>
                 </div>
                 {flaggedCount > 0 && (
-                  <span className="ml-2 flex items-center gap-1 rounded-full bg-alert px-2 py-0.5 font-mono text-[9px] text-paper">
-                    <span className="h-1 w-1 rounded-full bg-paper" /> {flaggedCount}
+                  <span className="ml-2 flex items-center gap-1 rounded-none bg-alert px-2 py-0.5 font-mono text-[9px] text-paper">
+                    <span className="h-1 w-1 rounded-none bg-paper" /> {flaggedCount}
                   </span>
                 )}
               </button>
@@ -1022,7 +1022,7 @@ function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] })
         <div className="min-w-0 border border-line bg-paper">
           <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Currently playing</p>
+              <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Currently playing</p>
               <h3 className="truncate font-serif text-lg font-semibold">
                 {selected ? `${selected.name} · ${selected.roll}` : "Select a candidate"}
               </h3>
@@ -1043,7 +1043,7 @@ function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] })
                 violations={selected.violations}
               />
             ) : (
-              <p className="py-16 text-center font-mono text-[11px] text-ink-soft">Waiting for candidates to join the session…</p>
+              <p className="py-16 text-center font-mono text-[11px] text-soft">Waiting for candidates to join the session…</p>
             )}
           </div>
         </div>

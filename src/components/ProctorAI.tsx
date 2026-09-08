@@ -3,15 +3,15 @@
 // This component is now a THIN CONTROLLER. All decision logic lives in the
 // modular engine under src/proctoring/ (unit-tested, no DOM):
 //
-//   models (MediaPipe)     → loaded here (same-origin first, CDN fallback)
-//   face / gaze / audio    → read here from the shared camera <video>
-//   raw object detections  → classified (labels.ts), identity-tracked and
+//   models (MediaPipe)     / loaded here (same-origin first, CDN fallback)
+//   face / gaze / audio    / read here from the shared camera <video>
+//   raw object detections  / classified (labels.ts), identity-tracked and
 //                            temporally confirmed (ObjectTracker.ts)
-//   phone + head-pose      → fused (fusion.ts) — "head down" NEVER claims a
+//   phone + head-pose      / fused (fusion.ts) — "head down" NEVER claims a
 //                            phone by itself; "possible phone use" requires
 //                            BOTH a confirmed phone AND a sustained head-down
-//   dedupe / risk          → ViolationGate + RiskEngine
-//   diagnostics            → diag sink read by ProctorDebugOverlay (dev only)
+//   dedupe / risk          / ViolationGate + RiskEngine
+//   diagnostics            / diag sink read by ProctorDebugOverlay (dev only)
 //
 // The component renders an invisible <video> receiving the camera stream and
 // emits violation events to the parent — its public props are unchanged.
@@ -122,6 +122,13 @@ function dataUrlToBlob(dataUrl: string): Blob | undefined {
   }
 }
 
+/** Per-kind confidence gate (mirrors the pipeline test's gating rule). */
+function minConfForKind(kind: Detection["kind"]): number {
+  if (kind === "phone") return OBJECT.PHONE_MIN_CONF;
+  if (kind === "earbuds") return OBJECT.EARBUDS_MIN_CONF;
+  return OBJECT.LAPTOP_MIN_CONF;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _visionCache: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -145,8 +152,8 @@ async function getVision(): Promise<any> {
 // Uses 4 facial landmark indices from MediaPipe Face Landmarker to estimate
 // rough yaw (left/right) and pitch (up/down) as pure geometric RATIOS:
 //
-//   1   → nose tip     33 → left eye outer corner
-// 152   → chin        263 → right eye outer corner
+//   1   / nose tip     33 / left eye outer corner
+// 152   / chin        263 / right eye outer corner
 //
 // The ratios are NOT absolute angles — their neutral value depends on the
 // camera's height and the student's seating. ProctorAI therefore calibrates a
@@ -204,7 +211,7 @@ function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number): void {
   }
 }
 
-/** Raw MediaPipe detection → normalized, confidence-gated engine Detections.
+/** Raw MediaPipe detection / normalized, confidence-gated engine Detections.
  *
  *  MediaPipe's ObjectDetector returns the bounding box in PIXELS
  *  (originX / originY / width / height), NOT normalized [0,1] units. Clamping
@@ -230,7 +237,7 @@ function toDetections(
       const score = Number(c.score ?? 0);
       if (!kind || !d.boundingBox) continue;
       const box = d.boundingBox;
-      const minConf = kind === "phone" ? OBJECT.PHONE_MIN_CONF : OBJECT.LAPTOP_MIN_CONF;
+      const minConf = minConfForKind(kind);
       if (score < minConf) continue; // gate here — the model threshold stays low
       // Real pixel dims, never negative, clamped to the visible frame.
       const px = Math.max(0, Number(box.originX ?? 0));
@@ -295,9 +302,9 @@ function detectDeskRoi(
         const score = Number(c.score ?? 0);
         if (!kind || !d.boundingBox) continue;
         const box = d.boundingBox;
-        const minConf = kind === "phone" ? OBJECT.PHONE_MIN_CONF : OBJECT.LAPTOP_MIN_CONF;
+        const minConf = minConfForKind(kind);
         if (score < minConf) continue;
-        // Crop-local pixels → full-frame normalized.
+        // Crop-local pixels / full-frame normalized.
         const px = Math.max(0, Number(box.originX ?? 0)) + roiX;
         const py = Math.max(0, Number(box.originY ?? 0)) + roiY;
         const pw = Math.max(0, Number(box.width ?? 0));
@@ -417,7 +424,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     setStatus((prev) => ({ ...prev, riskScore: s.score, riskLevel: s.level }));
   }, []);
 
-  // Violation emitter: cooldown gate (dedupe) → risk → evidence frame → parent.
+  // Violation emitter: cooldown gate (dedupe) / risk / evidence frame / parent.
   const emit = useCallback(
     (category: ProctorCategory, label: string, confidence: number) => {
       const now = Date.now();
@@ -518,7 +525,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
       }
     };
 
-    // Try each asset source (same-origin → CDN) with 2 retries + backoff so a
+    // Try each asset source (same-origin / CDN) with 2 retries + backoff so a
     // transient network failure on a big file doesn't kill the model.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const withRetry = async (make: (source: string) => Promise<any>, sources: string[], step: string): Promise<any> => {

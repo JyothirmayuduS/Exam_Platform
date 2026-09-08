@@ -22,7 +22,7 @@ export interface DiagSnapshot {
   risk: RiskState;
   /** Live tracked objects (ids, hits, conf). */
   tracks: readonly TrackedObject[];
-  /** Last few raw object samples (label → conf), for debugging detection. */
+  /** Last few raw object samples (label / conf), for debugging detection. */
   objectSamples: string[];
   /** rAF cadence of the tick loop. */
   fps: number;

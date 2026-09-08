@@ -39,7 +39,7 @@ export async function getStudentIdByRoll(roll: string): Promise<string | null> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Attempt lifecycle: start → autosave → submit
+// Attempt lifecycle: start / autosave / submit
 // ─────────────────────────────────────────────────────────────────────────────
 
 
