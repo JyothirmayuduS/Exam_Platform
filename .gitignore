@@ -15,3 +15,8 @@ playwright-report/
 test-results/
 .env.local
 .env
+
+# Model weights — far over GitHub's 100 MB file limit; keep local only.
+# (No code path loads them: detection uses MediaPipe tasks bundled in public/.)
+*.pt
+!public/ai/models/*.pt
