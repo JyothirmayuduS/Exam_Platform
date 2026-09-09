@@ -8,3 +8,8 @@ supabase
 .env.local
 .env
 dist
+
+# Model weights (150 MB+) exceed Vercel's 100 MB per-file upload limit and are
+# not referenced by the build (detection uses public/ai/models/*).
+*.pt
+training
