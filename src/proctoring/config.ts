@@ -15,11 +15,11 @@ import type { ProctorCategory } from "./types";
 //   object detector    / OBJECT_MS (heaviest model — slowest cadence)
 //   audio RMS          / AUDIO_MS
 export const CADENCE = {
-  GAZE_MS: 250,     // head-pose / gaze estimation
-  FACE_MS: 500,     // face count
-  OBJECT_MS: 500,   // object detection (phone / laptop / …) — fast enough that
-                    // 3 hits can confirm a phone within ~2–3 s of visibility
-  AUDIO_MS: 400,    // voice RMS
+  GAZE_MS: 150,     // head-pose / gaze estimation — faster for quicker detection
+  FACE_MS: 200,     // face count — reduced for faster no-face detection
+  OBJECT_MS: 250,   // object detection (phone / laptop) — 2 hits confirm a
+                    // phone in ~0.5 s of visibility
+  AUDIO_MS: 150,    // voice RMS — faster for earbud audio detection
 } as const;
 
 // While a CONFIRMED phone stays in view we re-notify at this cadence (well
@@ -37,9 +37,9 @@ export const GAZE = {
   DEVIATION: 0.14,
   // A condition must persist this many consecutive samples before it is
   // reported (one jitter frame never fires). 6 samples @250 ms ≈ 1.5 s.
-  SUSTAIN_SAMPLES: 6,
+  SUSTAIN_SAMPLES: 4,
   // Samples back inside neutral before a flag can re-arm.
-  CLEAR_SAMPLES: 6,
+  CLEAR_SAMPLES: 4,
   // Head-down must persist at least this long to count as "sustained down"
   // for phone/gaze fusion.
   HEAD_DOWN_MS: 1_200,
@@ -47,9 +47,11 @@ export const GAZE = {
 
 // ── Face count ───────────────────────────────────────────────────────────────
 export const FACE = {
-  MIN_CONF: 0.6,     // face-detector confidence gate
-  LANDMARK_MIN_CONF: 0.45, // landmark presence gate
-  SUSTAIN: 6,        // ~3 s of no-face at FACE_MS=500 before flagging
+  MIN_CONF: 0.5,     // face-detector confidence gate — lowered for better detection
+  LANDMARK_MIN_CONF: 0.4, // landmark presence gate
+  // ~0.6 s of no-face at FACE_MS=200 before flagging — the candidate must be
+  // gone ~1.5 s total (first missed sample + streak) before the flag fires.
+  SUSTAIN: 3,
 } as const;
 
 // ── Object detection thresholds ──────────────────────────────────────────────
@@ -80,22 +82,35 @@ export const TRACKING = {
   // objects; tracker also uses center-distance fallback for robustness.
   IOU_THRESHOLD: 0.15,
   // Confirmation = MIN_HITS positive samples seen inside CONFIRM_WINDOW_MS.
-  // With the 500 ms detector cadence that means a phone is confirmed only
-  // after it has been visibly present for roughly 1–2 s.
+  // With the 250 ms detector cadence that means a phone is confirmed only
+  // after it has been visibly present for roughly 0.5 s.
   MIN_HITS: 2,
   // Consecutive samples an object may be invisible before its identity is
-  // dropped (~1.5 s of short-term persistence at 500 ms cadence). One missed
+  // dropped (~1.5 s of short-term persistence at 300 ms cadence). One missed
   // frame must not kill the track; three in a row means it left the frame.
-  MAX_MISSES: 3,
-  CONFIRM_WINDOW_MS: 4_500,
+  MAX_MISSES: 4,
+  CONFIRM_WINDOW_MS: 3_000,
   // Keep recent scores per track for smoothing + diagnostics.
   MAX_HISTORY: 12,
 } as const;
 
 // ── Audio ────────────────────────────────────────────────────────────────────
 export const AUDIO = {
-  VOICE_RMS: 0.05,  // RMS amplitude above which we treat sound as voice
-  SUSTAIN: 4,       // ~1.6 s of sustained sound before flagging
+  VOICE_RMS: 0.04,  // RMS amplitude above which we treat sound as voice — lowered for better detection
+  SUSTAIN: 3,       // ~0.45 s of sustained sound before flagging — faster response
+  // ── Earbud/headphone leak detection ────────────────────────────────────────
+  // Earbuds leak only a FAINT signal into the mic (far quieter than direct
+  // speech). Its signature: persistent (never pauses like speech), low-level,
+  // and BROADBAND (music/content spreads energy across many frequency bins,
+  // while silence has ~none and fan/hum noise concentrates in a few low bins).
+  EARBUDS_RMS_MIN: 0.008,     // floor — below this the mic sees silence
+  EARBUDS_RMS_MAX: 0.045,     // above VOICE_RMS it is direct speech, not a leak
+  EARBUDS_MIN_ACTIVE_BINS: 8, // broadband content gate (250 Hz – 8 kHz)
+  EARBUDS_ACTIVE_BIN_FLOOR: 4,   // byte-spectrum value a bin must exceed to count as active
+  EARBUDS_FREQ_LOW: 250,      // Hz — ignore sub-250 Hz rumble (AC, traffic)
+  EARBUDS_FREQ_HIGH: 8000,    // Hz — cap (mic rolloff above this is noise)
+  EARBUDS_SUSTAIN: 8,         // consecutive samples (~1.2 s at AUDIO_MS=150) before flagging
+  EARBUDS_ACK_MS: 30_000,     // re-notify while the leak persists (cooldown still applies)
 } as const;
 
 // ── Cooldowns (per category) ─────────────────────────────────────────────────

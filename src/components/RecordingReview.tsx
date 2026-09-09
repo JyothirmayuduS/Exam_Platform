@@ -83,6 +83,12 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
         const recordings = arts
           .filter((a) => a.kind === "recordings" && !a.key.includes("/parts/"))
           .sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? ""));
+        // A merged file that only concatenates SEPARATE recorder sessions
+        // (screen → camera failover) often ships a broken/absent duration
+        // header; some players stall on it. The parts sequence is always
+        // cleanly decodable, so when both exist the PARTS timeline is the
+        // primary playback source and the merged file is the fallback.
+        const mergedIsUnstable = parts.length > 2 && parts.length * 8 > 90; // >90 s of exam ⇒ ≥12 parts
         const snaps = arts
           .filter((a) => a.kind === "violations")
           .sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? ""));
@@ -108,8 +114,10 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
 
         // No finished video (crash before submit?) — stitch the live-uploaded
         // segments into a continuous preview. Sign every segment URL up front.
+        // ALSO used as the PRIMARY source when the merged file looks unstable
+        // (mergedIsUnstable) — playback then rides the clean 10 s segments.
         let partsWithUrl: PartItem[] = [];
-        if (!recUrl && parts.length > 0) {
+        if (parts.length > 0 && (!recUrl || mergedIsUnstable)) {
           const urls = await Promise.all(parts.slice(0, 720).map((a) => getArtifactObjectUrl(a.key)));
           partsWithUrl = parts
             .slice(0, 720)
@@ -117,8 +125,9 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
             .filter((p): p is PartItem => Boolean(p.url));
         }
         if (cancelled) return;
+        const preferParts = partsWithUrl.length > 0 && (!recUrl || mergedIsUnstable);
         setState({
-          recordingUrl: recUrl,
+          recordingUrl: preferParts ? null : recUrl,
           parts: partsWithUrl,
           rebuilt: partsWithUrl.length > 0,
           posterUrl,
@@ -327,13 +336,13 @@ export default function RecordingReviewer({
         chunks.push(await res.blob());
       }
       const merged = new Blob(chunks, { type: "video/webm" });
-      setMergeMsg("Uploading full recording to Cloudflare R2…");
+      setMergeMsg("Uploading full recording to secure storage…");
       const folder = await resolveExamStorageSegment(examId);
       const key = `${folder}/${roll}/recordings/recording_rebuilt_${Date.now()}.webm`;
       const stored = await uploadArtifactBlob(key, merged, "video/webm");
-      if (!stored) throw new Error("Cloudflare upload did not confirm");
+      if (!stored) throw new Error("Storage upload did not confirm");
       setSaveDone(true);
-      setMergeMsg("Full recording saved to Cloudflare R2");
+      setMergeMsg("Full recording saved to secure storage");
       setReloadKey((k) => k + 1); // reload — the finished file is now preferred
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
@@ -346,7 +355,7 @@ export default function RecordingReviewer({
     <div className="space-y-4">
       <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden border border-line bg-[#1F231D]">
         {artifacts.status === "loading" && (
-          <p className="font-mono text-[10px] uppercase tracking-widest text-paper/60">Loading recording from Cloudflare…</p>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-paper/60">Loading recording…</p>
         )}
         {artifacts.rebuilt && (
           <span className="absolute left-3 top-3 z-10 border border-amber/40 bg-ink/70 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber">
@@ -434,13 +443,13 @@ export default function RecordingReviewer({
               <span className="font-serif text-3xl text-paper/20">{name.split(" ").map((x) => x[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}</span>
             )}
             <p className="mt-4 font-mono text-[10px] uppercase tracking-widest text-paper/50">
-              No artifacts stored for {roll} (Cloudflare R2 / Supabase backup)
+              No artifacts stored for {roll}
             </p>
           </div>
         )}
         {artifacts.status === "error" && (
           <p className="px-6 text-center font-mono text-[10px] uppercase tracking-widest text-alert">
-            Could not read the recording from Cloudflare R2 or the Supabase backup bucket.
+            Could not read the recording from secure storage.
           </p>
         )}
         {loadError && videoSrc && (
@@ -473,15 +482,22 @@ export default function RecordingReviewer({
             className="absolute left-0 top-0 h-full bg-forest"
             style={{ width: visibleDuration ? `${Math.min(100, (current / visibleDuration) * 100)}%` : "0%" }}
           />
-          {visibleDuration && markers.map((m) => (
+          {markers.map((m) => {
+            // Calculate marker position - use available duration or estimate from marker position
+            const d = visibleDuration;
+            const pct = d && d > 0 ? Math.min(99.5, Math.max(0, (m.seconds / d) * 100)) : null;
+            // If we can't calculate position, distribute markers evenly across the bar
+            const leftPos = pct !== null ? `${pct}%` : `${Math.min(99.5, (markers.indexOf(m) / Math.max(1, markers.length - 1)) * 100)}%`;
+            return (
             <button
               key={m.v.id}
               title={`${m.label} @ ${clock(m.seconds)}`}
               onClick={(e) => { e.stopPropagation(); seekTo(m.seconds); }}
               className={`absolute top-0 h-full w-1.5 -translate-x-1/2 ${m.severity === "critical" || m.severity === "high" ? "bg-alert" : "bg-amber"}`}
-              style={markerStyle(m.seconds)}
+              style={{ left: leftPos }}
             />
-          ))}
+            );
+          })}
         </div>
         <div className="flex items-center justify-between font-mono text-[9px] uppercase tracking-wider text-ink-soft">
           <span>{markers.length > 0 ? `${markers.length} violation marker(s) in red` : "No violations on this timeline"}</span>
@@ -496,8 +512,8 @@ export default function RecordingReviewer({
             <p className="font-mono text-[10px] uppercase tracking-widest text-amber">No finished recording file</p>
             <p className="mt-1 text-[12px] text-ink-soft">
               {saveDone
-                ? "Full video has been saved to Cloudflare R2 and will be used from now on."
-                : "This exam has crash-safe segments only — stitch them into one full-length recording and store it in Cloudflare R2."}
+                ? "Full video has been saved to secure storage and will be used from now on."
+                : "This exam has crash-safe segments only — stitch them into one full-length recording and store it securely."}
             </p>
           </div>
           <button
@@ -549,7 +565,7 @@ export default function RecordingReviewer({
       {/* Violation snapshots + report */}
       {(artifacts.snapshotUrls.length > 0 || artifacts.reportUrl) && (
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Evidence · Cloudflare R2</p>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Evidence</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {artifacts.snapshotUrls.slice(0, 6).map((u, i) => (
               <a key={u} href={u} target="_blank" rel="noreferrer" className="border border-line bg-paper-raised p-0.5 hover:border-alert">

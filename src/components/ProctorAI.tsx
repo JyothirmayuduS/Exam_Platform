@@ -375,9 +375,19 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   const tPhone   = useRef(0);
   const tAudio   = useRef(0);
   const lastAck  = useRef(0);
+  const lastEarbudsAck = useRef(0);
   const frameDims = useRef(""); // diag: log the frame size once per change
   // rAF fps measurement (diagnostics)
   const fpsFrames = useRef(0);
+
+  // Behavioral pattern detection for mobile phone use outside camera frame
+  // Detects suspicious patterns like sustained head-down + hand movement
+  const behavioralRef = useRef({
+    headDownStartTime: null as number | null,
+    frameDiffHistory: [] as Uint8ClampedArray[],
+    suspiciousBehaviorStreak: 0,
+    lastAnalysisTime: 0,
+  });
   const fpsAt     = useRef(0);
 
   const [status, setStatus] = useState<AIStatus>({
@@ -653,6 +663,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     let noFaceStreak = 0;
     let multiFaceStreak = 0;
     let audioStreak = 0;
+    let earbudsStreak = 0;
     let landmarksVisible = false;
 
     // 1 Hz risk decay — clean behavior steadily lowers the score.
@@ -740,6 +751,72 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
               }
 
               setStatus(s => ({ ...s, gazeDirection: dir, gazeScore: Math.max(0, Math.min(1, 1 - dev / (GAZE.DEVIATION * 3))) }));
+
+              // ── Behavioral pattern detection for mobile phone use ──────
+              // Detect sustained head-down + frame movement that suggests
+              // the candidate is looking at something below the screen (phone)
+              if (dir === "down" && gaze.awayStreak >= GAZE.SUSTAIN_SAMPLES) {
+                if (!behavioralRef.current.headDownStartTime) {
+                  behavioralRef.current.headDownStartTime = now;
+                }
+                const headDownDuration = now - behavioralRef.current.headDownStartTime;
+
+                // Analyze frame for hand movement (suggesting holding a phone)
+                if (videoRef.current && now - behavioralRef.current.lastAnalysisTime > 500) {
+                  behavioralRef.current.lastAnalysisTime = now;
+                  try {
+                    const canvas = document.createElement("canvas");
+                    canvas.width = 64;
+                    canvas.height = 48;
+                    const ctx = canvas.getContext("2d");
+                    if (ctx) {
+                      // Capture lower portion of frame (where hands/phone would be)
+                      ctx.drawImage(
+                        videoRef.current,
+                        0, videoRef.current.videoHeight * 0.5,
+                        videoRef.current.videoWidth, videoRef.current.videoHeight * 0.5,
+                        0, 0, 64, 48
+                      );
+                      const frameData = ctx.getImageData(0, 0, 64, 48).data;
+
+                      // Calculate frame difference to detect movement
+                      if (behavioralRef.current.frameDiffHistory.length > 0) {
+                        const lastFrame = behavioralRef.current.frameDiffHistory[behavioralRef.current.frameDiffHistory.length - 1];
+                        if (lastFrame) {
+                          let diff = 0;
+                          for (let i = 0; i < frameData.length; i += 4) {
+                            diff += Math.abs(frameData[i]! - lastFrame[i]!);
+                          }
+                          diff /= (frameData.length / 4);
+
+                          // Significant movement while head is down = suspicious
+                          if (diff > 15 && headDownDuration > 3000) {
+                            behavioralRef.current.suspiciousBehaviorStreak++;
+                            if (behavioralRef.current.suspiciousBehaviorStreak >= 3) {
+                              emit("possible_phone_use", "Suspicious behavior detected — possible mobile device use below camera view", 0.7);
+                              behavioralRef.current.suspiciousBehaviorStreak = 0;
+                            }
+                          } else if (diff < 5) {
+                            behavioralRef.current.suspiciousBehaviorStreak = Math.max(0, behavioralRef.current.suspiciousBehaviorStreak - 1);
+                          }
+                        }
+                      }
+
+                      // Store frame data for comparison (copy the array)
+                      const frameCopy = new Uint8ClampedArray(frameData.length);
+                      frameCopy.set(frameData);
+                      behavioralRef.current.frameDiffHistory.push(frameCopy);
+                      if (behavioralRef.current.frameDiffHistory.length > 5) {
+                        behavioralRef.current.frameDiffHistory.shift();
+                      }
+                    }
+                  } catch { /* ignore frame analysis errors */ }
+                }
+              } else {
+                behavioralRef.current.headDownStartTime = null;
+                behavioralRef.current.suspiciousBehaviorStreak = 0;
+                behavioralRef.current.frameDiffHistory = [];
+              }
             }
           } else {
             // No landmarks — head state is unknown, so fusion must not treat
@@ -747,6 +824,9 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
             gazeFusion.current.headDown = false;
             gazeFusion.current.headDownSince = null;
             gazeFusion.current.direction = "center";
+            behavioralRef.current.headDownStartTime = null;
+            behavioralRef.current.suspiciousBehaviorStreak = 0;
+            behavioralRef.current.frameDiffHistory = [];
           }
         } catch { /* model busy */ }
       }
@@ -868,6 +948,66 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         } else if (audioStreak > AUDIO.SUSTAIN && audioStreak % 12 === 0) {
           emit("audio_detected", "Voice/audio still detected", voiceLevel);
         }
+
+        // ── Earbud/headphone leak detection ─────────────────────────────────
+        // A faint PERSISTENT BROADBAND signal is the earbud-leak signature:
+        // music/lecture audio spreads energy across many bins between 250 Hz
+        // and 8 kHz, while silence has none and mechanical noise (fan, AC)
+        // concentrates in a handful of low bins. Speech is EXCLUDED here —
+        // direct speech is loud (rms above the leak window) and intermittent.
+        //
+        // The old heuristic never fired in the field: it demanded the RMS sit
+        // in a razor-thin window AND two per-band averages exceed floors no
+        // real leak reaches (byte spectrum values are tiny when energy is
+        // spread thin). The new rule counts ACTIVE BINS, not average energy.
+        if (
+          analyserRef.current &&
+          rms >= AUDIO.EARBUDS_RMS_MIN &&
+          rms <= AUDIO.EARBUDS_RMS_MAX &&
+          !voiceSpeaking
+        ) {
+          const freqData = new Uint8Array(analyserRef.current.frequencyBinCount);
+          analyserRef.current.getByteFrequencyData(freqData);
+
+          const binHz = analyserRef.current.context.sampleRate / 2 / freqData.length;
+          const lowIdx  = Math.max(1, Math.ceil(AUDIO.EARBUDS_FREQ_LOW / binHz));
+          const highIdx = Math.min(freqData.length - 1, Math.floor(AUDIO.EARBUDS_FREQ_HIGH / binHz));
+
+          // Count bins with meaningful energy — broadband content keeps many
+          // bins above the floor; tonal/mechanical noise keeps only a few.
+          let activeBins = 0;
+          for (let i = lowIdx; i <= highIdx; i++) {
+            if (freqData[i] >= AUDIO.EARBUDS_ACTIVE_BIN_FLOOR) activeBins += 1;
+          }
+
+          if (activeBins >= AUDIO.EARBUDS_MIN_ACTIVE_BINS) {
+            earbudsStreak += 1;
+            if (earbudsStreak === AUDIO.EARBUDS_SUSTAIN) {
+              lastEarbudsAck.current = now;
+              emit(
+                "earbuds_detected",
+                `Audio leak consistent with earbuds/headphones (${activeBins} active frequency bands, sustained)`,
+                Math.min(0.9, 0.4 + activeBins / 64),
+              );
+            } else if (
+              earbudsStreak > AUDIO.EARBUDS_SUSTAIN &&
+              now - lastEarbudsAck.current >= AUDIO.EARBUDS_ACK_MS
+            ) {
+              // Still leaking — re-notify so the log shows ongoing presence.
+              lastEarbudsAck.current = now;
+              emit(
+                "earbuds_detected",
+                "Audio leak still present — earbuds/headphones likely in use",
+                Math.min(0.9, 0.4 + activeBins / 64),
+              );
+            }
+          } else {
+            earbudsStreak = Math.max(0, earbudsStreak - 1);
+          }
+        } else {
+          earbudsStreak = Math.max(0, earbudsStreak - 1);
+        }
+
         setStatus(s => ({ ...s, voiceLevel, voiceSpeaking: voiceSpeaking && audioStreak >= 2 }));
       }
 

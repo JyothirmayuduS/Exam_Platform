@@ -146,11 +146,29 @@ export default function ProctorCamera({
   }, [room, identity, screenStream, initialStream]);
 
 
-  // Always keep the ref current so effects can call the latest version.
-  useEffect(() => { connectRef.current = connect; }, [connect]);
+  // `initialStream` is often set by the parent AFTER this component mounted
+  // (the camera stream is captured in beginExam() right before step="exam").
+  // The video element must re-attach the moment it appears — otherwise the
+  // on-page camera tile stays black until a reconnect fires.
+  useEffect(() => {
+    if (!initialStream || !videoRef.current) return;
+    if (videoRef.current.srcObject !== initialStream) {
+      videoRef.current.srcObject = initialStream;
+      void videoRef.current.play().catch(() => {});
+    }
+    if (!localStreamRef.current) {
+      localStreamRef.current = initialStream;
+      ownsStreamRef.current = false;
+    }
+  }, [initialStream]);
 
-  // Initial connect: runs only when room/identity change (correct). Calls
-  // connectRef.current() so it always uses the latest closure — no stale capture.
+  // Connect/reconnect lifecycle. StrictMode double-invokes effects in dev, so
+  // this cleanup MUST NOT touch the caller-owned shared camera stream — it
+  // feeds the AI engine, the recorder and the on-page preview. Only tracks the
+  // component itself created (the local fallback getUserMedia) are stopped.
+  // (The previous duplicated second copy of this effect stopped localStreamRef
+  // unconditionally, which killed the shared camera + screen feeds and the
+  // recorder the moment React remounted — the "camera and screenshare lost" bug.)
   useEffect(() => {
     let cancelled = false;
     void connectRef.current().catch(() => { if (!cancelled) setState("disconnected"); });
@@ -159,34 +177,12 @@ export default function ProctorCamera({
       handleRef.current?.stop();
       if (ownsStreamRef.current) {
         localStreamRef.current?.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+        ownsStreamRef.current = false;
       }
       cameraRecordRef.current?.stop();
-      screenRecordRef.current?.stop();
-      // Null out refs so GC can collect the streams immediately.
-      localStreamRef.current = null;
       cameraRecordRef.current = null;
-      screenRecordRef.current = null;
-    };
-  }, [room, identity]); // [ok] No eslint-disable needed — connectRef is stable
-
-
-  // Always keep the ref current so effects can call the latest version.
-  useEffect(() => { connectRef.current = connect; }, [connect]);
-
-  // Initial connect: runs only when room/identity change (correct). Calls
-  // connectRef.current() so it always uses the latest closure — no stale capture.
-  useEffect(() => {
-    let cancelled = false;
-    void connectRef.current().catch(() => { if (!cancelled) setState("disconnected"); });
-    return () => {
-      cancelled = true;
-      handleRef.current?.stop();
-      localStreamRef.current?.getTracks().forEach((t) => t.stop());
-      cameraRecordRef.current?.stop();
       screenRecordRef.current?.stop();
-      // Null out refs so GC can collect the streams immediately.
-      localStreamRef.current = null;
-      cameraRecordRef.current = null;
       screenRecordRef.current = null;
     };
   }, [room, identity]); // [ok] No eslint-disable needed — connectRef is stable

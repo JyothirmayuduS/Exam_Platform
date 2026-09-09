@@ -196,6 +196,8 @@ export default function StudentExam() {
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
   // Shared camera stream ref so ProctorAI can read the same feed as ProctorCamera
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  // State to trigger re-render when stream is ready
+  const [, forceUpdate] = useState(0);
 
   // "installed" deep-link state: tracks whether we tried vignan-exam:// launch
   const [deepLinkTried, setDeepLinkTried] = useState(false);
@@ -311,6 +313,13 @@ export default function StudentExam() {
     setScreen("denied");
     flag("Screen sharing stopped — recording continues with camera feed");
     screenStreamRef.current = null;
+    // Stop the server-side screen watchdog IMMEDIATELY: left running on a dead
+    // display track it analyses black frames and the server writes a
+    // screen_black violation every cooldown window for the rest of the exam —
+    // the main source of phantom violations the teacher saw (and a count the
+    // student's own screen never showed).
+    serverProctorRef.current?.stop();
+    serverProctorRef.current = null;
     const cam = cameraStreamRef.current;
     if (!cam) return;
     const camLive = cam.getVideoTracks().some((t) => t.readyState === "live");
@@ -376,6 +385,38 @@ export default function StudentExam() {
     EXAM_ID,
     studentIdRef.current ?? undefined
   );
+
+  // ── Off-screen phone / answer-sheet scanning mitigation ────────────────────
+  // A mobile upload is proof a phone was ACTIVE during the exam. The only way
+  // to complete one without the webcam AI ever confirming a phone in frame is
+  // to point the phone at the paper while the candidate's hands/eyes are on
+  // the desk — the classic "scan answers without getting the phone into the
+  // frame". On every completed upload we check the AI's phone detection state:
+  // if no phone was seen within a window around the upload, log an explicit
+  // integrity violation so the reviewer knows the feed did NOT corroborate the
+  // device use. If the phone WAS confirmed in frame, the normal phone flags
+  // already cover it.
+  const phoneVisibleAtRef = useRef<number[]>([]);
+  useEffect(() => {
+    if (aiStatus?.phoneDetected) {
+      phoneVisibleAtRef.current.push(Date.now());
+      if (phoneVisibleAtRef.current.length > 200) phoneVisibleAtRef.current.shift();
+    }
+  }, [aiStatus?.phoneDetected]);
+  const handleAnswerUploaded = useCallback((url: string) => {
+    const now = Date.now();
+    // Window: the phone must have been visible within ±2 min of the upload.
+    const windowMs = 120_000;
+    const seen = phoneVisibleAtRef.current.some((t) => now - t <= windowMs);
+    if (!seen) {
+      flag(
+        `[Integrity] Answer uploaded from a mobile device with NO phone visible in the camera — answer sheet may have been scanned outside the proctored view`,
+      );
+    }
+    // Keep the submitted URL with the answer (QuestionDisplay stores it as the
+    // answer value); nothing else to do here.
+    void url;
+  }, [flag]);
 
   // On every new violation, capture a high-quality snapshot via the screenshot
   // handle and remember when (in seconds from the exam start) it happened, so
@@ -866,7 +907,27 @@ export default function StudentExam() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [step]);
 
-  // ── Device access ───────────────────────────────────────────────────────────
+  // ── Authoritative violation count (student↔teacher parity) ────────────────
+  // The local `violations` list counts ONLY what this browser flagged. The
+  // server watchdog (proctor-ai-server) writes screen_black / screen_frozen /
+  // screen_whiteout rows straight into violation_events — those never existed
+  // client-side, so the student's summary screen said 10 while the teacher
+  // console said 14. After submit, read the DB count back so BOTH sides always
+  // show the same number (falls back to the local count when the DB is down).
+  const [dbViolationCount, setDbViolationCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (step !== "submitted" || !attemptId) return;
+    let alive = true;
+    void import("../lib/examApi").then(async (m) => {
+      try {
+        const rows = await m.listAttemptViolations(attemptId);
+        if (alive && rows) setDbViolationCount(rows.length);
+      } catch { /* fall back to the local count */ }
+    });
+    return () => { alive = false; };
+  }, [step, attemptId]);
+
+  // ── Device access ───────────────────────────────────────────────────────
   async function requestDevices() {
     setRequesting(true);
     setCam("idle");
@@ -975,6 +1036,8 @@ export default function StudentExam() {
       cameraStreamRef.current = accessStreamRef.current;
       // Keep the stream alive for ProctorAI; ProctorCamera acquires its own.
       accessStreamRef.current = null;
+      // Force re-render so ProctorCamera receives the stream
+      forceUpdate(n => n + 1);
     }
     // Enter full-screen lock (best-effort; Tauri kiosk is already fullscreen).
     try { void document.documentElement.requestFullscreen?.(); } catch { /* ignore */ }
@@ -1286,7 +1349,7 @@ export default function StudentExam() {
         totalQuestions={questions.length}
         studentName={studentName}
         studentRoll={STUDENT_ROLL}
-        violationsCount={violations.length}
+        violationsCount={dbViolationCount ?? violations.length}
         examId={EXAM_ID}
         attemptId={attemptId ?? null}
         uploadState={artifactStatus?.state}
@@ -1444,6 +1507,7 @@ export default function StudentExam() {
             examName={examName}
             studentName={studentName}
             questionIndex={current + 1}
+            onAnswerUploaded={handleAnswerUploaded}
           />
           <QuestionNavigationButtons
             currentIndex={current}

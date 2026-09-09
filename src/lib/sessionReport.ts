@@ -80,9 +80,19 @@ export async function collectSnapshotTimeline(
   violations: ReportRow["violations"],
 ): Promise<SnapshotEntry[] | null> {
   if (!examId || !roll || roll === "—") return null;
+  // Per-candidate exports append the roll to the examId argument
+  // (`${examId}-${roll}`) for the FILENAME. That polluted id must never reach
+  // the storage lookup — the artifacts live under `<examFolder>/<roll>/`, and
+  // a lookup for folder "EXAM-…-21VGN0314" finds nothing, which is why the
+  // per-student PDFs had zero snapshot pages while the whole-exam export had
+  // them. Split the suffix off when it matches this row's roll.
+  let folderExamId = examId;
+  if (roll && examId.endsWith(`-${roll}`)) {
+    folderExamId = examId.slice(0, examId.length - roll.length - 1);
+  }
   let artifacts;
   try {
-    artifacts = await listStudentArtifacts(examId, roll);
+    artifacts = await listStudentArtifacts(folderExamId, roll);
   } catch {
     return null;
   }
@@ -371,7 +381,9 @@ export async function downloadSessionReportPdf(
   }
 
   // Per-candidate snapshot timeline: every stored snap with the violations
-  // that occurred under it and their timestamps.
+  // that occurred under it and their timestamps. NOTE: drawSnapshotTimeline
+  // receives the examId only for the DB/storage folder resolution — the
+  // collector also tolerates the `${examId}-${roll}` filename id.
   if (opts.includeSnapshots !== false) {
     for (const r of rows) {
       try {
@@ -382,6 +394,8 @@ export async function downloadSessionReportPdf(
     }
   }
 
+  // Filename: keep the caller's id — per-candidate exports pass
+  // `${examId}-${roll}` so each student's PDF is uniquely named.
   doc.save(`Session_Report_${examId}.pdf`);
 }
 

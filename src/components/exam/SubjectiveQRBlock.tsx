@@ -71,6 +71,40 @@ export default function SubjectiveQRBlock({
 
   const isLocalhost = base.includes("localhost") || base.includes("127.0.0.1");
 
+  // Fetch the uploaded PDF for this question and expose its signed URL. Called
+  // when the realtime UPDATE says COMPLETED and by the polling fallback — the
+  // submission row may be written a beat AFTER the session status flips, so
+  // this retries briefly instead of failing on the first empty query.
+  const fetchSubmissionPdf = useCallback(async (db: ReturnType<typeof getSupabase>) => {
+    if (!db) return;
+    // The mobile-upload edge function resolves a REAL attempt id when the
+    // session was created with the pending placeholder, so look up by
+    // student + question as well — not just the (possibly placeholder)
+    // attempt_id used at session creation.
+    let attemptFilter = db.from("question_submissions")
+      .select("pdf_storage_path")
+      .eq("question_id", String(questionId))
+      .eq("student_id", studentId ?? "")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (attemptId) {
+      attemptFilter = attemptFilter.eq("attempt_id", attemptId);
+    }
+    const { data: subData, error } = await attemptFilter.maybeSingle();
+    if (error) {
+      console.warn("[SubjectiveQRBlock] submission lookup failed:", error.message);
+      return;
+    }
+    const path = subData?.pdf_storage_path as string | undefined;
+    if (!path) return;
+    const { data: urlData } = await db.storage.from("exam-records").createSignedUrl(path, 3600);
+    if (urlData?.signedUrl) {
+      setPdfUrl(urlData.signedUrl);
+      setStatus("COMPLETED");
+      onAnswerUploaded?.(urlData.signedUrl);
+    }
+  }, [attemptId, questionId, studentId, onAnswerUploaded]);
+
   useEffect(() => {
     // Create the session as soon as studentId is available — don't block on attemptId.
     // If attemptId isn't ready yet, use a placeholder so the mobile-upload edge function
@@ -81,8 +115,14 @@ export default function SubjectiveQRBlock({
 
     let active = true;
     let channel: any = null;
+    let pollId: number | undefined;
 
     const initSession = async () => {
+      // ── Restore an ALREADY-COMPLETED upload (page navigated / remounted) ──
+      // Without this, coming back to the question after the phone uploaded
+      // shows the QR again because realtime only fires on future changes.
+      await fetchSubmissionPdf(db);
+
       const expiresAt = new Date(Date.now() + 1000 * 60 * 60).toISOString(); // 1 hr
       const effectiveAttemptId = attemptId || `pending_${studentId}`;
 
@@ -107,6 +147,16 @@ export default function SubjectiveQRBlock({
       }
       setSessionError(null);
 
+      // After the upsert, a previously-completed session may now be visible —
+      // poll the session status once as a second restore path.
+      const { data: sessRow } = await db.from("mobile_upload_sessions")
+        .select("status")
+        .eq("token_hash", token)
+        .maybeSingle();
+      if (active && sessRow?.status === "COMPLETED") {
+        await fetchSubmissionPdf(db);
+      }
+
       channel = db.channel(`session_${token}`)
         .on(
           "postgres_changes",
@@ -117,25 +167,40 @@ export default function SubjectiveQRBlock({
             setStatus(newStatus);
 
             if (newStatus === "COMPLETED") {
-              const { data: subData } = await db.from("question_submissions")
-                .select("pdf_storage_path")
-                .eq("attempt_id", effectiveAttemptId)
-                .eq("question_id", String(questionId))
-                .order("created_at", { ascending: false })
-                .limit(1)
-                .single();
-
-              if (subData?.pdf_storage_path) {
-                const { data: urlData } = await db.storage.from("exam-records").createSignedUrl(subData.pdf_storage_path, 3600);
-                if (urlData?.signedUrl) {
-                  setPdfUrl(urlData.signedUrl);
-                  onAnswerUploaded?.(urlData.signedUrl);
-                }
+              // The submission row can land a moment after the status update;
+              // retry a few times before giving up (polling fallback also runs).
+              for (let attempt = 0; attempt < 4 && active; attempt++) {
+                await fetchSubmissionPdf(db);
+                if (!active) return;
+                // Check whether the PDF actually got through by reading state:
+                // setPdfUrl only happens inside fetchSubmissionPdf on success.
+                await new Promise((r) => setTimeout(r, 1500));
               }
             }
           }
         )
         .subscribe();
+
+      // ── Polling fallback (every 4 s) ───────────────────────────────────
+      // Realtime (postgres_changes on mobile_upload_sessions) is silently
+      // dropped when RLS blocks the row or the websocket is throttled —
+      // polling guarantees the PDF shows up even then.
+      pollId = window.setInterval(() => {
+        if (!active) return;
+        void (async () => {
+          const { data: sessRow } = await db.from("mobile_upload_sessions")
+            .select("status")
+            .eq("token_hash", token)
+            .maybeSingle();
+          if (sessRow?.status === "COMPLETED") {
+            await fetchSubmissionPdf(db);
+            if (active && pollId !== undefined) {
+              window.clearInterval(pollId);
+              pollId = undefined;
+            }
+          }
+        })();
+      }, 4000);
     };
 
     void initSession();
@@ -143,8 +208,9 @@ export default function SubjectiveQRBlock({
     return () => {
       active = false;
       if (channel) db.removeChannel(channel);
+      if (pollId !== undefined) window.clearInterval(pollId);
     };
-  }, [examId, studentId, attemptId, questionId, questionIndex, token, onAnswerUploaded, retryNonce]);
+  }, [examId, studentId, attemptId, questionId, questionIndex, token, fetchSubmissionPdf, retryNonce]);
 
 
   // Direct desktop image upload (no QR/phone required)

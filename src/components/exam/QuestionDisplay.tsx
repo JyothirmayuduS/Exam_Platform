@@ -25,6 +25,9 @@ type QuestionDisplayProps = {
   onSelectOption: (optionIndex: number) => void;
   onToggleReview: () => void;
   onClear?: () => void;
+  /** Fired when a subjective answer upload completes (QR from phone or direct).
+   *  The exam page uses it to cross-check the AI's phone-visibility record. */
+  onAnswerUploaded?: (url: string) => void;
 };
 
 export default function QuestionDisplay({
@@ -40,6 +43,7 @@ export default function QuestionDisplay({
   onSelectOption,
   onToggleReview,
   onClear,
+  onAnswerUploaded,
 }: QuestionDisplayProps) {
   if (!question) return null;
 
@@ -144,6 +148,7 @@ export default function QuestionDisplay({
                     questionText={question.text}
                     onAnswerUploaded={(url) => {
                       onSelectOption(`[Uploaded answer: ${url}]` as unknown as number);
+                      onAnswerUploaded?.(url);
                     }}
                   />
                 </div>

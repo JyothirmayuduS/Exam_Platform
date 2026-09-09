@@ -977,7 +977,7 @@ function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] })
         <div>
           <h2 className="font-serif text-xl font-semibold">Session Recordings Archive</h2>
           <p className="mt-1 text-[13px] text-soft">
-            Recordings and flagged snapshots stream from Cloudflare R2. Red markers on the timeline show each violation's timestamp — click to jump.
+            Recordings and flagged snapshots stream from secure exam storage. Red markers on the timeline show each violation's timestamp — click to jump.
           </p>
         </div>
         <input
