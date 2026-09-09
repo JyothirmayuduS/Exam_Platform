@@ -30,7 +30,10 @@ type Props = {
   studentName?: string;
   examName?: string;
   questionText?: string;
-  onAnswerUploaded?: (url: string) => void;
+  /** Receives the STORAGE PATH of the upload (or a blob: URL in dev mode) —
+   *  never a 1-hour signed URL, which expires while the exam is still open
+   *  and made the answer look "uploaded but missing" on revisit. */
+  onAnswerUploaded?: (pathOrUrl: string) => void;
 };
 
 export default function SubjectiveQRBlock({
@@ -62,6 +65,9 @@ export default function SubjectiveQRBlock({
   // Bumping this re-runs the session-creation effect (retry button).
   const [retryNonce, setRetryNonce] = useState(0);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  // Mobile uploads are PDFs — unless PDF generation failed on the server and
+  // only the original JPEG landed. Rendered differently (iframe vs img).
+  const [uploadIsImage, setUploadIsImage] = useState(false);
 
   // Direct desktop browser upload (no QR needed)
   const [showUploader, setShowUploader] = useState(false);
@@ -82,7 +88,7 @@ export default function SubjectiveQRBlock({
     // student + question as well — not just the (possibly placeholder)
     // attempt_id used at session creation.
     let attemptFilter = db.from("question_submissions")
-      .select("pdf_storage_path")
+      .select("pdf_storage_path, mime_type")
       .eq("question_id", String(questionId))
       .eq("student_id", studentId ?? "")
       .order("created_at", { ascending: false })
@@ -97,11 +103,16 @@ export default function SubjectiveQRBlock({
     }
     const path = subData?.pdf_storage_path as string | undefined;
     if (!path) return;
+    // Fresh signed URL on EVERY mount — the previous code signed once and
+    // handed the 1-hour URL to the answer store, so revisiting the question
+    // after an hour rendered a dead link.
     const { data: urlData } = await db.storage.from("exam-records").createSignedUrl(path, 3600);
     if (urlData?.signedUrl) {
       setPdfUrl(urlData.signedUrl);
+      setUploadIsImage((subData?.mime_type ?? "").startsWith("image/") || !path.endsWith(".pdf"));
       setStatus("COMPLETED");
-      onAnswerUploaded?.(urlData.signedUrl);
+      // The ANSWER store gets the storage PATH, not this signed URL.
+      onAnswerUploaded?.(path);
     }
   }, [attemptId, questionId, studentId, onAnswerUploaded]);
 
@@ -230,7 +241,9 @@ export default function SubjectiveQRBlock({
       });
       if (!result.ok) { setUploadError(result.error); return; }
       setUploadProgress(100);
-      onAnswerUploaded?.(result.publicUrl);
+      // blob: URLs (dev mode) display directly; real uploads pass the storage
+      // path so signed URLs are minted fresh at render time, never stored.
+      onAnswerUploaded?.(result.publicUrl.startsWith("blob:") ? result.publicUrl : result.path);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -305,7 +318,11 @@ export default function SubjectiveQRBlock({
             <span className="text-xl">✓</span>
             <span className="font-mono text-[12px] uppercase tracking-widest font-bold">Answer Uploaded Successfully</span>
           </div>
-          <iframe src={`${pdfUrl}#toolbar=0`} className="w-full h-[600px] border border-line bg-ink" title="Answer Preview" />
+          {uploadIsImage ? (
+            <img src={pdfUrl} alt="Uploaded answer" className="max-h-[600px] w-full border border-line bg-ink object-contain" />
+          ) : (
+            <iframe src={`${pdfUrl}#toolbar=0`} className="w-full h-[600px] border border-line bg-ink" title="Answer Preview" />
+          )}
         </div>
       ) : showUploader ? (
         <div className="space-y-3">

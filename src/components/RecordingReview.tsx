@@ -75,19 +75,27 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
           setState((s) => ({ ...s, status: "empty" }));
           return;
         }
-        // Crash-proof parts live under recordings/parts/ — chunk fragments of
-        // ONE continuous recorder, excluded from the finished-file pick.
+        // The exam's own crash-proof parts (exam_ family, ONE continuous
+        // recorder, sorted numerically). ProctorCamera's independent recorder
+        // also drops parts/camera_* / parts/screen_* fragments — those are
+        // NOT part of this timeline and must never be interleaved: mixing the
+        // families is what made the review video jump between recorders and
+        // stop early (~198 s of a 3-minute exam).
         const parts = arts
-          .filter((a) => a.kind === "recordings" && a.key.includes("/parts/"))
-          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+          .filter((a) => a.kind === "recordings" && /\/parts\/exam_\d+\.webm$/.test(a.key))
+          .sort(
+            (a, b) =>
+              Number((a.key.match(/exam_(\d+)\.webm$/)?.[1] ?? 0)) -
+              Number((b.key.match(/exam_(\d+)\.webm$/)?.[1] ?? 0)),
+          );
         const recordings = arts
           .filter((a) => a.kind === "recordings" && !a.key.includes("/parts/"))
           .sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? ""));
-        // A merged file that only concatenates SEPARATE recorder sessions
-        // (screen → camera failover) often ships a broken/absent duration
-        // header; some players stall on it. The parts sequence is always
-        // cleanly decodable, so when both exist the PARTS timeline is the
-        // primary playback source and the merged file is the fallback.
+        // A finished file that concatenates SEPARATE recorder sessions (screen
+        // → camera failover) usually ships a broken/absent duration header and
+        // some players stall on it. The parts sequence is always cleanly
+        // decodable, so when parts exist the PARTS timeline is the primary
+        // playback source and the merged file is the fallback.
         const mergedIsUnstable = parts.length > 2 && parts.length * 8 > 90; // >90 s of exam ⇒ ≥12 parts
         const snaps = arts
           .filter((a) => a.kind === "violations")

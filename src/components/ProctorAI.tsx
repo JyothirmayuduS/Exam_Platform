@@ -367,6 +367,9 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioBufRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  // Rolling ambient-noise floor for the adaptive voice gate (see AUDIO config).
+  const noiseFloorRef = useRef(0.004);
+  const noiseFloorAtRef = useRef(0);
 
   // Timing refs
   const rafRef   = useRef(0);
@@ -476,6 +479,26 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     analyser.fftSize = 512;
     ctx.createMediaStreamSource(cameraStream).connect(analyser);
 
+    // Browsers start a fresh AudioContext SUSPENDED unless it was created in a
+    // direct user-gesture call stack — and the exam flow creates this one from
+    // an effect, so RMS read 0 forever and voice was never detected. resume()
+    // flips it to running; if the browser still blocks it, retry once on the
+    // next user interaction.
+    if (ctx.state !== "running") {
+      void ctx.resume().then(() => {
+        if (ctx.state !== "running") {
+          console.warn("[ProctorAI] AudioContext suspended — voice detection idle until first user interaction");
+          const kick = () => {
+            void ctx.resume();
+            window.removeEventListener("pointerdown", kick);
+            window.removeEventListener("keydown", kick);
+          };
+          window.addEventListener("pointerdown", kick, { once: true });
+          window.addEventListener("keydown", kick, { once: true });
+        }
+      }).catch(() => {});
+    }
+
     audioCtxRef.current = ctx;
     analyserRef.current = analyser;
     audioBufRef.current = new Float32Array(new ArrayBuffer(analyser.frequencyBinCount * 4));
@@ -484,7 +507,9 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     let recognition: any = null;
+    let sttAlive = false;
     if (SpeechRecognition) {
+      sttAlive = true;
       recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = false;
@@ -499,10 +524,26 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         }
       };
 
+      // Chrome ENDS the recognition stream after each utterance (and after
+      // ~60 s even with continuous=true). Without an onend restart the STT
+      // went silent one minute into every exam. Restart with a small backoff
+      // until the effect tears down; 'not-allowed' means the mic was revoked.
+      recognition.onend = () => {
+        if (!sttAlive) return;
+        window.setTimeout(() => {
+          if (!sttAlive) return;
+          try { recognition.start(); } catch { /* already started */ }
+        }, 250);
+      };
+      recognition.onerror = (e: any) => {
+        if (e?.error === "not-allowed" || e?.error === "service-not-allowed") sttAlive = false;
+      };
+
       try { recognition.start(); } catch { /* ignore */ }
     }
 
     return () => {
+      sttAlive = false;
       void ctx.close();
       audioCtxRef.current = null;
       analyserRef.current = null;
@@ -939,8 +980,19 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         const rms = Math.sqrt(
           audioBufRef.current.reduce((acc, v) => acc + v * v, 0) / audioBufRef.current.length
         );
-        const voiceLevel    = Math.min(1, rms / 0.08);
-        const voiceSpeaking = rms > AUDIO.VOICE_RMS;
+        // Adaptive gate: track the AMBIENT noise floor (rolling min ≈ the
+        // quietest 5 s window) and require speech to clear a multiple of it —
+        // quiet laptop mics peaked at 0.02 RMS, far under the old fixed 0.04.
+        const floor = noiseFloorRef.current;
+        if (rms < floor) {
+          noiseFloorRef.current = floor + (rms - floor) * 0.05; // fast fall
+        } else if (now - noiseFloorAtRef.current > 5_000) {
+          noiseFloorRef.current = floor + (rms - floor) * 0.02; // slow rise
+          noiseFloorAtRef.current = now;
+        }
+        const voiceGate = Math.max(AUDIO.VOICE_RMS_MIN, noiseFloorRef.current * AUDIO.VOICE_NOISE_FACTOR);
+        const voiceLevel    = Math.min(1, rms / Math.max(0.06, voiceGate * 2));
+        const voiceSpeaking = rms > voiceGate;
         if (voiceSpeaking) audioStreak += 1;
         else audioStreak = Math.max(0, audioStreak - 1);
         if (audioStreak === AUDIO.SUSTAIN) {

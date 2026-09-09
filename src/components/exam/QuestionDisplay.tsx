@@ -1,7 +1,29 @@
 import SubjectiveQRBlock from "./SubjectiveQRBlock";
-import { useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { getSupabase } from "../../lib/supabase";
-import { compressImage } from "../../lib/subjectiveUpload";
+
+/** Resolve a stored upload reference to a displayable URL.
+ *
+ *  The answer store keeps the STORAGE PATH ("…/subjective/q3_….pdf") — never
+ *  a signed URL, which expires after an hour and made uploaded answers
+ *  vanish on revisit. blob: URLs (dev uploads) pass straight through.
+ */
+function useUploadUrl(ref: string | null): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!ref) { setUrl(null); return; }
+    if (ref.startsWith("blob:") || ref.startsWith("data:")) { setUrl(ref); return; }
+    if (ref.startsWith("http")) { setUrl(ref); return; }
+    const db = getSupabase();
+    if (!db) { setUrl(null); return; }
+    let alive = true;
+    void db.storage.from("exam-records").createSignedUrl(ref, 3600).then(({ data }: { data: { signedUrl?: string } | null }) => {
+      if (alive && data?.signedUrl) setUrl(data.signedUrl);
+    });
+    return () => { alive = false; };
+  }, [ref]);
+  return url;
+}
 
 type Question = {
   id: string;
@@ -26,9 +48,31 @@ type QuestionDisplayProps = {
   onToggleReview: () => void;
   onClear?: () => void;
   /** Fired when a subjective answer upload completes (QR from phone or direct).
-   *  The exam page uses it to cross-check the AI's phone-visibility record. */
-  onAnswerUploaded?: (url: string) => void;
+   *  Carries the STORAGE PATH of the upload (dev: a blob: URL). The exam page
+   *  uses it to cross-check the AI's phone-visibility record. */
+  onAnswerUploaded?: (pathOrUrl: string) => void;
 };
+
+/** A stored subjective upload: renders PDFs in an <iframe> (browsers cannot
+ *  render PDF bytes inside an <img>) and images in an <img>. */
+function UploadedAnswerView({ refPath, heightClass }: { refPath: string; heightClass: string }) {
+  const url = useUploadUrl(refPath);
+  // Legacy signed URLs embed ".pdf?token=…", so test the whole reference —
+  // anything that mentions .pdf renders as a PDF, everything else as an image.
+  const isImage = !refPath.toLowerCase().includes(".pdf");
+  if (!url) {
+    return (
+      <div className={`${heightClass} flex items-center justify-center border border-line bg-ink`}>
+        <span className="animate-pulse font-mono text-[10px] uppercase tracking-widest text-paper/60">Loading answer…</span>
+      </div>
+    );
+  }
+  return isImage ? (
+    <img src={url} alt="Uploaded answer" className={`w-full border border-line bg-ink object-contain ${heightClass}`} />
+  ) : (
+    <iframe src={`${url}#toolbar=0`} className={`w-full border border-line bg-ink ${heightClass}`} title="Uploaded Answer" />
+  );
+}
 
 export default function QuestionDisplay({
   question,
@@ -107,10 +151,9 @@ export default function QuestionDisplay({
                   Remove & Retake
                 </button>
               </div>
-              <iframe 
-                src={`${answer.replace("[Uploaded answer: ", "").replace("]", "")}#toolbar=0`} 
-                className="w-full h-[500px] border border-line bg-ink" 
-                title="Uploaded Answer"
+              <UploadedAnswerView
+                refPath={answer.replace("[Uploaded answer: ", "").replace("]", "").trim()}
+                heightClass="h-[500px]"
               />
             </div>
           ) : (

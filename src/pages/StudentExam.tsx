@@ -211,7 +211,7 @@ export default function StudentExam() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   // Crash-proof recording: every chunk the recorder emits is also uploaded to
-  // R2 immediately (parts/seg_NNNNNNNN.webm). A browser crash mid-exam then
+  // R2 immediately (parts/exam_NNNNNNNN.webm). A browser crash mid-exam then
   // loses at most the in-flight tail — the reviewer rebuilds the video from
   // the uploaded parts.
   //
@@ -653,7 +653,7 @@ export default function StudentExam() {
     }
   }, []);
 
-  const { secondsLeft, setSecondsLeft, timeString, tone: timerTone, warning: timerWarning } = useExamTimer({
+  const { secondsLeft, setSecondsLeft, timeString, tone: timerTone } = useExamTimer({
     durationMinutes: durationMin,
     // A proctor pause freezes the countdown until the attempt is resumed.
     active: step === "exam" && !proctorPaused,
@@ -1363,16 +1363,33 @@ export default function StudentExam() {
   return (
     <div className="min-h-screen bg-paper text-ink">
       {/* Watermark — custom template from Test Options with this candidate's
-          tokens substituted, or the classic "name · roll" backdrop */}
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-        <div className="flex flex-wrap content-start opacity-[0.08]">
-          {Array.from({ length: 44 }).map((_, i) => (
-            <span key={i} className="w-1/2 shrink-0 py-2 pr-2 text-right font-mono text-[11px] uppercase tracking-widest text-ink">
+          tokens substituted, or the classic "name · roll" backdrop. Rendered
+          as a full-viewport SVG <pattern>: large rotated text tiled
+          edge-to-edge over 100% of the exam screen (the old 44 small spans
+          covered half the width at 11px and were effectively invisible). */}
+      <svg aria-hidden className="pointer-events-none fixed inset-0 z-0 h-full w-full" >
+        <defs>
+          <pattern
+            id="exam-watermark"
+            width={Math.max(460, watermarkLine.length * 16 + 60)}
+            height="220"
+            patternUnits="userSpaceOnUse"
+            patternTransform="rotate(-20)"
+          >
+            <text
+              x="10"
+              y="110"
+              fontSize="26"
+              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+              fill="currentColor"
+              opacity="0.13"
+            >
               {watermarkLine}
-            </span>
-          ))}
-        </div>
-      </div>
+            </text>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#exam-watermark)" className="text-ink" />
+      </svg>
       {proctorPaused && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-ink/95 p-6">
           <div className="w-full max-w-md border border-amber/60 bg-paper p-8 text-center shadow-2xl">
@@ -1387,51 +1404,44 @@ export default function StudentExam() {
           </div>
         </div>
       )}
-      {broadcast && (
-        <div className="fixed inset-x-0 top-0 z-[65] flex justify-center px-4 py-3">
-          <div className="flex w-full max-w-xl items-start gap-3 border border-amber bg-amber px-4 py-3 text-paper shadow-2xl">
-            <span className="mt-1 h-2.5 w-2.5 shrink-0 animate-pulse rounded-none bg-paper" />
-            <div className="flex-1">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">{broadcast.sender} · broadcast</p>
-              <p className="mt-0.5 text-[14px] font-medium">{broadcast.body}</p>
+      {/* ── Proctor popup stack ──────────────────────────────────────────
+          ONE fixed column at the top: broadcast, flag-limit warning, live
+          violation alert. They stack vertically instead of overlaying each
+          other (previously three same-position fixed banners fought over
+          top-0 and the timer banner covered everything). */}
+      {(broadcast || flagThresholdWarning || activeViolation) && (
+        <div className="pointer-events-none fixed inset-x-0 top-0 z-[65] flex flex-col items-center gap-2 px-4 py-3">
+          {broadcast && (
+            <div className="pointer-events-auto flex w-full max-w-xl items-start gap-3 border border-amber bg-amber px-4 py-3 text-paper shadow-2xl">
+              <span className="mt-1 h-2.5 w-2.5 shrink-0 animate-pulse rounded-none bg-paper" />
+              <div className="flex-1">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">{broadcast.sender} · broadcast</p>
+                <p className="mt-0.5 text-[14px] font-medium">{broadcast.body}</p>
+              </div>
+              <button onClick={() => setBroadcast(null)} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
             </div>
-            <button onClick={() => setBroadcast(null)} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
-          </div>
-        </div>
-      )}
-      {flagThresholdWarning && (
-        <div className="fixed inset-x-0 top-0 z-[64] flex justify-center px-4 py-3">
-          <div className="flex w-full max-w-xl items-start gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl" role="alert">
-            <FiAlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-            <div className="flex-1">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">Proctoring warning</p>
-              <p className="mt-0.5 text-[14px] font-medium">{flagThresholdWarning}</p>
+          )}
+          {flagThresholdWarning && (
+            <div className="pointer-events-auto flex w-full max-w-xl items-start gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl" role="alert">
+              <FiAlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <div className="flex-1">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">Proctoring warning</p>
+                <p className="mt-0.5 text-[14px] font-medium">{flagThresholdWarning}</p>
+              </div>
+              <button onClick={() => setFlagThresholdWarning("")} aria-label="Dismiss warning" className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
             </div>
-            <button onClick={() => setFlagThresholdWarning("")} aria-label="Dismiss warning" className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
-          </div>
-        </div>
-      )}
-      {activeViolation && (
-        <div className="fixed inset-x-0 top-0 z-[60] flex justify-center px-4 py-3">
-          <div className="flex w-full max-w-xl items-center gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl">
-            <span className="h-2.5 w-2.5 shrink-0 animate-pulse bg-paper" />
-            <div className="flex-1">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-paper/75">Proctor alert · logged</p>
-              <p className="mt-0.5 text-[14px] font-medium">{activeViolation.kind}</p>
-              <p className="mt-0.5 font-mono text-[10px] text-paper/70">{activeViolation.at} · {violations.length} violation(s) this session</p>
+          )}
+          {activeViolation && (
+            <div className="pointer-events-auto flex w-full max-w-xl items-center gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl">
+              <span className="h-2.5 w-2.5 shrink-0 animate-pulse bg-paper" />
+              <div className="flex-1">
+                <p className="font-mono text-[10px] uppercase tracking-widest text-paper/75">Proctor alert · logged</p>
+                <p className="mt-0.5 text-[14px] font-medium">{activeViolation.kind}</p>
+                <p className="mt-0.5 font-mono text-[10px] text-paper/70">{activeViolation.at} · {violations.length} violation(s) this session</p>
+              </div>
+              <button onClick={() => setActiveViolation(null)} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
             </div>
-            <button onClick={() => setActiveViolation(null)} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
-          </div>
-        </div>
-      )}
-
-      {/* Timer warning banner */}
-      {timerWarning && (
-        <div className={`fixed inset-x-0 top-0 z-[70] flex items-center justify-center gap-2 px-4 py-2 font-mono text-[11px] uppercase tracking-widest text-paper ${
-          secondsLeft <= 60 ? "bg-alert" : "bg-amber"
-        }`}>
-          <span className="h-1.5 w-1.5 animate-pulse rounded-none bg-paper" />
-          {timerWarning.toUpperCase()}
+          )}
         </div>
       )}
 
@@ -1535,21 +1545,33 @@ export default function StudentExam() {
             draftedCount={counts.drafted}
             onSubmit={() => setShowSubmitDialog(true)}
           />
-          <ExamSidebar answered={answeredCount} total={questions.length} marked={markedCount} timeString={timeString} secondsLeft={secondsLeft} />
+          <ExamSidebar answered={answeredCount} total={questions.length} marked={markedCount} secondsLeft={secondsLeft} />
 
           <div>
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Proctoring</p>
-            <ProctorCamera
-              room={ROOM}
-              identity={STUDENT_ROLL}
-              examId={EXAM_ID}
-              examName={examName}
-              studentId={STUDENT_ROLL}
-              screenStream={screenStream}
-              initialStream={cameraStream}
-              violationActive={!!activeViolation}
-              proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
-            />
+            {/* Proctoring runs fully (recording, live feed, proctor messages)
+                but the candidate must NOT watch the live tile — students see
+                only the alert/warning popups. The camera stays mounted and
+                hidden; violations still surface as top popups. */}
+            <p className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+              <span>Proctoring</span>
+              <span className="flex items-center gap-1.5 font-mono text-[9px] text-alert">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-none bg-alert" aria-hidden />
+                REC
+              </span>
+            </p>
+            <div className="hidden">
+              <ProctorCamera
+                room={ROOM}
+                identity={STUDENT_ROLL}
+                examId={EXAM_ID}
+                examName={examName}
+                studentId={STUDENT_ROLL}
+                screenStream={screenStream}
+                initialStream={cameraStream}
+                violationActive={!!activeViolation}
+                proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
+              />
+            </div>
             {/* Live proctor voice — the teacher/proctor can speak to this candidate. */}
             <InvigilatorVoice examId={EXAM_ID} roll={STUDENT_ROLL} active={step === "exam"} />
           </div>

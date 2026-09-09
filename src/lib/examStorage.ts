@@ -410,6 +410,11 @@ export async function uploadArtifactBlob(
  * most the tail of the session. Chunks come from ONE continuous recorder, so
  * concatenating them in order yields the full playable video (see
  * RecordingReview's parts-rebuild fallback).
+ *
+ * Parts use the `exam_` prefix: ProctorCamera's independent recorder also
+ * writes `parts/` fragments (`camera_*` / `screen_*`), and the two families
+ * MUST never be interleaved into one timeline — that produced a review video
+ * that jumped between recorders and stopped at ~198 s on a 3-minute exam.
  */
 export async function uploadRecordingPart(opts: {
   examId: string;
@@ -418,7 +423,7 @@ export async function uploadRecordingPart(opts: {
   blob: Blob;
   seq: number;
 }): Promise<string | null> {
-  const name = `seg_${String(opts.seq).padStart(8, "0")}.webm`;
+  const name = `exam_${String(opts.seq).padStart(8, "0")}.webm`;
   try {
     return await r2PutBlob({
       examId: storageFolderSegment(opts.examId, opts.examName),

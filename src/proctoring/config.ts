@@ -96,7 +96,14 @@ export const TRACKING = {
 
 // ── Audio ────────────────────────────────────────────────────────────────────
 export const AUDIO = {
-  VOICE_RMS: 0.04,  // RMS amplitude above which we treat sound as voice — lowered for better detection
+  // Voice gate — ADAPTIVE, not fixed. A fixed 0.04 RMS missed quiet laptop
+  // mics entirely (field test: speech peaked at 0.02 RMS). The gate is now
+  // max(VOICE_RMS_MIN, ambient noise floor × VOICE_NOISE_FACTOR) where the
+  // floor is a rolling estimate of the QUIETEST ambient RMS (~5 s window).
+  // VOICE_RMS_MIN is the absolute floor so a silent room never makes rustle
+  // paper count as speech.
+  VOICE_RMS_MIN: 0.012,   // absolute floor — never flag below this
+  VOICE_NOISE_FACTOR: 3,  // speech must exceed 3× the ambient noise floor
   SUSTAIN: 3,       // ~0.45 s of sustained sound before flagging — faster response
   // ── Earbud/headphone leak detection ────────────────────────────────────────
   // Earbuds leak only a FAINT signal into the mic (far quieter than direct
@@ -104,7 +111,7 @@ export const AUDIO = {
   // and BROADBAND (music/content spreads energy across many frequency bins,
   // while silence has ~none and fan/hum noise concentrates in a few low bins).
   EARBUDS_RMS_MIN: 0.008,     // floor — below this the mic sees silence
-  EARBUDS_RMS_MAX: 0.045,     // above VOICE_RMS it is direct speech, not a leak
+  EARBUDS_RMS_MAX: 0.045,     // above the adaptive voice gate it is direct speech, not a leak
   EARBUDS_MIN_ACTIVE_BINS: 8, // broadband content gate (250 Hz – 8 kHz)
   EARBUDS_ACTIVE_BIN_FLOOR: 4,   // byte-spectrum value a bin must exceed to count as active
   EARBUDS_FREQ_LOW: 250,      // Hz — ignore sub-250 Hz rumble (AC, traffic)

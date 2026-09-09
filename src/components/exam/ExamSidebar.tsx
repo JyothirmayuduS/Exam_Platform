@@ -5,7 +5,10 @@ type ExamSidebarProps = {
   answered: number;
   total: number;
   marked: number;
-  timeString: string;
+  /** Kept for API compatibility — the timer card itself was removed: the
+   *  header countdown + AnswerPanel already show time, and a second big
+   *  timer here repeated the same number one column over. */
+  timeString?: string;
   secondsLeft: number;
   messages?: string[];
   instructions?: string;
@@ -19,7 +22,6 @@ export default function ExamSidebar({
   answered,
   total,
   marked,
-  timeString,
   secondsLeft,
   messages = [],
   instructions = "Follow exam rules and avoid switching tabs/windows.",
@@ -27,23 +29,18 @@ export default function ExamSidebar({
 }: ExamSidebarProps) {
   const [tab, setTab] = useState<Tab>("progress");
 
-  const timerColor =
-    secondsLeft <= 60 ? "text-alert border-alert bg-alert/10" :
-    secondsLeft <= 300 ? "text-amber border-amber bg-amber/10" :
-    "text-success border-success bg-success/10";
-
-  const timerLabel =
-    secondsLeft <= 60 ? <><FiAlertTriangle className="inline text-alert" aria-hidden /> Less than 1 minute!</> :
-    secondsLeft <= 300 ? <><FiAlertTriangle className="inline text-amber" aria-hidden /> 5 minutes remaining</> :
-    "Time remaining";
-
   return (
     <aside className="border border-line bg-raised p-4 space-y-4">
-      {/* Prominent timer */}
-      <div className={`border p-3 text-center rounded-none ${timerColor}`}>
-        <p className="font-mono text-[9px] uppercase tracking-widest mb-1 opacity-70">{timerLabel}</p>
-        <p className="font-mono text-[28px] font-bold tabular-nums leading-none">{timeString}</p>
-      </div>
+      {/* Time-pressure hint only — the countdown itself lives in the sticky
+          header (and turns amber/red there). No duplicated big timer card. */}
+      {secondsLeft <= 300 && (
+        <div className={`flex items-center gap-2 border px-3 py-2 text-[12px] ${
+          secondsLeft <= 60 ? "border-alert bg-alert/10 text-alert" : "border-amber bg-amber/10 text-amber"
+        }`}>
+          <FiAlertTriangle aria-hidden className="shrink-0" />
+          <span className="font-medium">{secondsLeft <= 60 ? "Less than 1 minute left!" : "5 minutes remaining"}</span>
+        </div>
+      )}
 
       {/* Progress bar */}
       <div>

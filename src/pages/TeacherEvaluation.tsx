@@ -771,11 +771,31 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
   setScore: (qid: string, marks: number, maxMarks: number) => void; setFeedback: (qid: string, v: string) => void;
 }) {
   const fb = feedback[key(cid, q.id)] ?? "";
-  // Detect uploaded image: response starts with "[Uploaded answer: URL]"
+  // Detect uploaded answer: response starts with "[Uploaded answer: …]". The
+  // payload used to be a 1-hour signed URL (which expired before grading) —
+  // new submissions carry the STORAGE PATH, signed fresh below; legacy
+  // http(s) payloads still display directly.
   const uploadedMatch = typeof q.response === "string" && q.response.startsWith("[Uploaded answer:")
     ? q.response.match(/^\[Uploaded answer:\s*(.+?)\s*\]$/)
     : null;
-  const [uploadedUrl, setUploadedUrl] = useState<string | null>(uploadedMatch ? uploadedMatch[1] : null);
+  const uploadRef = uploadedMatch?.[1]?.trim() ?? null;
+  // Legacy signed URLs embed ".pdf?token=…" — test the whole reference.
+  const uploadIsImage = uploadRef ? !uploadRef.toLowerCase().includes(".pdf") : false;
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(uploadRef && uploadRef.startsWith("http") ? uploadRef : null);
+
+  // Mint a fresh signed URL for storage-path uploads (and, as a fallback,
+  // resolve the row from question_submissions when the answer value itself is
+  // missing — older sessions never stored it in the answer).
+  useEffect(() => {
+    if (!uploadRef || uploadRef.startsWith("http") || uploadRef.startsWith("blob:")) return;
+    const db = getSupabase();
+    if (!db) return;
+    let alive = true;
+    void db.storage.from("exam-records").createSignedUrl(uploadRef, 3600).then(({ data }: { data: { signedUrl?: string } | null }) => {
+      if (alive && data?.signedUrl) setUploadedUrl(data.signedUrl);
+    });
+    return () => { alive = false; };
+  }, [uploadRef]);
 
   // Grading comments (inline text + voice notes + image attachments) — persisted in grading_comments.
   const [comments, setComments] = useState<GradingComment[]>([]);
@@ -907,17 +927,32 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
 
   return (
     <div className="mt-4">
-      {uploadedUrl ? (
+      {uploadRef && !uploadedUrl ? (
         <div className="border-l-2 border-forest bg-paper-raised p-4">
           <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-bold mb-2">✓ Uploaded Handwritten Answer</p>
-          <a href={uploadedUrl} target="_blank" rel="noopener noreferrer">
-            <img
-              src={uploadedUrl}
-              alt="Student's handwritten answer"
-              className="w-full max-h-[600px] object-contain border border-line bg-paper cursor-zoom-in"
+          <div className="flex h-40 items-center justify-center border border-line bg-paper">
+            <span className="animate-pulse font-mono text-[10px] uppercase tracking-widest text-ink-soft">Loading student's answer…</span>
+          </div>
+        </div>
+      ) : uploadedUrl ? (
+        <div className="border-l-2 border-forest bg-paper-raised p-4">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-bold mb-2">✓ Uploaded Handwritten Answer</p>
+          {uploadIsImage ? (
+            <a href={uploadedUrl} target="_blank" rel="noopener noreferrer">
+              <img
+                src={uploadedUrl}
+                alt="Student's handwritten answer"
+                className="w-full max-h-[600px] object-contain border border-line bg-paper cursor-zoom-in"
+              />
+            </a>
+          ) : (
+            <iframe
+              src={`${uploadedUrl}#toolbar=0`}
+              className="h-[600px] w-full border border-line bg-ink"
+              title="Student's handwritten answer"
             />
-          </a>
-          <p className="mt-2 font-mono text-[9px] text-ink-soft">Click image to view full size</p>
+          )}
+          {!uploadIsImage && <p className="mt-2 font-mono text-[9px] text-ink-soft">Scanned PDF answer sheet</p>}
         </div>
       ) : q.type === "Coding" ? (
         <pre className="mt-1 overflow-x-auto border border-[#2b332c] bg-[#202924] p-4 font-mono text-[12px] leading-relaxed text-paper/90"><code>{q.response || "// no code submitted"}</code></pre>
