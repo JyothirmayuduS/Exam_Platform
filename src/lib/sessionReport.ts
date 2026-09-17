@@ -13,6 +13,7 @@
 
 import { jsPDF } from "jspdf";
 import { listStudentArtifacts, getArtifactObjectUrl } from "./examStorage";
+import { r2FetchData } from "./r2Function";
 
 export type ReportRow = {
   name: string;
@@ -96,7 +97,15 @@ export async function collectSnapshotTimeline(
   } catch {
     return null;
   }
-  if (!artifacts || artifacts.length === 0) return null;
+  if (!artifacts || artifacts.length === 0) {
+    console.info(`[sessionReport] no stored artifacts for ${folderExamId}/${roll} — snapshot timeline skipped`);
+    return null;
+  }
+  if (!artifacts.some((a) => a.kind === "screenshots")) {
+    console.info(
+      `[sessionReport] ${artifacts.length} artifact(s) for ${folderExamId}/${roll} but none are interval snapshots (kinds: ${[...new Set(artifacts.map((a) => a.kind))].join(", ")})`,
+    );
+  }
 
   const snaps = artifacts
     .filter((a) => a.kind === "screenshots")
@@ -123,11 +132,24 @@ export async function collectSnapshotTimeline(
 /** Fetch a stored snapshot and downscale it to a small embedded JPEG. */
 async function snapshotThumbDataUrl(key: string, maxEdge = 480): Promise<string | null> {
   try {
-    const url = await getArtifactObjectUrl(key, 600);
-    if (!url) return null;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const blob = await res.blob();
+    // Primary: read the bytes through the edge function (same-origin
+    // response). A direct presigned-R2 GET is cross-origin — without permissive
+    // CORS on the bucket the blob is fine to download, but createImageBitmap
+    // / canvas readback is tainted and the PDF ends up with empty frames.
+    // The relay avoids CORS entirely, so thumbnails always render.
+    let bytes: Uint8Array | null = null;
+    const relayed = await r2FetchData(key);
+    if (relayed) {
+      bytes = relayed.bytes;
+    } else {
+      // Fallback: presigned GET (works when bucket CORS allows canvas reads).
+      const url = await getArtifactObjectUrl(key, 600);
+      if (!url) return null;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      bytes = new Uint8Array(await res.arrayBuffer());
+    }
+    const blob = new Blob([bytes as unknown as BlobPart], { type: "image/jpeg" });
     const bitmap = await createImageBitmap(blob);
     const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
     const w = Math.max(1, Math.round(bitmap.width * scale));

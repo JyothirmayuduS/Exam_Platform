@@ -277,5 +277,43 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // ── op "fetch-data": stream one object's bytes back as base64 ────────────
+  // Purpose: clients that must READ PIXELS from the response (canvas drawing
+  // for the PDF report thumbnails, zip export) need a same-origin response —
+  // direct presigned-R2 GETs are cross-origin and break canvas taint rules
+  // when the bucket has no permissive CORS config. The server fetches R2 and
+  // relays the bytes, so no CORS exists anywhere in this path.
+  if (op === "fetch-data") {
+    const key = safeSegment(String(body.key ?? ""));
+    if (!key) return json({ error: "invalid key" }, 400);
+    // Ownership gate: student may only read bytes under their own folder.
+    if (!callerIsStaff && callerStudentId) {
+      const parts = key.split("/");
+      if (parts.length >= 2 && parts[1] !== callerStudentId) {
+        return json({ error: "forbidden" }, 403);
+      }
+    }
+    try {
+      const signed = await aws.sign(
+        new Request(`${endpoint}/${bucket}/${key}`, { method: "GET" }),
+        { aws: { signQuery: false } },
+      );
+      const res = await fetch(signed);
+      if (!res.ok) return json({ error: `R2 get failed: ${res.status}` }, 502);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.length > 5_000_000) return json({ error: "object too large to relay" }, 413);
+      const binary = Array.from(bytes)
+        .map((b) => String.fromCharCode(b))
+        .join("");
+      return json({
+        data: btoa(binary),
+        contentType: res.headers.get("content-type") ?? "application/octet-stream",
+      });
+    } catch (err) {
+      console.error("[store-artifact] fetch-data error:", err);
+      return json({ error: "failed to fetch data" }, 500);
+    }
+  }
+
   return json({ error: "unknown op" }, 400);
 });

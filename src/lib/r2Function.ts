@@ -92,6 +92,29 @@ export async function r2List(prefix: string): Promise<R2ListedObject[] | null> {
 }
 
 /**
+ * Read one object's BYTES via the edge function (base64 relay).
+ *
+ * Unlike a presigned GET, the response is same-origin (the function adds CORS
+ * headers), so callers can decode it into an ImageBitmap / canvas without
+ * tainting it. Required for PDF report thumbnails and zip export — direct
+ * presigned-R2 fetches break canvas readback when the bucket lacks CORS.
+ * Returns null when unavailable.
+ */
+export async function r2FetchData(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  const res = await invoke<{ data: string; contentType: string }>({ op: "fetch-data", key });
+  if (!res?.data) return null;
+  try {
+    const binary = atob(res.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return { bytes, contentType: res.contentType ?? "application/octet-stream" };
+  } catch (err) {
+    console.warn("[r2Function] fetch-data decode failed:", err);
+    return null;
+  }
+}
+
+/**
  * List the IMMEDIATE sub-folders under a prefix (R2 CommonPrefixes). Pass ""
  * for the top-level exam folders, "<exam>/" for the students of one exam, or
  * "<exam>/<roll>/" for the kind folders of one candidate. Entries include the
