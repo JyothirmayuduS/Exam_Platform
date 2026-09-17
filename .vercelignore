@@ -4,7 +4,7 @@ src-tauri
 .vscode
 playwright-report
 test-results
-supabase
+supabase/.temp
 .env.local
 .env
 dist
