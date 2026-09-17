@@ -11,6 +11,7 @@ import QuestionPanel from "../components/exam/QuestionPanel";
 import QuestionDisplay from "../components/exam/QuestionDisplay";
 import QuestionNavigationButtons from "../components/exam/QuestionNavigationButtons";
 import AnswerPanel from "../components/exam/AnswerPanel";
+import MonitorQRPanel from "../components/exam/MonitorQRPanel";
 import ExamSidebar from "../components/exam/ExamSidebar";
 import SubmitDialog from "../components/exam/SubmitDialog";
 import { supabaseConfigured } from "../lib/env";
@@ -156,6 +157,7 @@ export default function StudentExam() {
   const [studentId, setStudentId] = useState<string | null>(null); // state for immediate re-render
   const attemptStartedRef = useRef(false);
   const [attemptId, setAttemptId] = useState<string | undefined>();
+  const [endMonitor, setEndMonitor] = useState(false);
 
   // Device access state
   const [cam, setCam] = useState<"idle" | "granted" | "denied">("idle");
@@ -1086,6 +1088,8 @@ export default function StudentExam() {
   }
 
   async function doSubmit() {
+    // Tear down the optional phone desk-monitor session before evidence upload.
+    setEndMonitor(true);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
@@ -1546,6 +1550,13 @@ export default function StudentExam() {
             onSubmit={() => setShowSubmitDialog(true)}
           />
           <ExamSidebar answered={answeredCount} total={questions.length} marked={markedCount} secondsLeft={secondsLeft} />
+
+          {/* Phone desk monitor — optional second camera via one-time QR.
+              The phone publishes its rear camera into the exam's LiveKit room
+              as a mobile:<roll> participant; interruption signals (tab hidden,
+              focus loss, viewport shrink, feed killed) land in the monitor
+              event ledger for the proctor timeline. */}
+          <MonitorQRPanel attemptId={attemptId} onSubmitConsumed={() => setEndMonitor(true)} />
 
           <div>
             {/* Proctoring runs fully (recording, live feed, proctor messages)

@@ -22,6 +22,55 @@ Deno.serve(async (req: Request) => {
   if (!apiKey || !apiSecret) return json({ error: "LiveKit secrets not configured" }, 500);
   if (!supabaseUrl || !anonKey) return json({ error: "Supabase env not configured" }, 500);
 
+  let body: Record<string, unknown> = {};
+  try { body = await req.json(); } catch { /* empty */ }
+
+  // ── Mobile monitor branch ────────────────────────────────────────────────
+  // The phone has no Supabase session — its capability credential is the
+  // one-time monitor token minted by `mobile-monitor-session` and carried in
+  // the QR URL. It is validated here against the DB via the service role;
+  // nothing from the client is trusted. Grants: publish-only (camera +
+  // screen tracks), no subscribe, identity `mobile:<roll>` in the exam room.
+  const mobileToken = String((body as Record<string, unknown>).mobileToken ?? "").trim();
+  if (mobileToken) {
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!serviceKey) return json({ error: "Supabase env not configured" }, 500);
+    const admin = createClient(supabaseUrl, serviceKey);
+    const tokenHash = await sha256Hex(mobileToken);
+    const { data: monitorSession } = await admin
+      .from("mobile_upload_sessions")
+      .select("id, status, expires_at, livekit_room, livekit_identity")
+      .eq("token_hash", tokenHash)
+      .maybeSingle();
+    if (!monitorSession) return json({ error: "invalid monitor token" }, 403);
+    if (new Date(String(monitorSession.expires_at)).getTime() <= Date.now()) {
+      return json({ error: "monitor session expired" }, 403);
+    }
+    if (monitorSession.status !== "CONNECTED") {
+      return json({ error: "monitor session not connected" }, 403);
+    }
+    if (!monitorSession.livekit_room || !monitorSession.livekit_identity) {
+      return json({ error: "monitor session missing livekit binding" }, 500);
+    }
+    const mt = new AccessToken(apiKey, apiSecret, {
+      identity: String(monitorSession.livekit_identity),
+      ttl: "30m",
+    });
+    mt.addGrant({
+      roomJoin: true,
+      room: String(monitorSession.livekit_room),
+      canPublish: true,
+      canSubscribe: false,
+      canPublishData: true,
+    });
+    console.log("[livekit-token] mobile monitor token minted:", {
+      room: monitorSession.livekit_room,
+      identity: monitorSession.livekit_identity,
+    });
+    const mtoken = await mt.toJwt();
+    return json({ token: mtoken, url, identity: monitorSession.livekit_identity });
+  }
+
   const authHeader = req.headers.get("Authorization") ?? "";
   const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
   if (!jwt) return json({ error: "missing bearer token" }, 401);
@@ -32,9 +81,6 @@ Deno.serve(async (req: Request) => {
   const { data: userData, error: authError } = await supabase.auth.getUser(jwt);
   const user = userData?.user;
   if (authError || !user) return json({ error: "unauthorized" }, 401);
-
-  let body: Record<string, unknown> = {};
-  try { body = await req.json(); } catch { /* empty */ }
 
   const room = String(body.room ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 120);
   if (!room) return json({ error: "room is required" }, 400);
@@ -161,4 +207,12 @@ function json(payload: unknown, status = 200): Response {
     status,
     headers: { ...CORS, "Content-Type": "application/json" },
   });
+}
+
+/** SHA-256 hex of the raw monitor token — matches what mobile-monitor-session stores. */
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }

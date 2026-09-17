@@ -13,6 +13,7 @@ import StudentExamDetail from "./pages/StudentExamDetail";
 import PracticeModeExam from "./pages/PracticeModeExam";
 import TeacherProctoring from "./pages/TeacherProctoring";
 import MobileUpload from "./pages/MobileUpload";
+import MobileMonitor from "./pages/MobileMonitor";
 import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
 import PasswordRecover from "./pages/PasswordRecover";
@@ -44,6 +45,7 @@ export default function App() {
       <Route path="/student/practice" element={<ProtectedRoute allowedRole="student"><PracticeModeExam /></ProtectedRoute>} />
       <Route path="/mobile-upload/:token" element={<MobileUpload />} />
       <Route path="/mobile-upload" element={<MobileUpload />} />
+      <Route path="/mobile-monitor/:token" element={<MobileMonitor />} />
       
       {/* Teacher Routes */}
       <Route path="/teacher/proctoring" element={<ProtectedRoute allowedRole="teacher"><TeacherProctoring /></ProtectedRoute>} />

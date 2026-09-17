@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS exam_fingerprints (
-  exam_id uuid REFERENCES examinations(id) ON DELETE CASCADE,
+  exam_id text REFERENCES public.exams(id) ON DELETE CASCADE,
   student_id uuid REFERENCES students(id) ON DELETE CASCADE,
   fingerprint_hash text,
   ip_address inet,

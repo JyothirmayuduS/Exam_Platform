@@ -11,7 +11,7 @@ import { downloadSessionReportPdf } from "../lib/sessionReport";
 import { downloadExamEvidenceZip } from "../lib/zipExport";
 import useCurrentProfile, { profileSubtitle } from "../hooks/useCurrentProfile";
 import { getTeacherNav } from "./TeacherDashboard";
-import { FiVideo, FiMonitor, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight, FiVolume2, FiVolumeX } from "react-icons/fi";
+import { FiVideo, FiMonitor, FiSmartphone, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight, FiVolume2, FiVolumeX } from "react-icons/fi";
 import ProctoringAssessmentSelect from "../components/teacher/ProctoringAssessmentSelect";
 import { Button } from "../components/ui";
 import type { ProctorAssignment } from "../lib/examApi";
@@ -88,6 +88,7 @@ export default function TeacherProctoring() {
   const [chatCount, setChatCount] = useState(0);
   const [filter, setFilter] = useState("All candidates");
   const [screenMode, setScreenMode] = useState(false);
+  const [phoneMode, setPhoneMode] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   // Real faculty roster (teachers table) — modal rows come from the DB now.
   const [faculty, setFaculty] = useState<FacultyMember[]>([]);
@@ -131,10 +132,22 @@ export default function TeacherProctoring() {
   // Video wall: per-tile source. "camera" shows webcam, "screen" shows the
   // candidate's shared screen (which is also the recorded exam view). Defaults
   // to camera and persists per session via sessionStorage.
-  const [wallSource, setWallSource] = useState<"camera" | "screen">(() => {
+  const [wallSource, setWallSource] = useState<"camera" | "screen" | "phone">(() => {
     if (typeof window === "undefined") return "camera";
-    return (sessionStorage.getItem("proctor-wall-source") as "camera" | "screen") ?? "camera";
+    return (sessionStorage.getItem("proctor-wall-source") as "camera" | "screen" | "phone") ?? "camera";
   });
+
+  // Phone desk-monitor feeds: participants with identity `mobile:<roll>`.
+  // They carry the student's second camera (desk/hands) from the QR flow.
+  const mobileFeedByRoll = useMemo(() => {
+    const map = new Map<string, RemoteFeed>();
+    for (const f of feeds) {
+      if (f.identity.startsWith("mobile:")) {
+        map.set(identityLabel(f.identity).toLowerCase(), f);
+      }
+    }
+    return map;
+  }, [feeds]);
 
   // Load available exams for switcher
   useEffect(() => {
@@ -494,7 +507,7 @@ export default function TeacherProctoring() {
       </div>
     )}
     <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat{chatCount > 0 ? ` (${chatCount})` : ""}</button></div><div className="flex items-center gap-3"><span className={`inline-flex items-center gap-1.5 font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}><span className={`h-1.5 w-1.5 rounded-none ${live ? "bg-success" : "bg-line-strong"}`} /> {live ? `${feedCount} feed(s) · DB live` : "Not connected"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
-    {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChatPanel examId={selectedExamId} senderName={profile?.full_name ?? "Teacher"} senderRole="teacher" onCountChange={setChatCount} maxHeight={420} />}
+    {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} mobileFeedFor={mobileFeedByRoll} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChatPanel examId={selectedExamId} senderName={profile?.full_name ?? "Teacher"} senderRole="teacher" onCountChange={setChatCount} maxHeight={420} />}
     <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
       <section className="border border-line bg-paper p-5 sm:p-6">
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Selected candidate</p>
@@ -512,8 +525,14 @@ export default function TeacherProctoring() {
             <div className="mt-5 flex border-b border-line font-mono text-[10px] uppercase tracking-wider">
               <button onClick={() => setScreenMode(false)} className={`border-b-2 px-3 py-2 ${!screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Camera view</button>
               <button onClick={() => setScreenMode(true)} className={`border-b-2 px-3 py-2 ${screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Screen recording</button>
+              <button onClick={() => setPhoneMode(true)} className={`border-b-2 px-3 py-2 ${phoneMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}><FiSmartphone className="mr-1 inline" aria-hidden /> Phone desk</button>
             </div>
-            {screenMode ? (
+            {phoneMode ? (
+              <div className="relative mt-4 flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#D9D5CB]">
+                <FeedView feed={mobileFeedByRoll.get(selected.roll.toLowerCase()) ?? null} initials={selected.name.split(" ").map((x) => x[0]).slice(0, 2).join("")} />
+                <span className="absolute bottom-2 left-2 inline-flex items-center gap-1.5 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper"><span className="h-1 w-1 rounded-none bg-alert" /> Phone desk feed</span>
+              </div>
+            ) : screenMode ? (
               <ScreenRecording selected={selected} feed={feedFor(selected)}/>
             ) : (
               <div className="relative mt-4 flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#D9D5CB]">
@@ -730,15 +749,17 @@ export default function TeacherProctoring() {
   </RoleLayout>;
 }
 
-function VideoWall({ visible, selected, onSelect, feedFor, source, onSourceChange }: {
+function VideoWall({ visible, selected, onSelect, feedFor, mobileFeedFor, source, onSourceChange }: {
   visible: Student[];
   selected: Student | null;
   onSelect: (student: Student) => void;
   feedFor: FeedLookup;
-  source: "camera" | "screen";
-  onSourceChange: (s: "camera" | "screen") => void;
+  mobileFeedFor: Map<string, RemoteFeed>;
+  source: "camera" | "screen" | "phone";
+  onSourceChange: (s: "camera" | "screen" | "phone") => void;
 }) {
   const showScreen = source === "screen";
+  const showPhone = source === "phone";
   const initials = (name: string) => name.split(" ").map((x) => x[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 
   return (
@@ -751,12 +772,12 @@ function VideoWall({ visible, selected, onSelect, feedFor, source, onSourceChang
           </h2>
         </div>
 
-        {/* Camera / Screen toggle */}
+        {/* Camera / Screen / Phone toggle */}
         <div className="flex items-center gap-2 border border-line-strong bg-paper-raised p-1">
           <button
             onClick={() => onSourceChange("camera")}
             className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${
-              !showScreen ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"
+              source === "camera" ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"
             }`}
           >
             <FiVideo aria-hidden /> Camera
@@ -769,12 +790,22 @@ function VideoWall({ visible, selected, onSelect, feedFor, source, onSourceChang
           >
             <FiMonitor aria-hidden /> Screen
           </button>
+          <button
+            onClick={() => onSourceChange("phone")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${
+              showPhone ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"
+            }`}
+          >
+            <FiSmartphone aria-hidden /> Phone
+          </button>
         </div>
       </div>
 
       <p className="mt-2 font-mono text-[9px] text-ink-soft">
         {showScreen
           ? "Showing each candidate's shared screen — this is also the exam view being recorded."
+          : showPhone
+          ? "Showing the desk monitor feed (phone rear camera) for candidates who enabled it via QR."
           : "Showing each candidate's webcam feed. Flagged feeds appear first."}
       </p>
 
@@ -799,10 +830,12 @@ function VideoWall({ visible, selected, onSelect, feedFor, source, onSourceChang
             >
               <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-[#252923]">
                 <span className="absolute left-2 top-2 z-10 bg-ink/75 px-1.5 py-0.5 font-mono text-[7px] uppercase text-paper">
-                  {showScreen ? <><FiMonitor aria-hidden /> Screen</> : <><FiVideo aria-hidden /> Camera</>}
+                  {showPhone ? <><FiSmartphone aria-hidden /> Phone</> : showScreen ? <><FiMonitor aria-hidden /> Screen</> : <><FiVideo aria-hidden /> Camera</>}
                 </span>
 
-                {showScreen ? (
+                {showPhone ? (
+                  <FeedView feed={mobileFeedFor.get(student.roll.toLowerCase()) ?? null} initials={initials(student.name)} />
+                ) : showScreen ? (
                   <ScreenFeedView feed={feed} />
                 ) : (
                   <FeedView feed={feed} initials={initials(student.name)} />
@@ -822,7 +855,13 @@ function VideoWall({ visible, selected, onSelect, feedFor, source, onSourceChang
               <div className="p-2">
                 <p className="truncate text-[11px] font-medium">{student.name}</p>
                 <p className={`truncate font-mono text-[9px] ${isViolated ? "text-alert" : "text-ink-soft"}`}>
-                  {isViolated ? student.violation : hasFeed ? (showScreen ? "Screen active" : "Camera active") : "No feed"}
+                  {isViolated
+                    ? student.violation
+                    : showPhone
+                    ? (mobileFeedFor.has(student.roll.toLowerCase()) ? "Desk feed active" : "No phone feed")
+                    : hasFeed
+                    ? (showScreen ? "Screen active" : "Camera active")
+                    : "No feed"}
                 </p>
               </div>
             </button>
