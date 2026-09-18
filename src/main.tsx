@@ -59,8 +59,57 @@ if (LOGROCKET_ID) {
 const inTauri = "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
 const entry = import.meta.env.VITE_EXAM_ENTRY_PATH ?? "/student/exam";
 const onOnboarding = window.location.pathname === "/" || /\/index\.html?$/i.test(window.location.pathname);
+
+// Deep-link params from the vignan-exam:// launch. The kiosk hands us the
+// original URL (via the `vignan_launch_url` command / `vignan-deeplink` event);
+// merge its exam & roll into the entry path so the exam page opens preloaded.
+function applyDeeplink(url: string) {
+  try {
+    const u = new URL(url);
+    const exam = u.searchParams.get("exam");
+    if (!exam) return;
+    const roll = u.searchParams.get("roll");
+    const target = `/student/exam?examId=${encodeURIComponent(exam)}${roll ? `&roll=${encodeURIComponent(roll)}` : ""}`;
+    if (window.location.pathname + window.location.search !== target) {
+      window.history.replaceState(null, "", target);
+    }
+  } catch {
+    // Not a parseable launch URL — ignore.
+  }
+}
+
 if (inTauri && onOnboarding && window.location.pathname !== entry) {
   window.history.replaceState(null, "", entry);
+}
+
+// Wire the live deep-link channel AFTER boot so warm starts (exam opened again
+// while the kiosk is running) navigate straight to the new exam.
+if (inTauri) {
+  void import("./lib/lockdownBridge").then(({ onVignanDeepLink }) => {
+    onVignanDeepLink((url) => {
+      applyDeeplink(url);
+      if (window.location.pathname !== entry) {
+        window.history.replaceState(null, "", entry);
+      }
+      // Re-run the router on the (possibly replaced) URL.
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+  });
+}
+
+// Cold start inside the kiosk: fetch the launch URL the shell persisted, merge
+// its exam/roll into the entry path, THEN mount React so the first render
+// already points at the right exam (no flash of wrong content).
+if (inTauri) {
+  void import("./lib/lockdownBridge")
+    .then(({ getLaunchUrl }) => getLaunchUrl())
+    .then((url) => {
+      if (url) applyDeeplink(url);
+    })
+    .catch(() => undefined)
+    .finally(() => mount());
+} else {
+  mount();
 }
 
 import { AuthProvider } from './lib/auth'
@@ -68,16 +117,18 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 const queryClient = new QueryClient()
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <ErrorBoundary>
-            <App />
-          </ErrorBoundary>
-        </AuthProvider>
-      </BrowserRouter>
-    </QueryClientProvider>
-  </StrictMode>,
-)
+function mount() {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <AuthProvider>
+            <ErrorBoundary>
+              <App />
+            </ErrorBoundary>
+          </AuthProvider>
+        </BrowserRouter>
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+}

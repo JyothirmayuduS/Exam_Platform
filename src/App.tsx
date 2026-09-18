@@ -20,11 +20,13 @@ import PasswordRecover from "./pages/PasswordRecover";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SystemCheckPage from "./components/SystemCheckPage";
 import OfflineIndicator from "./components/OfflineIndicator";
+import LockdownNotice from "./components/LockdownNotice";
 
 export default function App() {
   return (
     <>
       <OfflineIndicator />
+      <LockdownNotice />
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />

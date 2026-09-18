@@ -10,6 +10,18 @@
 
 use tauri::{Manager, WindowEvent};
 
+// Single instance / deep link: when the OS opens `vignan-exam://` while the
+// kiosk is already running, forward the URL to the live webview (which listens
+// for `vignan-deeplink` events) instead of stacking a second kiosk process.
+const DEEPLINK_EVENT: &str = "vignan-deeplink";
+
+fn forward_deeplink_to_webview(app: &tauri::AppHandle, url: &str) {
+    use tauri::Emitter;
+    if let Some(win) = app.get_webview_window("exam") {
+        let _ = win.emit(DEEPLINK_EVENT, url);
+    }
+}
+
 const LOCKDOWN_JS: &str = r#"
 (() => {
   const block = (e) => { e.preventDefault(); e.stopPropagation(); return false; };
@@ -35,9 +47,13 @@ const LOCKDOWN_JS: &str = r#"
     if (k === 'printscreen') { navigator.clipboard?.writeText(''); return block(e); }
   }, true);
 
-  // Mark this as the Tauri lockdown shell so isTauri() passes.
-  window.__TAURI_INTERNALS__ = true;
-  window.__TAURI__ = {};
+  // NOTE: deliberately do NOT touch window.__TAURI_INTERNALS__ / __TAURI__
+  // here. Tauri injects its REAL IPC bridge into this webview before page
+  // scripts run, and overwriting it with a plain boolean destroyed every
+  // invoke()/listen() from the web layer — the kiosk could never fetch the
+  // launch URL or receive deep-link/lockdown events (the "app opens but
+  // nothing triggers" bug). isTauri() detects the genuine injected globals,
+  // so no fake markers are needed.
 
   // Warn the invigilator layer when the window loses focus (possible cheating).
   window.addEventListener('blur', () => {
@@ -130,6 +146,21 @@ fn detect_vm() -> bool {
     false
 }
 
+/// Hand the cold-start deep link (vignan-exam://open?exam=…&roll=…) to the
+/// web layer. Written by setup() before the webview loaded; main.tsx reads it
+/// once at boot and preloads the exam.
+#[tauri::command]
+fn vignan_launch_url() -> Option<String> {
+    let flag = std::env::temp_dir().join("vignan_launch_url.txt");
+    match std::fs::read_to_string(&flag) {
+        Ok(url) => {
+            let _ = std::fs::remove_file(&flag); // one-shot
+            Some(url.trim().to_string())
+        }
+        Err(_) => None,
+    }
+}
+
 #[tauri::command]
 fn exit_app() {
     enable_task_manager();
@@ -140,19 +171,19 @@ fn exit_app() {
 
 #[cfg(target_os = "windows")]
 fn enforce_admin_privileges() {
-    let output = std::process::Command::new("reg")
+    // NOTE: Deliberately NON-FATAL. The NSIS bundle installs per-user
+    // (installMode = currentUser), so the app legitimately runs unelevated —
+    // a hard admin requirement here meant the exe flashed and exited silently
+    // on every normal install ("the app never opens"). All lockdown features
+    // (task-manager disable via HKCU, kiosk window, watchdogs) work per-user;
+    // if elevation is available we simply note it.
+    let is_admin = std::process::Command::new("reg")
         .args(&["query", "HKU\\S-1-5-19"])
-        .output();
-    
-    let is_admin = match output {
-        Ok(out) => out.status.success(),
-        Err(_) => false,
-    };
-    
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false);
     if !is_admin {
-        println!("FATAL: Application must be run as Administrator.");
-        // We could show a native message box here, but exiting is the fail-safe.
-        std::process::exit(1);
+        println!("NOTICE: running without administrator privileges (per-user install) — continuing.");
     }
 }
 
@@ -166,20 +197,57 @@ extern "system" {
 
 fn main() {
     enforce_admin_privileges();
-    
+
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![check_prohibited_apps, exit_app])
+        .invoke_handler(tauri::generate_handler![check_prohibited_apps, exit_app, vignan_launch_url])
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // A second launch attempt (e.g. the OS handing us the deep link
+            // again while we're already running) — surface it to the live
+            // webview and make sure the kiosk is front and centre.
+            if let Some(url) = argv.iter().find(|a| a.starts_with("vignan-exam://")) {
+                forward_deeplink_to_webview(app, url);
+            }
+            if let Some(win) = app.get_webview_window("exam") {
+                let _ = win.unminimize();
+                let _ = win.set_fullscreen(true);
+                let _ = win.set_always_on_top(true);
+                let _ = win.set_focus();
+            }
+        }))
         .setup(|app| {
             // On Windows, register the vignan-exam:// URL scheme in the registry.
             // On macOS the scheme is registered automatically via Info.plist
             // (embedded from tauri.conf.json plugins.deep-link) — calling
             // register() on macOS panics with "unsupported platform".
+            // Deep link: register the scheme on Windows, and on every platform
+            // forward the launch URL (cold start) into the webview so the exam
+            // opens with the right exam/roll preloaded. This fires BEFORE the
+            // webview finishes loading, so also stash the URL for main.tsx to
+            // read via the `vignan_launch_url` command at boot.
             #[cfg(target_os = "windows")]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 app.deep_link().register("vignan-exam")?;
+            }
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                // get_current() is Option<Vec<Url>> — the OS may deliver several.
+                let launch_url = app
+                    .deep_link()
+                    .get_current()
+                    .ok()
+                    .flatten()
+                    .and_then(|urls| urls.first().map(|u| u.to_string()));
+                if let Some(url) = launch_url {
+                    println!("launch deep link: {url}");
+                    // Persist for the boot script in main.tsx.
+                    let flag = std::env::temp_dir().join("vignan_launch_url.txt");
+                    let _ = std::fs::write(&flag, &url);
+                    // Also emit for the (unlikely) case the webview is ready.
+                    forward_deeplink_to_webview(app.handle(), &url);
+                }
             }
             #[cfg(target_os = "macos")]
             {
@@ -237,16 +305,23 @@ fn main() {
                 }
                 
                 let _ = win.eval(LOCKDOWN_JS);
-                // Force the web-layer lockdown markers so isTauri() succeeds.
-                let _ = win.eval("window.__TAURI_INTERNALS__=true; window.__TAURI__={};");
+                // (No fake __TAURI_INTERNALS__ eval here either — see LOCKDOWN_JS
+                // note. Overwriting the real bridge after page load was also
+                // breaking invoke()/listen() mid-session.)
                 let _ = win.set_focus();
             }
 
+            // VM detection: don't silently exit — show the reason in the kiosk
+            // window so the student (and invigilator) can see WHY the app won't
+            // continue. The web layer renders this as a full-screen notice.
             if detect_vm() {
-                println!("VM Detected. Exiting.");
-                let flag_path = std::env::temp_dir().join("vignan_exit.flag");
+                let flag_path = std::env::temp_dir().join("vignan_vm_detected.flag");
                 let _ = std::fs::write(flag_path, "1");
-                std::process::exit(0);
+                if let Some(win) = app.get_webview_window("exam") {
+                    let _ = win.eval("window.dispatchEvent(new CustomEvent('lockdown:vm-detected'));");
+                    let _ = win.set_focus();
+                }
+                return Ok(()); // keep the window up; no exam is served
             }
 
             disable_task_manager();
@@ -283,16 +358,23 @@ fn main() {
                 }
             }
 
-            // Prohibited app watchdog thread
-            std::thread::spawn(|| {
+            // Prohibited app watchdog: instead of force-killing the exam (which
+            // loses the recording), surface a visible lockdown notice in the
+            // kiosk. The web layer listens for this event and shows the reason.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(3));
                     let apps = check_prohibited_apps();
                     if !apps.is_empty() {
-                        enable_task_manager();
-                        let flag_path = std::env::temp_dir().join("vignan_exit.flag");
-                        let _ = std::fs::write(flag_path, "1");
-                        std::process::exit(0);
+                        let list = apps.join(", ");
+                        if let Some(win) = handle.get_webview_window("exam") {
+                            let _ = win.eval(&format!(
+                                "window.dispatchEvent(new CustomEvent('lockdown:prohibited-apps', {{ detail: '{}' }}));",
+                                list.replace('\'', "")
+                            ));
+                            let _ = win.set_focus();
+                        }
                     }
                 }
             });

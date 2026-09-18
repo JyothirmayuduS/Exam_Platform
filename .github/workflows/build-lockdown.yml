@@ -1,0 +1,61 @@
+name: Build Lockdown Browser
+
+# Builds the Vignan Exam Browser desktop installers.
+# - Windows: NSIS .exe (per-user) + WiX .msi — the bundle students install.
+# - macOS: .app / .dmg.
+# Trigger manually (workflow_dispatch) or by pushing a `lockdown-v*` tag.
+# Artifacts appear on the run page; wire a release upload later if desired.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["lockdown-v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            paths: |
+              src-tauri/target/release/bundle/nsis/*.exe
+              src-tauri/target/release/bundle/msi/*.msi
+          - os: macos-latest
+            name: macos
+            paths: |
+              src-tauri/target/release/bundle/dmg/*.dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: src-tauri
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: vignan-exam-browser-${{ matrix.name }}
+          path: ${{ matrix.paths }}
+          if-no-files-found: error
+          retention-days: 30
