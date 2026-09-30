@@ -53,6 +53,8 @@ export default function App() {
       <Route path="/teacher/proctoring" element={<ProtectedRoute allowedRole="teacher"><TeacherProctoring /></ProtectedRoute>} />
       <Route path="/teacher/*" element={<ProtectedRoute allowedRole="teacher"><TeacherDashboard /></ProtectedRoute>} />
       <Route path="/proctor" element={<ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
+      <Route path="/proctor/flags" element={<ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
+      <Route path="/proctor/recordings" element={<ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
       
       {/* 404 Catch All */}
       <Route path="*" element={<ErrorPage />} />

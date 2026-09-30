@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import RoleLayout from "../components/RoleLayout";
 import { supabaseConfigured } from "../lib/env";
 import { listLiveAttempts, subscribeToAttempts, saveViolation, setAttemptPaused, forceSubmitAttempt, sendProctorMessage, extendAttemptTime, listAssignedExamsForAuthUser, listExams, type LiveAttempt, type ViolationEvent } from "../lib/examApi";
@@ -37,10 +37,9 @@ type Tile = {
 };
 
 const NAV = [
-  { label: "Overview", to: "/proctor", end: true },
-  { label: "Live monitoring", to: "/proctor" },
-  { label: "Flags & incidents", to: "/proctor" },
-  { label: "Recordings", to: "/proctor" },
+  { label: "Live monitoring", to: "/proctor", end: true },
+  { label: "Flags & incidents", to: "/proctor/flags" },
+  { label: "Recordings", to: "/proctor/recordings" },
 ];
 
 const severityTone: Record<Severity, string> = { none: "#3F7D5B", low: "#B7791F", high: "#9B2C2C" };
@@ -81,8 +80,19 @@ type FeedLookup = (t: Tile) => RemoteFeed | null;
 
 export default function ProctorGrid() {
   const { profile } = useCurrentProfile();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const paramExam = searchParams.get("exam") ?? searchParams.get("examId");
+  // Sidebar section is route-driven: /proctor → live grid, /proctor/flags →
+  // reports (flags & incidents), /proctor/recordings → archive. One source of
+  // truth — the URL — so the sidebar and the tabs can never disagree.
+  const { pathname } = useLocation();
+  const routeTab: "live" | "reports" | "recordings" =
+    pathname.startsWith("/proctor/flags") ? "reports"
+    : pathname.startsWith("/proctor/recordings") ? "recordings"
+    : "live";
+  const [mainTab, setMainTab] = useState<"live" | "reports" | "recordings">(routeTab);
+  useEffect(() => setMainTab(routeTab), [routeTab]);
   // Real exam list: exams the signed-in proctor is assigned to (Supabase).
   const [examOptions, setExamOptions] = useState<{ id: string; name: string; batch: string; status: string }[]>([]);
   const [loadingExam, setLoadingExam] = useState(true);
@@ -97,7 +107,6 @@ export default function ProctorGrid() {
   const [search, setSearch] = useState("");
   const [autoFocus, setAutoFocus] = useState(true);
   const [size, setSize] = useState<"S"|"M"|"L">("M");
-  const [mainTab, setMainTab] = useState<"live"|"reports"|"recordings">("live");
   const [note, setNote] = useState("");
   const [log, setLog] = useState<{ time: string; text: string }[]>([]);
   // Live voice: push-to-talk to the focused candidate's own channel.
@@ -480,16 +489,16 @@ export default function ProctorGrid() {
         </div>
       </div>
 
-      {/* ── Section tabs: full-width segmented row, one accent ─────────────── */}
+      {/* ── Section tabs: full-width segmented row, route-driven ──────────── */}
       <div className="mt-6 grid grid-cols-3 border border-line bg-paper">
         {([
-          ["live", "Live grid"],
-          ["reports", "Reports"],
-          ["recordings", "Recordings"],
-        ] as const).map(([tab, label], i) => (
+          ["live", "Live grid", "/proctor"],
+          ["reports", "Flags & incidents", "/proctor/flags"],
+          ["recordings", "Recordings", "/proctor/recordings"],
+        ] as const).map(([tab, label, to], i) => (
           <button
             key={tab}
-            onClick={() => setMainTab(tab)}
+            onClick={() => navigate(to)}
             aria-current={mainTab === tab ? "page" : undefined}
             className={`px-4 py-3 font-mono text-[11px] uppercase tracking-wider transition-colors ${i > 0 ? "border-l border-line" : ""} ${
               mainTab === tab ? "bg-ink text-paper" : "text-soft hover:bg-raised hover:text-ink"

@@ -39,9 +39,9 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
             </div>
             <nav className="flex-1 space-y-1">
               {items.map((item) => (
-                <NavLink key={item.to} to={item.to} end={item.end} onClick={() => setMobileOpen(false)} className={({ isActive }) => `block border-l-2 px-3 py-2.5 text-[13px] ${isActive ? "border-current bg-raised text-ink" : "border-transparent text-soft hover:bg-raised"}`} style={({ isActive }) => isActive ? { color: tone } : undefined}>
+                <NavLink key={item.to} to={item.to} end={item.end} onClick={() => setMobileOpen(false)} className={({ isActive }) => `relative block py-2.5 pl-4 pr-3 text-[13px] ${isActive ? "bg-raised font-medium text-ink" : "text-soft hover:bg-raised"}`} style={({ isActive }) => isActive ? { boxShadow: `inset 3px 0 0 ${tone}` } : undefined}>
                   <span>{item.label}</span>
-                  {item.badge && <span className="ml-2 rounded-none bg-alert/10 px-1.5 py-0.5 font-mono text-[9px] text-alert">{item.badge}</span>}
+                  {item.badge && <span className="ml-2 border border-line px-1.5 py-0.5 font-mono text-[9px] text-soft">{item.badge}</span>}
                 </NavLink>
               ))}
             </nav>
@@ -54,7 +54,7 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
       )}
 
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 hidden w-56 flex-col border-r border-line bg-paper lg:flex">
+      <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-line bg-paper lg:flex">
         <Link to="/" className="flex items-center gap-3 border-b border-line px-5 py-4">
           <div className="flex h-8 w-8 items-center justify-center border border-ink font-serif text-base font-semibold">V</div>
           <div className="leading-none">
@@ -62,16 +62,42 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
             <p className="mt-0.5 font-mono text-[8px] uppercase tracking-widest text-soft">Exam platform</p>
           </div>
         </Link>
-        <div className="px-4 py-5">
+        <div className="px-5 pb-4 pt-6">
           <p className="font-mono text-[9px] uppercase tracking-widest text-soft">{role} workspace</p>
-          <p className="mt-1.5 font-serif text-[15px] font-semibold">{name}</p>
+          <p className="mt-1.5 font-serif text-[16px] font-semibold leading-tight">{name}</p>
           <p className="mt-0.5 text-[11px] text-soft">{subtitle}</p>
         </div>
-        <nav className="flex-1 space-y-0.5 px-2">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-0 pb-6" aria-label={`${role} navigation`}>
           {items.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => `flex items-center justify-between border-l-2 px-3 py-2 text-[12px] transition-colors ${isActive ? "border-current bg-raised text-ink" : "border-transparent text-soft hover:bg-raised hover:text-ink"}`} style={({ isActive }) => isActive ? { color: tone } : undefined}>
-              <span>{item.label}</span>
-              {item.badge && <span className="rounded-none bg-alert/10 px-1.5 py-0.5 font-mono text-[9px] text-alert">{item.badge}</span>}
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                `relative flex items-center justify-between py-2.5 pl-5 pr-4 text-[13px] transition-colors ${
+                  isActive ? "bg-raised font-medium text-ink" : "text-soft hover:bg-raised/60 hover:text-ink"
+                }`
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  {/* Active rail: tone-colored, full-height, outside the label */}
+                  <span
+                    aria-hidden
+                    className={`absolute inset-y-0 left-0 w-[3px] ${isActive ? "" : "bg-transparent"}`}
+                    style={isActive ? { backgroundColor: tone } : undefined}
+                  />
+                  <span>{item.label}</span>
+                  {item.badge && (
+                    <span
+                      className={`border px-1.5 py-0.5 font-mono text-[9px] ${isActive ? "border-transparent text-paper" : "border-line text-soft"}`}
+                      style={isActive ? { backgroundColor: tone } : undefined}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
