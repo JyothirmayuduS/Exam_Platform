@@ -425,36 +425,32 @@ export default function ProctorGrid() {
 
   return (
     <RoleLayout role="Proctor" name={profile?.full_name ?? "Proctor"} subtitle="Invigilator" tone={TONE} items={NAV} status={live ? "Live monitoring active" : "Not connected"}>
-      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Proctor console / {mainTab === "live" ? "Live monitoring" : "Dashboard & Reports"}</p>
-          <div className="mt-2 flex items-center gap-4">
+      {/* ── Command bar: identity + exam picker + broadcast ───────────────── */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Proctor console</p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
             <h1 className="font-serif text-3xl font-semibold">Live proctoring</h1>
             {examOptions.length > 1 && (
               <select
                 value={examId ?? ""}
                 onChange={(e) => { setExamId(e.target.value); setSelectedId(null); }}
                 aria-label="Select assigned exam to monitor"
-                className="border border-line bg-paper px-3 py-1 font-serif text-lg font-semibold text-maroon hover:border-maroon focus:border-maroon focus:outline-none cursor-pointer"
+                className="max-w-full truncate border-b-2 border-maroon bg-paper px-3 py-1.5 font-serif text-lg font-semibold text-maroon hover:border-maroon-soft focus:border-maroon focus:outline-none cursor-pointer"
               >
                 {examOptions.map((ex) => (
                   <option key={ex.id} value={ex.id}>{ex.name} ({ex.batch || ex.id})</option>
                 ))}
               </select>
             )}
-            <div className="flex border border-line bg-paper">
-              <button onClick={() => setMainTab("live")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider ${mainTab === "live" ? "bg-forest text-paper" : "text-soft hover:bg-raised"}`}>Live Grid</button>
-              <button onClick={() => setMainTab("reports")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider border-l border-line ${mainTab === "reports" ? "bg-forest text-paper" : "text-soft hover:bg-raised"}`}>Reports & Dashboard</button>
-              <button onClick={() => setMainTab("recordings")} className={`px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider border-l border-line ${mainTab === "recordings" ? "bg-forest text-paper" : "text-soft hover:bg-raised"}`}>Recordings</button>
-            </div>
           </div>
-          <p className="mt-2 text-[13px] text-soft">
+          <p className="mt-1.5 truncate text-[13px] text-soft">
             {examId
               ? <>{examName || "Assigned exam"}{examBatch ? ` · ${examBatch}` : ""}</>
               : "Assigned exam — none selected"}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-2">
+        <div className="flex shrink-0 flex-col items-start gap-1.5 lg:items-end">
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
@@ -472,23 +468,43 @@ export default function ProctorGrid() {
                   });
                 }
               }}
-              className="border border-forest text-forest px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-forest/5"
+              className="border border-ink px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-ink hover:text-paper transition-colors"
             >
               Broadcast to all
             </button>
-            <span className="flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-none bg-alert" /> Session live</span>
+            <span className="flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-none bg-alert" /> Session live</span>
           </div>
-          <span className="font-mono text-[9px] text-soft tracking-wider">
+          <span className="font-mono text-[10px] text-soft tracking-wider">
             {tiles.length} candidate{tiles.length === 1 ? "" : "s"} · {feeds.length} live feed{feeds.length === 1 ? "" : "s"} · {viewerState === "connected" ? `${roomDiag.participants} in room · ${roomDiag.remoteTracks} remote track${roomDiag.remoteTracks === 1 ? "" : "s"}` : "feeds connecting"}
           </span>
         </div>
+      </div>
+
+      {/* ── Section tabs: full-width segmented row, one accent ─────────────── */}
+      <div className="mt-6 grid grid-cols-3 border border-line bg-paper">
+        {([
+          ["live", "Live grid"],
+          ["reports", "Reports"],
+          ["recordings", "Recordings"],
+        ] as const).map(([tab, label], i) => (
+          <button
+            key={tab}
+            onClick={() => setMainTab(tab)}
+            aria-current={mainTab === tab ? "page" : undefined}
+            className={`px-4 py-3 font-mono text-[11px] uppercase tracking-wider transition-colors ${i > 0 ? "border-l border-line" : ""} ${
+              mainTab === tab ? "bg-ink text-paper" : "text-soft hover:bg-raised hover:text-ink"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {mainTab === "live" ? (
         <>
           <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Active candidates" value={String(activeCount)} sub={`of ${tiles.length} in room`} />
-        <StatCard label="Clear" value={String(tiles.length - flaggedCount)} sub="no active flags" />
+        <StatCard label="Clear" value={String(tiles.length - flaggedCount)} sub="no active flags" tone="ok" />
         <StatCard label="Needs attention" value={String(flaggedCount)} sub="flagged candidates" alert={flaggedCount > 0} />
         <StatCard label="Submitted" value={String(submittedCount)} sub="papers received" />
       </div>
@@ -565,11 +581,12 @@ export default function ProctorGrid() {
   );
 }
 
-function StatCard({ label, value, sub, alert = false }: { label: string; value: string; sub: string; alert?: boolean }) {
+function StatCard({ label, value, sub, alert = false, tone }: { label: string; value: string; sub: string; alert?: boolean; tone?: "ok" }) {
+  const accent = alert ? "text-alert" : tone === "ok" ? "text-success" : "text-ink";
   return (
-    <div className={`border bg-raised p-5 ${alert ? "border-alert/40" : "border-line"}`}>
+    <div className={`border-l-2 bg-raised p-5 ${alert ? "border-alert" : tone === "ok" ? "border-success" : "border-line"}`}>
       <p className="font-mono text-[10px] uppercase tracking-widest text-soft">{label}</p>
-      <p className={`mt-2 font-serif text-3xl ${alert ? "text-alert" : "text-ink"}`}>{value}</p>
+      <p className={`mt-2 font-serif text-3xl ${accent}`}>{value}</p>
       <p className="mt-1 text-[12px] text-soft">{sub}</p>
     </div>
   );
@@ -596,26 +613,40 @@ function FeedVideo({ el, initials, label, isScreen = false }: { el: HTMLVideoEle
 }
 
 function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; feed: RemoteFeed | null; view: ViewMode; selected: boolean; onSelect: () => void }) {
-  const border = tile.severity === "high" ? "border-alert ring-1 ring-alert" : tile.severity === "low" ? "border-amber" : selected ? "ring-1" : "border-line hover:border-line";
+  // Severity is the ONLY thing that colors a tile: 2px left rail + label chip.
+  // (Progress previously drove the dot color — misleading: a candidate 95%
+  // through with a critical flag looked "healthy".)
+  const rail = tile.severity === "high" ? "bg-alert" : tile.severity === "low" ? "bg-amber" : "bg-success";
+  const border = selected ? "border-maroon ring-1 ring-maroon" : tile.severity === "high" ? "border-alert" : "border-line hover:border-line";
   return (
-    <button onClick={onSelect} className={`overflow-hidden border text-left ${border}`} style={selected && tile.severity === "none" ? { borderColor: TONE, boxShadow: `0 0 0 1px ${TONE}` } : undefined}>
-      {view === "split" ? (
-        <div className="grid grid-cols-2 gap-px bg-line">
-          <div className="aspect-[4/3]"><FeedVideo el={feed?.camera ?? null} initials={tile.initials} label="CAM" /></div>
-          <div className="aspect-[4/3]"><FeedVideo el={feed?.screen ?? null} initials="" label="SCREEN" isScreen /></div>
-        </div>
-      ) : (
-        <div className="aspect-video"><FeedVideo el={view === "screen" ? feed?.screen ?? null : feed?.camera ?? null} initials={view === "screen" ? "" : tile.initials} label={view === "screen" ? "SCREEN" : "CAM"} isScreen={view === "screen"} /></div>
-      )}
-      <div className="flex items-center justify-between gap-2 border-t border-line px-2.5 py-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-none ${tile.progress > 80 ? "bg-success" : tile.progress > 40 ? "bg-amber" : "bg-alert"}`} title="Connection Status"></span>
-            <p className="truncate text-[12px] font-medium">{tile.name}</p>
+    <button onClick={onSelect} aria-pressed={selected} className={`group overflow-hidden border text-left transition-colors ${border}`}>
+      <div className="flex">
+        <div className={`w-0.5 shrink-0 ${rail}`} aria-hidden />
+        <div className="min-w-0 flex-1">
+          {view === "split" ? (
+            <div className="grid grid-cols-2 gap-px bg-line">
+              <div className="aspect-[4/3]"><FeedVideo el={feed?.camera ?? null} initials={tile.initials} label="CAM" /></div>
+              <div className="aspect-[4/3]"><FeedVideo el={feed?.screen ?? null} initials="" label="SCREEN" isScreen /></div>
+            </div>
+          ) : (
+            <div className="aspect-video"><FeedVideo el={view === "screen" ? feed?.screen ?? null : feed?.camera ?? null} initials={view === "screen" ? "" : tile.initials} label={view === "screen" ? "SCREEN" : "CAM"} isScreen={view === "screen"} /></div>
+          )}
+          <div className="flex items-center justify-between gap-2 border-t border-line px-2.5 py-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <p className="truncate text-[12px] font-medium">{tile.name}</p>
+              </div>
+              <p className="truncate font-mono text-[9px] text-soft">{tile.roll} · {tile.status}{tile.status === "Writing" ? ` ${tile.progress}%` : ""}</p>
+            </div>
+            <span
+              className="shrink-0 border px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider"
+              style={{ color: severityTone[tile.severity], borderColor: `${severityTone[tile.severity]}55` }}
+              title={severityLabel[tile.severity]}
+            >
+              {severityLabel[tile.severity]}
+            </span>
           </div>
-          <p className="truncate font-mono text-[9px] text-soft ml-3">{tile.roll} · {tile.status}{tile.status === "Writing" ? ` ${tile.progress}%` : ""}</p>
         </div>
-        <span className="h-2 w-2 shrink-0 rounded-none" style={{ backgroundColor: severityTone[tile.severity] }} title={severityLabel[tile.severity]} />
       </div>
     </button>
   );
@@ -675,7 +706,7 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
       </div>
 
       <div className="border border-line p-4">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Intervention Tools</p>
+        <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Candidate actions</p>
         
         {/* Chat / Warning */}
         <div className="mt-3 flex gap-2">
@@ -693,31 +724,35 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
           </button>
         </div>
 
-        {/* Action Grid */}
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <button onClick={onFlag} className="border border-line py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-forest hover:text-ink">Flag Activity</button>
-          <button onClick={onLogViolation} className="border border-line py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-forest hover:text-ink">Log Violation</button>
-          <button onClick={onExtend} className="border border-line py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-forest hover:text-ink">Extend (+5m)</button>
-          <button onClick={onScreenshot} className="border border-line py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-forest hover:text-ink">Screenshot</button>
+        {/* Record-keeping actions */}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button onClick={onFlag} className="border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-ink hover:bg-raised transition-colors">Flag activity</button>
+          <button onClick={onLogViolation} className="border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-ink hover:bg-raised transition-colors">Log violation</button>
+          <button onClick={onExtend} className="border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-ink hover:bg-raised transition-colors">Extend +5 min</button>
+          <button onClick={onScreenshot} className="border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-ink hover:bg-raised transition-colors">Screenshot</button>
         </div>
 
-        {/* Critical Actions */}
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <button
-            onClick={onPause}
-            disabled={selected.status === "Submitted" || selected.status === "Not started"}
-            className="border border-amber py-2 font-mono text-[9px] uppercase tracking-wider text-amber hover:bg-amber/[0.06] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {selected.status === "Paused" ? "Resume" : "Block / Pause"}
-          </button>
-          <button onClick={onEscalate} disabled={selected.status === "Submitted"} className="border border-alert py-2 font-mono text-[9px] uppercase tracking-wider text-alert hover:bg-alert/[0.06] disabled:cursor-not-allowed disabled:opacity-40">Escalate</button>
-          <button
-            onClick={() => { if (window.confirm(`Force submit ${selected.name}'s exam?`)) onForceSubmit(); }}
-            disabled={selected.status === "Submitted" || selected.status === "Not started"}
-            className="border border-alert py-2 font-mono text-[9px] uppercase tracking-wider text-paper bg-alert hover:bg-alert/90 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Force Submit
-          </button>
+        {/* Critical actions — visually quarantined so they're never hit by
+            reflex; red border + tinted zone signals "irreversible". */}
+        <div className="mt-4 border border-alert/40 bg-alert/[0.04] p-3">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-alert">Critical — affects the candidate's exam</p>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            <button
+              onClick={onPause}
+              disabled={selected.status === "Submitted" || selected.status === "Not started"}
+              className="border border-amber bg-paper py-2.5 font-mono text-[11px] uppercase tracking-wider text-amber hover:bg-amber/[0.08] disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
+            >
+              {selected.status === "Paused" ? "Resume" : "Pause"}
+            </button>
+            <button onClick={onEscalate} disabled={selected.status === "Submitted"} className="border border-alert bg-paper py-2.5 font-mono text-[11px] uppercase tracking-wider text-alert hover:bg-alert/[0.08] disabled:cursor-not-allowed disabled:opacity-40 transition-colors">Escalate</button>
+            <button
+              onClick={() => { if (window.confirm(`Force submit ${selected.name}'s exam?`)) onForceSubmit(); }}
+              disabled={selected.status === "Submitted" || selected.status === "Not started"}
+              className="border border-alert bg-alert py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-alert/90 disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
+            >
+              Submit
+            </button>
+          </div>
         </div>
       </div>
 
