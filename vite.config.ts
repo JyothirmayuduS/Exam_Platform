@@ -47,7 +47,10 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webp}'],
         navigateFallback: '/index.html',
         navigateFallbackAllowlist: [/^\/student/],
-        maximumFileSizeToCacheInBytes: 5000000
+        maximumFileSizeToCacheInBytes: 5000000,
+        // Purge precache entries from older deploys on SW activation — keeps a
+        // bad/old bundle from being resurrected from cache after an update.
+        cleanupOutdatedCaches: true
       }
     })
   ],

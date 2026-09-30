@@ -7,9 +7,11 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import ErrorPage from './pages/ErrorPage.tsx'
 import * as Sentry from "@sentry/react";
 import LogRocket from 'logrocket';
+import { AuthProvider } from './lib/auth'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN?.replace(/^["']|["']$/g, '');
-const LOGROCKET_ID = import.meta.env.VITE_LOGROCKET_ID?.replace(/^["']|["']$/g, '');
+const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN?.replace(/^[\"']|[\"']$/g, '');
+const LOGROCKET_ID = import.meta.env.VITE_LOGROCKET_ID?.replace(/^[\"']|[\"']$/g, '');
 
 if (SENTRY_DSN) {
   Sentry.init({
@@ -26,7 +28,7 @@ if (SENTRY_DSN) {
     sendDefaultPii: false,
     beforeSend(event, hint) {
       const error = hint.originalException;
-      
+
       // Drop expected 4xx errors
       if (error && typeof error === 'object' && 'status' in error) {
         const status = (error as any).status;
@@ -34,12 +36,9 @@ if (SENTRY_DSN) {
           return null; // Drop this event
         }
       }
-      
-      // Note: In a real app we'd also sanitize JWTs/tokens from event.breadcrumbs/event.request here
-      // if they sneak in despite sendDefaultPii: false.
-      
+
       return event;
-    }
+    },
   });
 }
 
@@ -51,6 +50,16 @@ if (LOGROCKET_ID) {
     });
   }
 }
+
+// ── Boot sequence ─────────────────────────────────────────────────────────────
+// IMPORTANT: every statement below is a DECLARATION. All side effects happen in
+// boot(), called as the module's LAST statement. This ordering is not cosmetic —
+// an earlier version called mount() from a mid-module `if` block, BEFORE
+// `queryClient` was initialized: in the plain-browser path that mount ran while
+// `queryClient` was still in its temporal dead zone, so production rendered
+// <QueryClientProvider client={undefined}> and the app white-screened. The
+// Tauri path masked it because its async import deferred mount until after
+// module evaluation. Keep declarations first, boot last.
 
 // Lockdown desktop boot: when running inside the Tauri kiosk exe, skip every
 // landing/onboarding screen and drop the student straight into the exam. The
@@ -78,44 +87,7 @@ function applyDeeplink(url: string) {
   }
 }
 
-if (inTauri && onOnboarding && window.location.pathname !== entry) {
-  window.history.replaceState(null, "", entry);
-}
-
-// Wire the live deep-link channel AFTER boot so warm starts (exam opened again
-// while the kiosk is running) navigate straight to the new exam.
-if (inTauri) {
-  void import("./lib/lockdownBridge").then(({ onVignanDeepLink }) => {
-    onVignanDeepLink((url) => {
-      applyDeeplink(url);
-      if (window.location.pathname !== entry) {
-        window.history.replaceState(null, "", entry);
-      }
-      // Re-run the router on the (possibly replaced) URL.
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    });
-  });
-}
-
-// Cold start inside the kiosk: fetch the launch URL the shell persisted, merge
-// its exam/roll into the entry path, THEN mount React so the first render
-// already points at the right exam (no flash of wrong content).
-if (inTauri) {
-  void import("./lib/lockdownBridge")
-    .then(({ getLaunchUrl }) => getLaunchUrl())
-    .then((url) => {
-      if (url) applyDeeplink(url);
-    })
-    .catch(() => undefined)
-    .finally(() => mount());
-} else {
-  mount();
-}
-
-import { AuthProvider } from './lib/auth'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-
-const queryClient = new QueryClient()
+const queryClient = new QueryClient();
 
 function mount() {
   createRoot(document.getElementById('root')!).render(
@@ -132,3 +104,35 @@ function mount() {
     </StrictMode>,
   );
 }
+
+async function boot() {
+  if (inTauri) {
+    // Kiosk: land directly on the exam entry path, then pull the launch URL the
+    // shell persisted (cold start) and subscribe to warm-start deep links.
+    if (onOnboarding && window.location.pathname !== entry) {
+      window.history.replaceState(null, "", entry);
+    }
+    try {
+      const { getLaunchUrl, onVignanDeepLink } = await import("./lib/lockdownBridge");
+      // Warm start: exam opened again while the kiosk is running — navigate.
+      onVignanDeepLink((url) => {
+        applyDeeplink(url);
+        if (window.location.pathname !== entry) {
+          window.history.replaceState(null, "", entry);
+        }
+        // Re-run the router on the (possibly replaced) URL.
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      });
+      // Cold start: fetch the launch URL the shell persisted, merge its
+      // exam/roll into the entry path BEFORE mounting so the first render
+      // already points at the right exam (no flash of wrong content).
+      const url = await getLaunchUrl().catch(() => null);
+      if (url) applyDeeplink(url);
+    } catch {
+      // Bridge unavailable — fall through and mount normally.
+    }
+  }
+  mount();
+}
+
+void boot();
