@@ -46,6 +46,9 @@ jobs:
       VITE_APP_BASE_URL: ${{ secrets.VITE_APP_BASE_URL || vars.VITE_APP_BASE_URL }}
       VITE_SUPABASE_BUCKET_NAME: ${{ vars.VITE_SUPABASE_BUCKET_NAME || 'exam-records' }}
       VITE_EXAM_ENTRY_PATH: /student/exam
+      # Git Bash must not rewrite this web route to C:/Program Files/Git/...
+      # when invoking native Node/Vite on the Windows runner.
+      MSYS2_ENV_CONV_EXCL: VITE_EXAM_ENTRY_PATH
       VITE_PROCTOR_CAPTURE: 'true'
       VITE_ALLOW_ANON_ROLL: 'false'
       VITE_LOCKDOWN_DOWNLOAD_URL: ${{ secrets.VITE_LOCKDOWN_DOWNLOAD_URL || vars.VITE_LOCKDOWN_DOWNLOAD_URL }}
