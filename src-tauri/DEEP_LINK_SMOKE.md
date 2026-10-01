@@ -44,7 +44,7 @@ and authenticated media/exam tests remain pending; see `scripts/lockdown/README.
    - Linux: `npm run tauri:build -- --bundles appimage`
 2. Publish those installers to the exact URLs configured by
    `VITE_LOCKDOWN_DOWNLOAD_*` / `VITE_LOCKDOWN_DOWNLOAD_URL`, or copy them to the
-   fallback filenames in `src/lib/platform.ts`: `VignanExam.dmg`,
+   fallback filenames in `src/shared/platform/platform.ts`: `VignanExam.dmg`,
    `VignanExam_setup.exe`, and `VignanExam.AppImage`. Local staged Windows/Linux
    files are now real CI builds; they are not committed release assets.
    `public/downloads/VignanExam.dmg` is the rebuilt Apple Silicon DMG;
@@ -93,7 +93,7 @@ routing. Automated checks cannot establish those OS facts.
 ## Automated checks
 
 ```sh
-npx vitest run src/lib/lockdownBridge.test.ts src/lib/lockdownLaunch.test.ts src/pages/StudentExam.launch.test.tsx src/main.deeplink.test.tsx
+npx vitest run src/shared/platform/lockdownBridge.test.ts src/shared/platform/lockdownLaunch.test.ts src/features/student/pages/StudentExam.launch.test.tsx src/main.deeplink.test.tsx
 npx tsc -b
 cargo check --manifest-path src-tauri/Cargo.toml --locked --bins
 ```

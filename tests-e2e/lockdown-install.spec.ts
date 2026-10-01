@@ -14,7 +14,7 @@ async function demoStudent(page: Page) {
 async function interceptOSBoundary(page: Page) {
   // Keep actual React UI, timers, URL construction and browser navigation.
   // Replace ONLY the OS handoff; this suite must never open a fullscreen kiosk.
-  await page.route("**/src/lib/lockdownBridge.ts*", async (route) => {
+  await page.route("**/src/shared/platform/lockdownBridge.ts*", async (route) => {
     const response = await route.fetch();
     const body = await response.text();
     expect(body).toContain("window.location.assign(url)");

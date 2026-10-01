@@ -31,7 +31,7 @@ npm install
 
 This pulls the newly added `@supabase/supabase-js`, `livekit-client`, and the
 Tauri CLI. Once installed, the real package types replace the fallback stubs in
-`src/types/vendor.d.ts` automatically.
+`src/shared/types/vendor.d.ts` automatically.
 
 ## 2. Configure environment
 
@@ -69,7 +69,7 @@ values ('21VGN0142', 'Priya Nikitha', '21vgn0142@vignan.ac.in', 'CSE · Sem III'
 ```
 
 The student dashboard fetches exams for batch `CSE · Sem III` (see
-`STUDENT_BATCH` in `src/pages/StudentHome.tsx`). When a teacher publishes an exam
+`STUDENT_BATCH` in `src/features/student/pages/StudentHome.tsx`). When a teacher publishes an exam
 with that same batch, it appears on the student's screen immediately — no
 refresh — via the realtime subscription.
 
@@ -91,17 +91,17 @@ supabase secrets set \
   LIVEKIT_URL=wss://your-project.livekit.cloud
 ```
 
-The student exam screen (`src/components/ProctorCamera.tsx`) calls this function,
+The student exam screen (`src/features/proctoring/components/ProctorCamera.tsx`) calls this function,
 receives a short-lived token, and publishes camera + mic to the room. If LiveKit
 is not configured, it falls back to a local-only camera preview so the UI still
 shows the proctor tile.
 
 **Live proctor voice**: the teacher/proctor consoles publish their mic into a
-per-candidate channel `voice-<exam>-<roll>` (see `src/lib/proctorVoice.ts`). The
+per-candidate channel `voice-<exam>-<roll>` (see `src/features/proctoring/services/proctorVoice.ts`). The
 token function grants publish only to staff on `voice-` rooms and subscribe to
 students, so a candidate hears warnings aimed at them but can never talk back.
 The candidate's exam shows an amber **"Invigilator speaking"** chip while audio
-plays (`src/components/InvigilatorVoice.tsx`).
+plays (`src/features/proctoring/components/InvigilatorVoice.tsx`).
 
 **Proctor assignment emails**: deploy the companion function with the same Gmail
 secrets as `send-exam-email`:
@@ -379,8 +379,8 @@ to your `https://…/student/exam` URL.
 
 ## 6a. Student entry flow — download gate to exam
 
-When a student opens the join link, `src/pages/StudentExam.tsx` branches on
-whether it is running inside the Tauri lockdown app (`src/lib/platform.ts`
+When a student opens the join link, `src/features/student/pages/StudentExam.tsx` branches on
+whether it is running inside the Tauri lockdown app (`src/shared/platform/platform.ts`
 detects `__TAURI_INTERNALS__`):
 
 1. **Normal browser** → **download gate**. The student sees a screen with a
@@ -406,8 +406,8 @@ detects `__TAURI_INTERNALS__`):
    - **Exam** — enters fullscreen, opens the attempt row in the DB, and publishes
      the student's camera to the LiveKit room the proctor and teacher watch.
 
-The teacher's **Live proctoring** console (`src/pages/TeacherProctoring.tsx`) and
-the dedicated **Proctor grid** (`src/pages/ProctorGrid.tsx`) both read the live
+The teacher's **Live proctoring** console (`src/features/proctoring/pages/TeacherProctoring.tsx`) and
+the dedicated **Proctor grid** (`src/features/proctoring/pages/ProctorGrid.tsx`) both read the live
 attempt roster from the DB (realtime) and subscribe to the same LiveKit room, so
 each candidate's tile shows their live camera the moment they begin.
 
@@ -445,8 +445,8 @@ Before selling or running a real exam, close these:
 
 ### Proctor AI engine (real-time browser detection)
 
-Detection logic lives in `src/proctoring/` as pure, unit-tested modules that
-`src/components/ProctorAI.tsx` (a thin controller) drives:
+Detection logic lives in `src/features/proctoring/domain/` as pure, unit-tested modules that
+`src/features/proctoring/components/ProctorAI.tsx` (a thin controller) drives:
 
 - `config.ts` — every threshold, cadence, cooldown and risk weight in one
   place (gaze deviation, sustain samples, phone confirmation window, …).
@@ -462,7 +462,7 @@ Detection logic lives in `src/proctoring/` as pure, unit-tested modules that
 - `ProctorDebugOverlay.tsx` — dev-only HUD (face/gaze/tracks/conf/risk).
   Enable with `VITE_PROCTOR_DEBUG=1` or `?proctorDebug=1` on the URL.
 
-Tuning without code edits: edit `src/proctoring/config.ts` (e.g. raise
+Tuning without code edits: edit `src/features/proctoring/domain/config.ts` (e.g. raise
 `PHONE_MIN_CONF`, lengthen `TRACKING.CONFIRM_WINDOW_MS` for fewer false
 positives, or adjust `RISK.WEIGHTS`).
 

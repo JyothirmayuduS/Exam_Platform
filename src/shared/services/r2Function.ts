@@ -1,0 +1,141 @@
+// Server-signed R2 operations — the ONLY client path to Cloudflare R2.
+//
+// The browser never holds R2 credentials. Every operation (upload, read,
+// list) is minted server-side by the `store-artifact` Supabase Edge Function
+// (JWT-gated, credentials in function secrets) and executed with a plain
+// fetch. Folder layout is shared with the review side:
+//
+//   ${examFolder}/${ownerSegment}/${kind}/${filename}
+//
+// `${examFolder}` is the slug of the EXAM NAME (fallback: the exam id) — see
+// examStorage.storageFolderSegment — so the bucket reads like the console
+// ("Test-3/<roll>/recordings/…") instead of opaque ids. `ownerSegment` is
+// opaque to R2 — callers pass the candidate's roll number or student uuid,
+// and must use the same segment when reading back.
+
+import { getSupabase } from "@/shared/data/supabase";
+import { supabaseConfigured } from "@/shared/data/env";
+
+/** Folder names used in the R2 key layout. */
+export type R2Kind = "screenshots" | "recordings" | "violations" | "report" | "ai_evidence";
+
+export type R2ListedObject = {
+  key: string;
+  name: string;
+  size: number;
+  lastModified: string | null;
+};
+
+async function invoke<T>(body: Record<string, unknown>): Promise<T | null> {
+  if (!supabaseConfigured) return null;
+  const db = getSupabase();
+  if (!db) return null;
+  try {
+    const { data, error } = await db.functions.invoke("store-artifact", { body });
+    if (error || !data) {
+      console.warn(`[r2Function] store-artifact (${body.op ?? "put"}) failed:`, error?.message ?? "no data");
+      return null;
+    }
+    return data as T;
+  } catch (err) {
+    console.warn("[r2Function] invoke error:", err);
+    return null;
+  }
+}
+
+/** Presign a PUT for one object, then upload the blob with a plain fetch PUT. */
+export async function r2PutBlob(opts: {
+  /** Top-level R2 folder segment — slug of the exam name, or the exam id. */
+  examId: string;
+  ownerSegment: string;
+  kind: R2Kind;
+  name: string;
+  blob: Blob;
+}): Promise<string | null> {
+  const contentType = opts.blob.type || "application/octet-stream";
+  const signed = await invoke<{ url: string; key: string }>({
+    op: "put",
+    examId: opts.examId,
+    studentId: opts.ownerSegment,
+    kind: opts.kind,
+    name: opts.name,
+    contentType,
+  });
+  if (!signed?.url) return null;
+  try {
+    const res = await fetch(signed.url, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: opts.blob,
+    });
+    if (!res.ok) {
+      console.warn("[r2Function] R2 PUT failed:", res.status, res.statusText);
+      return null;
+    }
+    return signed.key;
+  } catch (err) {
+    console.warn("[r2Function] R2 PUT error:", err);
+    return null;
+  }
+}
+
+/** Short-lived presigned GET URL for a stored object key. */
+export async function r2PresignGet(key: string, expiresSec = 3600): Promise<string | null> {
+  const res = await invoke<{ url: string }>({ op: "get", key, expiresSec });
+  return res?.url ?? null;
+}
+
+/** List objects under a prefix (e.g. `${examId}/${owner}/${kind}/`). */
+export async function r2List(prefix: string): Promise<R2ListedObject[] | null> {
+  const objects = new Map<string, R2ListedObject>();
+  const seenTokens = new Set<string>();
+  let continuationToken: string | undefined;
+  do {
+    const res = await invoke<{ objects: R2ListedObject[]; nextContinuationToken?: string | null }>({
+      op: "list", prefix, ...(continuationToken ? { continuationToken } : {}),
+    });
+    // Never present a partial list as a complete exam if a later page failed.
+    if (!res?.objects) return null;
+    for (const object of res.objects) objects.set(object.key, object);
+    continuationToken = res.nextContinuationToken || undefined;
+    if (continuationToken) {
+      if (seenTokens.has(continuationToken)) return null;
+      seenTokens.add(continuationToken);
+    }
+  } while (continuationToken);
+  return [...objects.values()];
+}
+
+/**
+ * Read one object's BYTES via the edge function (base64 relay).
+ *
+ * Unlike a presigned GET, the response is same-origin (the function adds CORS
+ * headers), so callers can decode it into an ImageBitmap / canvas without
+ * tainting it. Required for PDF report thumbnails and zip export — direct
+ * presigned-R2 fetches break canvas readback when the bucket lacks CORS.
+ * Returns null when unavailable.
+ */
+export async function r2FetchData(key: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  const res = await invoke<{ data: string; contentType: string }>({ op: "fetch-data", key });
+  if (!res?.data) return null;
+  try {
+    const binary = atob(res.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return { bytes, contentType: res.contentType ?? "application/octet-stream" };
+  } catch (err) {
+    console.warn("[r2Function] fetch-data decode failed:", err);
+    return null;
+  }
+}
+
+/**
+ * List the IMMEDIATE sub-folders under a prefix (R2 CommonPrefixes). Pass ""
+ * for the top-level exam folders, "<exam>/" for the students of one exam, or
+ * "<exam>/<roll>/" for the kind folders of one candidate. Entries include the
+ * trailing slash: ["Test-3/", "Midterm/"]. Returns null on failure.
+ */
+export async function r2ListFolders(prefix: string): Promise<string[] | null> {
+  const res = await invoke<{ folders: string[] }>({ op: "folders", prefix });
+  return res?.folders ?? null;
+}

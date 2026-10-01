@@ -21,19 +21,29 @@ const LOCKDOWN_JS: &str = r#"
   ['copy','cut','paste','dragstart','drop','selectstart'].forEach((evt) =>
     document.addEventListener(evt, block, true));
 
-  // Block devtools, view-source, print, save, find, and refresh shortcuts.
-  document.addEventListener('keydown', (e) => {
+  // Block devtools, view-source, print, save, find, refresh, and screenshot
+  // shortcuts. Note keydown AND keyup: Windows Snipping Tool (Win+Shift+S) and
+  // Ctrl+Shift+Cmd+4 fire on keyup, so intercepting only keydown lets the OS
+  // snipping surface appear.
+  const blockedCombo = (e) => {
     const k = (e.key || '').toLowerCase();
     const combo = e.ctrlKey || e.metaKey;
-    if (k === 'escape') return block(e);
-    if (k === 'f12') return block(e);
-    if (combo && e.shiftKey && ['i','j','c'].includes(k)) return block(e); // devtools
-    if (combo && ['u','p','s','f','r','w','t','n'].includes(k)) return block(e);
-    if (k === 'f5') return block(e);
-    if (e.altKey && k === 'tab') return block(e);
-    if (e.altKey && k === 'f4') return block(e);
-    if (k === 'printscreen') { navigator.clipboard?.writeText(''); return block(e); }
-  }, true);
+    if (k === 'escape') return true;
+    if (k === 'f12') return true;
+    if (combo && e.shiftKey && ['i','j','c','s'].includes(k)) return true; // devtools + snip
+    if (combo && ['u','p','s','f','r','w','t','n','x','v','a'].includes(k)) return true;
+    if (k === 'f5') return true;
+    if (e.altKey && k === 'tab') return true;
+    if (e.altKey && k === 'f4') return true;
+    if (e.metaKey && e.shiftKey && ['3','4','5','6'].includes(k)) return true; // macOS screenshots
+    if (k === 'printscreen' || k === 'snapshot') {
+      navigator.clipboard?.writeText('');
+      return true;
+    }
+    return false;
+  };
+  document.addEventListener('keydown', (e) => { if (blockedCombo(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
+  document.addEventListener('keyup', (e) => { if (blockedCombo(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
 
   // NOTE: deliberately do NOT touch window.__TAURI_INTERNALS__ / __TAURI__
   // here. Tauri injects its REAL IPC bridge into this webview before page
@@ -185,6 +195,128 @@ fn exit_app() {
     std::process::exit(0);
 }
 
+/// Re-trigger the OS-level camera/microphone permission dialog from inside the
+/// kiosk. In a normal browser the site can re-prompt via getUserMedia, but a
+/// macOS TCC "Don't Allow" answer is remembered by the BUNDLE ID and the
+/// webview never asks again — the only escape is requestAccessForMediaType
+/// from native code (which surfaces the dialog again when the answer is still
+/// undecided) plus a shortcut into System Settings. Windows WebView2 grants
+/// web media permissions implicitly, so this resolves to "granted" there.
+#[tauri::command]
+fn media_permission_prompt(kind: String) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::runtime::AnyObject;
+        let media_type = if kind == "microphone" { "soun" } else { "vide" };
+        unsafe {
+            let cls = objc2::class!(AVCaptureDevice);
+            let sel_type: *mut AnyObject = objc2::msg_send![objc2::class!(NSString), stringWithUTF8String: std::ffi::CString::new(media_type).unwrap().as_ptr()];
+            let dev: *mut AnyObject = objc2::msg_send![cls, deviceWithMediaType: sel_type];
+            if dev.is_null() {
+                return "unavailable".to_string();
+            }
+            let status: i64 = objc2::msg_send![dev, authorizationStatusForMediaType: sel_type];
+            match status {
+                // Authorized.
+                3 => "granted".to_string(),
+                // Denied or Restricted: only System Settings can change this.
+                1 | 2 => "denied".to_string(),
+                // NotDetermined (0): the web layer's next getUserMedia call
+                // surfaces the native WKWebView prompt itself — no native
+                // requestAccess block needed here.
+                _ => "prompt".to_string(),
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = kind;
+        // WebView2 does not gate getUserMedia behind an OS dialog.
+        "granted".to_string()
+    }
+}
+
+/// Open the OS privacy pane for camera/microphone so a previously-denied
+/// student can flip the switch, then return to the kiosk and re-grant.
+#[tauri::command]
+fn open_media_settings(kind: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let pane = if kind == "microphone" {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        } else {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
+        };
+        std::process::Command::new("open")
+            .arg(pane)
+            .status()
+            .map(|_| ())
+            .map_err(|err| format!("could not open System Settings: {err}"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let pane = if kind == "microphone" {
+            "ms-settings:privacy-microphone"
+        } else {
+            "ms-settings:privacy-webcam"
+        };
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", pane])
+            .status()
+            .map(|_| ())
+            .map_err(|err| format!("could not open Settings: {err}"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = kind;
+        Err("media settings pane is not available on this platform".into())
+    }
+}
+
+/// Diagnostic: is the exam window excluded from OS screen capture? The web
+/// layer shows a lockdown notice if the exclusion could not be applied.
+#[tauri::command]
+fn screen_capture_excluded(app: tauri::AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(win) = app.get_webview_window("exam") {
+            if let Ok(ns_win) = win.ns_window() {
+                unsafe {
+                    let ns_win = ns_win as *mut objc2::runtime::AnyObject;
+                    let sharing: isize = objc2::msg_send![ns_win, sharingType];
+                    return sharing == 0; // NSWindowSharingNone
+                }
+            }
+        }
+        false
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(win) = app.get_webview_window("exam") {
+            if let Ok(hwnd) = win.hwnd() {
+                unsafe {
+                    let mut affinity: u32 = 0;
+                    // GetWindowDisplayAffinity via the same extern block pattern.
+                    return get_window_display_affinity(hwnd.0 as *mut _, &mut affinity) && (affinity & 0x00000011) != 0;
+                }
+            }
+        }
+        false
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        // Linux has no capture-exclusion API — nothing to verify, so never
+        // fail the kiosk on this platform.
+        let _ = app;
+        true
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn get_window_display_affinity(hwnd: *mut std::ffi::c_void, out: &mut u32) -> bool {
+    GetWindowDisplayAffinity(hwnd, out) != 0
+}
+
 #[cfg(target_os = "windows")]
 fn enforce_admin_privileges() {
     // NOTE: Deliberately NON-FATAL. The NSIS bundle installs per-user
@@ -211,11 +343,25 @@ extern "system" {
     fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
 }
 
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
+    fn GetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: *mut u32) -> i32;
+}
+
 fn main() {
     enforce_admin_privileges();
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![check_prohibited_apps, exit_app, open_student_side, vignan_launch_url])
+        .invoke_handler(tauri::generate_handler![
+            check_prohibited_apps,
+            exit_app,
+            open_student_side,
+            vignan_launch_url,
+            media_permission_prompt,
+            open_media_settings,
+            screen_capture_excluded
+        ])
         // Register first so a second process exits before other plugins start.
         // Its deep-link feature forwards Windows/Linux argv to the same plugin
         // event used by macOS OS-open events, and updates get_current().
@@ -255,6 +401,19 @@ fn main() {
                         | NSApplicationPresentationOptions::DisableSessionTermination
                         | NSApplicationPresentationOptions::DisableHideApplication;
                     app.setPresentationOptions(opts);
+
+                    // Replace the default main menu (File/Edit/… with Quit ≘ Cmd+Q
+                    // and Close ≘ Cmd+W accelerators) with an empty menu. JS
+                    // listeners cannot intercept app-menu shortcuts because they
+                    // dispatch through the menu bar before the webview sees the
+                    // key — removing the menu removes every accelerator, so
+                    // Cmd+Q / Cmd+W / Cmd+M become dead keys during an exam.
+                    // Termination still works programmatically via exit_app.
+                    unsafe {
+                        let empty_menu: *mut objc2::runtime::AnyObject =
+                            objc2::msg_send![objc2::class!(NSMenu), new];
+                        let _: () = objc2::msg_send![&app, setMainMenu: empty_menu];
+                    }
                 }
             }
             if let Some(win) = app.get_webview_window("exam") {
@@ -270,28 +429,31 @@ fn main() {
                             // 1000 is usually CGShieldingWindowLevel or NSScreenSaverWindowLevel
                             // This ensures the window is above notifications and other overlay apps.
                             let _: () = objc2::msg_send![ns_win, setLevel: 1000_isize];
-                            // NOTE: NSWindowSharingTypeNone was deliberately REMOVED.
-                            // Setting sharing type 0 made the window invisible to EVERY
-                            // screen-capture API — including the exam's own screen
-                            // recording and the live proctor screen feed, which came
-                            // through as black/absent. The proctor MUST be able to
-                            // record this window; anti-cheat is enforced by the kiosk
-                            // lockdown (no app switching, no devtools, etc) instead.
-                            // 2 is NSWindowSharingReadWrite (capturable).
-                            let _: () = objc2::msg_send![ns_win, setSharingType: 2_isize];
+                            // 0 = NSWindowSharingNone: the window is excluded from
+                            // every OS screen-capture API. A student pressing
+                            // Cmd+Shift+3/4/5 gets a screenshot of the desktop
+                            // WITHOUT the exam content (wallpaper shows through).
+                            //
+                            // Consequence: the kiosk's own getDisplayMedia feed is
+                            // also excluded. The proctor still sees the candidate
+                            // through the (always-granted) camera stream and the
+                            // per-second webcam snapshot timeline; screen motion
+                            // evidence is replaced by camera + AI + lockdown events.
+                            let _: () = objc2::msg_send![ns_win, setSharingType: 0_isize];
                         }
                     }
                 }
                 #[cfg(target_os = "windows")]
                 {
-                    // NOTE: WDA_EXCLUDEFROMCAPTURE was deliberately REMOVED — it
-                    // excluded the exam window from the screen recording, so the
-                    // proctor's screen feed/recording showed the desktop with a
-                    // black hole where the exam was (or fully black in fullscreen).
-                    // The window is now capturable for proctoring evidence.
+                    // WDA_EXCLUDEFROMCAPTURE (0x11): the exam window disappears
+                    // from PrintScreen, Snipping Tool (Win+Shift+S) and every
+                    // capture API — the screenshot shows everything else but a
+                    // black hole where the exam was. Same trade as macOS: the
+                    // kiosk's own screen-share feed is excluded; proctor evidence
+                    // comes from the camera stream + AI + lockdown events.
                     if let Ok(hwnd) = win.hwnd() {
                         unsafe {
-                            SetWindowDisplayAffinity(hwnd.0 as *mut _, 0x00000000); // WDA_NONE
+                            SetWindowDisplayAffinity(hwnd.0 as *mut _, 0x00000011);
                         }
                     }
                 }
@@ -381,12 +543,20 @@ fn main() {
                     let _ = window.set_always_on_top(true);
                     let _ = window.set_focus();
                 }
-                WindowEvent::CloseRequested { .. } => {
-                    // When the OS shuts down (or if the user forces a quit like Cmd+Q/Alt+F4),
-                    // exit immediately. If we prevent close here, the OS shutdown process
-                    // might take the app out of fullscreen but leave it running in the background,
-                    // creating a loophole where the user cancels shutdown and accesses the desktop.
-                    exit_app();
+                WindowEvent::CloseRequested { api, .. } => {
+                    // Refuse the close (red X button, Alt+F4, Cmd+W). Exiting
+                    // here also killed the app when macOS delivered a spurious
+                    // close during fullscreen transitions — the student lost the
+                    // exam session. The attempt is surfaced in the kiosk as a
+                    // "quit is locked" notice; the ONLY sanctioned exits are the
+                    // in-app controls, which invoke exit_app explicitly.
+                    api.prevent_close();
+                    if let Some(wv) = window.app_handle().get_webview_window("exam") {
+                        let _ = wv.eval("window.dispatchEvent(new CustomEvent('lockdown:quit-attempted'));");
+                    }
+                    let _ = window.set_fullscreen(true);
+                    let _ = window.set_always_on_top(true);
+                    let _ = window.set_focus();
                 }
                 _ => {}
             }

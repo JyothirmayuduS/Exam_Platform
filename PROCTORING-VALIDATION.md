@@ -73,7 +73,7 @@ Also test: screen off vs on, different phone orientations, room light vs dark.
 
 ## 4. Threshold sweep (diagnostic only — do not ship yet)
 
-Temporarily set `OBJECT.PHONE_MIN_CONF` in `src/proctoring/config.ts` to each
+Temporarily set `OBJECT.PHONE_MIN_CONF` in `src/features/proctoring/domain/config.ts` to each
 value, repeat position A, and table the results:
 
 | PHONE_MIN_CONF | phone detected? | false positives (non-phone → phone) |
@@ -99,7 +99,7 @@ Check `OBJECT SAMPLES` first:
   → Small-object problem: enable `OBJECT.USE_PHONE_ROI` (extra detector pass
   on the lower 55 % of the frame) and/or raise input resolution.
 - **C. Label mismatch** — a phone line shows a different name (e.g. `remote`,
-  `clock`). → Fix `src/proctoring/labels.ts` after confirming the real label
+  `clock`). → Fix `src/features/proctoring/domain/labels.ts` after confirming the real label
   and `idx` in the overlay.
 - **D. Bbox conversion wrong** — box coordinates look scaled/mirrored vs the
   video. → Check the MediaPipe → normalized-box mapping in
@@ -137,4 +137,4 @@ confirmation hits/window, tracker behavior, false positives seen, whether
 EfficientDet is acceptable, and whether a replacement detector is required.
 Only then commit.
 
-See `src/proctoring/config.ts` for every knob referenced above.
+See `src/features/proctoring/domain/config.ts` for every knob referenced above.

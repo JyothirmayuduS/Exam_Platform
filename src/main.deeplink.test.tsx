@@ -5,16 +5,16 @@ const { getLaunchUrl, subscribe, render } = vi.hoisted(() => ({
   subscribe: vi.fn(),
   render: vi.fn(),
 }));
-vi.mock("./lib/lockdownBridge", async (importOriginal) => ({
-  ...await importOriginal<typeof import("./lib/lockdownBridge")>(),
+vi.mock("@/shared/platform/lockdownBridge", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/shared/platform/lockdownBridge")>(),
   getLaunchUrl,
   onVignanDeepLink: subscribe,
 }));
 vi.mock("react-dom/client", () => ({ createRoot: () => ({ render }) }));
 vi.mock("./App.tsx", () => ({ default: () => null }));
-vi.mock("./lib/auth", () => ({ AuthProvider: () => null }));
-vi.mock("./components/ErrorBoundary.tsx", () => ({ ErrorBoundary: () => null }));
-vi.mock("./pages/ErrorPage.tsx", () => ({ default: () => null }));
+vi.mock("./features/auth/auth", () => ({ AuthProvider: () => null }));
+vi.mock("./shared/components/ErrorBoundary.tsx", () => ({ ErrorBoundary: () => null }));
+vi.mock("./shared/pages/ErrorPage.tsx", () => ({ default: () => null }));
 
 describe("native deep-link boot order", () => {
   beforeEach(() => {

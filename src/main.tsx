@@ -3,13 +3,13 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import './index.css'
 import App from './App.tsx'
-import { ErrorBoundary } from './components/ErrorBoundary.tsx'
-import ErrorPage from './pages/ErrorPage.tsx'
+import { ErrorBoundary } from './shared/components/ErrorBoundary.tsx'
+import ErrorPage from './shared/pages/ErrorPage.tsx'
 import * as Sentry from "@sentry/react";
 import LogRocket from 'logrocket';
-import { AuthProvider } from './lib/auth'
+import { AuthProvider } from './features/auth/auth'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { examPathFromDeepLink, getLaunchUrl, hasSessionHandoff, hydrateSessionFromDeepLink, onVignanDeepLink } from './lib/lockdownBridge'
+import { examPathFromDeepLink, getLaunchUrl, hasSessionHandoff, hydrateSessionFromDeepLink, onVignanDeepLink } from './shared/platform/lockdownBridge'
 
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN?.replace(/^[\"']|[\"']$/g, '');
 const LOGROCKET_ID = import.meta.env.VITE_LOGROCKET_ID?.replace(/^[\"']|[\"']$/g, '');
@@ -132,6 +132,12 @@ async function boot() {
       if (url) {
         await hydrateSessionFromDeepLink(url);
         applyDeeplink(url, false);
+      } else {
+        // Cold kiosk start with NO vignan-exam:// link: the exam page needs
+        // BOTH an exam reference and a signed-in student, and neither exists
+        // here. Route to the in-app login (it keeps a return path and no demo
+        // shortcuts in production) instead of a dead "cannot load exam" page.
+        window.history.replaceState(null, "", "/login?kiosk=1");
       }
     } catch {
       // Bridge unavailable — fall through and mount normally.
