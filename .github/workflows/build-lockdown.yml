@@ -93,6 +93,7 @@ jobs:
         with:
           workspaces: src-tauri
           key: ${{ matrix.target }}
+          cache-on-failure: true
 
       - name: Install frontend dependencies
         run: npm ci
