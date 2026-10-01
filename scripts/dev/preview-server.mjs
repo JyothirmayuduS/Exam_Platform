@@ -73,8 +73,19 @@ function send(res, status, type, body) {
   res.end(body);
 }
 
+function toSafePath(baseDir, requestPath) {
+  const resolved = path.resolve(baseDir, `.${requestPath}`);
+  if (resolved === baseDir || resolved.startsWith(`${baseDir}${path.sep}`)) return resolved;
+  return null;
+}
+
 const server = http.createServer((req, res) => {
-  const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+  let urlPath = '/';
+  try {
+    urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+  } catch {
+    return send(res, 400, 'text/plain', 'Invalid URL');
+  }
   if (urlPath === '/') return send(res, 200, 'text/html; charset=utf-8', HTML);
   if (urlPath === '/__preview.css') {
     const css = existsFile(CSS_OUT) ? fs.readFileSync(CSS_OUT) : '/* css unavailable */';
@@ -89,9 +100,13 @@ const server = http.createServer((req, res) => {
   // at the repo root. This lets /downloads/* (staged installers), /icons.svg,
   // etc. work in the lite preview server exactly like `npm run dev`.
   const candidates = [];
-  candidates.push(path.join(ROOT, urlPath));
-  if (!urlPath.startsWith('/__')) candidates.push(path.join(ROOT, 'public', urlPath));
-  const filePath = candidates.find((c) => c.startsWith(ROOT) && existsFile(c));
+  const fromRoot = toSafePath(ROOT, urlPath);
+  if (fromRoot) candidates.push(fromRoot);
+  if (!urlPath.startsWith('/__')) {
+    const fromPublic = toSafePath(path.join(ROOT, 'public'), urlPath);
+    if (fromPublic) candidates.push(fromPublic);
+  }
+  const filePath = candidates.find((c) => existsFile(c));
   if (!filePath) return send(res, 404, 'text/plain', 'Not found: ' + urlPath);
   const ext = path.extname(filePath);
   if (['.tsx', '.ts', '.jsx'].includes(ext)) {
@@ -110,4 +125,3 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => console.log(`[preview] exam-platform running at http://${HOST}:${PORT}`));
-
