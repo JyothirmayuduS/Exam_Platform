@@ -206,11 +206,15 @@ export default function ExamStudio({
 
       {/* ── Toolbar: search & add, duration, preview, advance options ───────── */}
       <div className="mt-6 border border-line bg-paper p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
-          <div className="min-w-0 flex-1">
-            <p className="text-[12px] text-soft">Search and add question to test</p>
-            <div className="relative mt-1">
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Type a question, ID, unit or the test it came from…" className={`block w-full ${inputCls}`} />
+        <div className="space-y-4">
+          <div className="min-w-0">
+            <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <label htmlFor="question-bank-search" className="text-[12px] font-medium text-ink">Search and add questions</label>
+              <span className="font-mono text-[9px] uppercase tracking-widest text-soft">Question bank</span>
+            </div>
+            <div className="relative">
+              <FiSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-soft" aria-hidden />
+              <input id="question-bank-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Type a question, ID, unit or the test it came from…" className={`block w-full pl-10 ${inputCls}`} />
               {search.trim() !== "" && (
                 <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto border border-line bg-paper shadow-xl">
                   {matches.length === 0 && <p className="px-4 py-3 text-[12px] text-soft">No matching questions in your bank.</p>}
@@ -231,42 +235,50 @@ export default function ExamStudio({
                 </div>
               )}
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="border border-line bg-paper px-2.5 py-1.5 text-[12px] outline-none focus:border-forest">
-                <option>All</option><option>MCQ</option><option>MSQ</option><option>Numerical</option><option>True / False</option><option>Subjective</option><option>Coding</option>
-              </select>
-              <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="border border-line bg-paper px-2.5 py-1.5 text-[12px] outline-none focus:border-forest">
-                <option>All</option><option>Easy</option><option>Medium</option><option>Hard</option>
-              </select>
-              <Button size="sm" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Write new question</Button>
-              <Button size="sm" variant="secondary" icon={<FiUpload />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&bulk=1&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Import CSV</Button>
-            </div>
           </div>
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="block text-[12px] text-soft">
-              <span className="font-medium text-ink">Test duration (min)</span>
-              <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Test duration in minutes" className={`mt-1 block w-28 ${inputCls}`} />
-            </label>
-            <Button size="sm" variant="secondary" icon={<FiEye />} onClick={() => setPreviewOpen(true)}>Preview</Button>
-            <div className="relative">
-              <Button size="sm" variant="secondary" icon={<FiSettings />} iconRight={<FiChevronDown />} onClick={() => setMenuOpen((o) => !o)}>Advance options</Button>
-              {menuOpen && (
-                <>
-                  <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
-                  <div className="absolute right-0 top-full z-30 mt-1 w-72 border border-line bg-paper py-2 shadow-xl">
-                    {([
-                      ["test", "Test Options", "Duration, mode, marking, results & calculator"],
-                      ["sections", "Section Options", "Random draw, shuffle, section order & timing"],
-                      ["registration", "Candidate Registration Fields", "What candidates fill in before the test"],
-                    ] as const).map(([key, label, detail]) => (
-                      <button key={key} onClick={() => { setMenuOpen(false); setDialog(key); }} className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-raised">
-                        <span><span className="block text-[13px] font-medium">{label}</span><span className="mt-0.5 block text-[11px] leading-snug text-soft">{detail}</span></span>
-                        <FiChevronRight className="shrink-0 text-soft" aria-hidden />
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
+
+          <div className="flex flex-col gap-3 border-t border-line pt-4 xl:flex-row xl:items-end xl:justify-between">
+            <div className="flex min-w-0 flex-wrap items-end gap-2">
+              <div className="flex flex-wrap gap-2">
+                <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="border border-line bg-paper px-2.5 py-2 text-[12px] outline-none focus:border-forest">
+                  <option>All</option><option>MCQ</option><option>MSQ</option><option>Numerical</option><option>True / False</option><option>Subjective</option><option>Coding</option>
+                </select>
+                <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="border border-line bg-paper px-2.5 py-2 text-[12px] outline-none focus:border-forest">
+                  <option>All</option><option>Easy</option><option>Medium</option><option>Hard</option>
+                </select>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Write new question</Button>
+                <Button size="sm" variant="secondary" icon={<FiUpload />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&bulk=1&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Import CSV</Button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-2 sm:gap-3">
+              <label className="block text-[12px] text-soft">
+                <span className="font-medium text-ink">Test duration (min)</span>
+                <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Test duration in minutes" className={`mt-1 block w-24 sm:w-28 ${inputCls}`} />
+              </label>
+              <Button size="sm" variant="secondary" icon={<FiEye />} onClick={() => setPreviewOpen(true)}>Preview</Button>
+              <div className="relative">
+                <Button size="sm" variant="secondary" icon={<FiSettings />} iconRight={<FiChevronDown />} onClick={() => setMenuOpen((o) => !o)}>Advanced options</Button>
+                {menuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
+                    <div className="absolute right-0 top-full z-30 mt-1 w-72 border border-line bg-paper py-2 shadow-xl">
+                      {([
+                        ["test", "Test Options", "Duration, mode, marking, results & calculator"],
+                        ["sections", "Section Options", "Random draw, shuffle, section order & timing"],
+                        ["registration", "Candidate Registration Fields", "What candidates fill in before the test"],
+                      ] as const).map(([key, label, detail]) => (
+                        <button key={key} onClick={() => { setMenuOpen(false); setDialog(key); }} className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-raised">
+                          <span><span className="block text-[13px] font-medium">{label}</span><span className="mt-0.5 block text-[11px] leading-snug text-soft">{detail}</span></span>
+                          <FiChevronRight className="shrink-0 text-soft" aria-hidden />
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
