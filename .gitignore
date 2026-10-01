@@ -13,8 +13,19 @@ src-tauri/gen/
 # Committed build/test artifacts
 playwright-report/
 test-results/
+.cache/
+coverage/
 .env.local
 .env
+
+# Local/tooling artifacts
+venv/
+.venv/
+graphify-out/
+.freebuff/
+training/runs/
+__pycache__/
+*.pyc
 
 # Model weights — far over GitHub's 100 MB file limit; keep local only.
 # (No code path loads them: detection uses MediaPipe tasks bundled in public/.)

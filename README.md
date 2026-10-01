@@ -66,7 +66,15 @@ supabase/
                     mobile-upload, generate-pdf-report, canvas-sync, …
 src-tauri/          Native lockdown browser (Rust/Tauri v2)
 tests-e2e/          Playwright end-to-end specs
+docs/               Contributor docs (setup, architecture, operations)
 ```
+
+See also:
+- `docs/SETUP.md` — full local/prod setup and service wiring
+- `docs/ARCHITECTURE.md` — module boundaries and ownership
+- `docs/ERROR_MONITORING.md` — Sentry/Bugsink integration notes
+- `docs/PROCTORING-VALIDATION.md` — manual AI proctoring validation checklist
+- `docs/archive/COMPLETE_FEATURE_CHECKLIST.md` — historical planning checklist
 
 ## Setup (local)
 
@@ -76,7 +84,7 @@ tests-e2e/          Playwright end-to-end specs
    guards every table.
 3. Apply migrations: `npx supabase db push --include-all`
 4. Deploy edge functions + secrets (see `supabase/functions/README` notes in
-   `SETUP.md`): LiveKit token, R2 credentials, Gmail app password, `APP_BASE_URL`.
+   `docs/SETUP.md`): LiveKit token, R2 credentials, Gmail app password, `APP_BASE_URL`.
 5. `npm run dev` — teacher + proctor flows; open the student console in another
    tab to watch exams arrive live via realtime.
 
@@ -123,7 +131,7 @@ npx playwright test # e2e (needs a running dev server + backend)
   folders stay readable) via the `store-artifact` function; define a lifecycle
   policy in the R2 bucket console per the institution's data-retention rules.
   Deploy `store-artifact` with the R2 secrets and configure the bucket CORS
-  (see SETUP.md §4a) or recordings silently fall back to Supabase Storage.
+  (see `docs/SETUP.md` §4a) or recordings silently fall back to Supabase Storage.
 - **Consent:** the candidate accepts an explicit monitoring notice before the
   exam; the timestamp + wording snapshot are stored on `attempts.consent_at`
   / `consent_text` for audit.
