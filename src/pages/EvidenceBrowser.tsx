@@ -85,7 +85,7 @@ export default function EvidenceBrowser() {
       const folders = await listR2ExamFolders();
       if (!alive) return;
       if (!folders) {
-        setExamError("Could not reach Cloudflare R2 — check the store-artifact edge function deployment and secrets (see SETUP.md §4a).");
+        setExamError("Could not reach Cloudflare R2 — check the store-artifact edge function deployment and secrets (see docs/SETUP.md §4a).");
         setExams([]);
         return;
       }

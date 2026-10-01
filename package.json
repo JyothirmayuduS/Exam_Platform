@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "tunnel": "node tunnel.mjs",
-    "dev:lite": "node preview-server.mjs",
+    "tunnel": "node scripts/dev/tunnel.mjs",
+    "dev:lite": "node scripts/dev/preview-server.mjs",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:rls": "node scripts/verify-rls.mjs",

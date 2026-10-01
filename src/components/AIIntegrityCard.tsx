@@ -169,13 +169,13 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
           <p className="text-[12px] leading-relaxed text-soft">
             AI integrity report is not configured on this deployment. Deploy it and set the{" "}
             <code className="font-mono text-[11px] text-ink">LLM_API_KEY</code> secret on the{" "}
-            <code className="font-mono text-[11px] text-ink">proctor-ai-report</code> function (see SETUP.md §4b).
+            <code className="font-mono text-[11px] text-ink">proctor-ai-report</code> function (see docs/SETUP.md §4b).
           </p>
         )}
         {!loading && state === "notdeployed" && (
           <p className="text-[12px] leading-relaxed text-alert">
             <span className="font-medium">Report unavailable:</span> {errorMsg}
-            <span className="mt-1 block text-soft">Deploy it once with <code className="font-mono text-[11px]">supabase functions deploy proctor-ai-report</code> (see SETUP.md §4b).</span>
+            <span className="mt-1 block text-soft">Deploy it once with <code className="font-mono text-[11px]">supabase functions deploy proctor-ai-report</code> (see docs/SETUP.md §4b).</span>
           </p>
         )}
         {!loading && state === "error" && (
