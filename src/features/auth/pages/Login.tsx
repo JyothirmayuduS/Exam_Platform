@@ -4,6 +4,7 @@ import { getSupabase } from "@/shared/data/supabase";
 import { supabaseConfigured } from "@/shared/data/env";
 import { useAuth } from "@/features/auth/auth";
 import { isTauri } from "@/shared/platform/platform";
+import { invoke } from "@tauri-apps/api/core";
 
 type LoginMode = "student" | "teacher" | "proctor";
 
@@ -233,6 +234,15 @@ export default function Login() {
               <p className="mt-1 text-[12px] leading-relaxed text-ink-soft">
                 Sign in once on this computer — the exam app keeps you signed in for future exams. Your exam opens from the student dashboard or your invite link.
               </p>
+              {/* Quitting is locked inside the kiosk, so the login screen must
+                  always offer a sanctioned way out for pre-exam states. */}
+              <button
+                type="button"
+                onClick={() => void invoke("exit_app")}
+                className="mt-2 w-full border border-line px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-forest"
+              >
+                Exit Vignan Exam Browser
+              </button>
             </div>
           )}
 

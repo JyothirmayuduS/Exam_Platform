@@ -2,6 +2,7 @@ import type { RefObject } from "react";
 import { FiDownload } from "react-icons/fi";
 import Seal from "@/shared/components/Seal";
 import { openStudentSide } from "@/shared/platform/lockdownBridge";
+import { detectOS } from "@/shared/platform/platform";
 
 export type CheckResult = { label: string; ok: boolean; detail: string };
 
@@ -46,6 +47,30 @@ export function DownloadGateScreen({
   );
 }
 
+/**
+ * macOS Gatekeeper guidance: the kiosk is ad-hoc signed (no Apple Developer
+ * ID / notarization), so a downloaded copy is quarantined and macOS shows
+ * "Apple could not verify …" with no way past it in the dialog itself.
+ * Give the student the two sanctioned unblock paths instead of a dead end.
+ */
+export function GatekeeperHelp() {
+  if (detectOS() !== "macos") return null;
+  return (
+    <div className="mt-4 border border-amber/50 bg-amber/5 p-4 text-left">
+      <p className="font-mono text-[10px] uppercase tracking-wider text-amber">macOS blocked the app? ("Apple could not verify")</p>
+      <ol className="mt-2 list-decimal space-y-1 pl-4 text-[12px] leading-relaxed text-ink-soft">
+        <li>
+          Open <span className="font-medium text-ink">System Settings → Privacy &amp; Security</span>, scroll to Security and click
+          <span className="font-medium text-ink"> Open Anyway</span> next to "Vignan Exam Browser", then Allow.
+        </li>
+        <li>
+          Or in Terminal: <code className="border border-line bg-paper px-1 font-mono text-[11px]">xattr -dr com.apple.quarantine "/Applications/Vignan Exam Browser.app"</code>
+        </li>
+      </ol>
+    </div>
+  );
+}
+
 export function InstalledScreen({
   examName,
   deepLinkTried,
@@ -86,6 +111,7 @@ export function InstalledScreen({
               </button>
             )}
             <a href={downloadHref} download={downloadFilename} className="flex w-full items-center justify-center gap-2 border border-line py-3 text-center font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-raised"><FiDownload aria-hidden /> Download again</a>
+            <GatekeeperHelp />
           </div>
         ) : (
           <div className="mt-5 font-mono text-[11px] text-soft">Launching Vignan Exam Browser…</div>

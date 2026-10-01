@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { isScreenCaptureExcluded, onLockdownNotice, type LockdownNotice } from "@/shared/platform/lockdownBridge";
 import { isTauri } from "@/shared/platform/platform";
 
@@ -63,8 +64,16 @@ export default function LockdownNotice() {
           <p className="font-mono text-[10px] uppercase tracking-widest text-alert">Vignan Exam Browser</p>
           <h1 className="mt-2 font-serif text-xl font-semibold text-ink">Screenshot protection unavailable</h1>
           <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-            The operating system refused to hide this window from screen capture. Your invigilator has been notified — the exam cannot continue until screenshot protection is restored. Please restart the Vignan Exam Browser.
+            The operating system refused to hide this window from screen capture. The exam cannot start without it — please restart the Vignan Exam Browser and try again.
           </p>
+          {/* Quitting is locked during the exam, so this gate needs its own
+              sanctioned exit or a failed capture check would trap the student. */}
+          <button
+            onClick={() => void invoke("exit_app")}
+            className="mt-5 w-full border border-alert bg-alert/10 py-3 font-mono text-[12px] uppercase tracking-widest text-alert hover:bg-alert/20"
+          >
+            Exit Vignan Exam Browser
+          </button>
         </div>
       </div>
     );
