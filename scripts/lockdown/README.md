@@ -37,13 +37,19 @@ builds; the macOS build uses ad-hoc signing, not Developer ID/notarization.
    select that remote ref, or push an authorized `lockdown-v*` tag. All three
    native jobs run. No release is published automatically.
 
-As inspected on **2026-10-01**, origin `main` was `101997bd97d75115f6d2d6bff5f8f6bf28a84ffb`;
-repository Actions secrets and variables lists were empty. The newest successful
-installer run was [35328662650](https://github.com/JyothirmayuduS/Exam_Platform/actions/runs/35328662650),
-from **2026-09-18**, commit `1f0d19f1bc9af2f88d4e5cdc708ced5a73013b62`.
-Its Windows/macOS artifacts expire **2026-10-18** and predate the local fixes.
-There was no Linux installer run/artifact and no GitHub Release. These observations
-are not a current-source build result; recheck metadata before distribution.
+**Verified build, 2026-10-01:** all three native jobs passed in
+[36846656016](https://github.com/JyothirmayuduS/Exam_Platform/actions/runs/36846656016)
+from `e0d99f1bb53617ffc5a4b0d872bcd84525855d36` on
+`build/lockdown-installers-20261001`. The four required public client settings
+are now configured as Actions secrets; no private server credentials were uploaded.
+The missing app origin was resolved from the repository homepage and verified as
+`https://exam-platform-gray-nine.vercel.app`. Main was not merged and no release
+was published. Artifacts retain for 30 days from this run. Build verification is
+not a Windows/Linux installed-device or authenticated exam smoke test.
+
+Windows fixes verified by this run: exclude the web entry route from Git Bash's
+environment path conversion, account for only Tauri's documented NSIS marker
+patch during integrity verification, and suppress COM null output in MSI queries.
 
 ## Outputs and verification
 
@@ -94,8 +100,9 @@ building so desktop bundles don't recursively embed stale installers/placeholder
 Download a **successful current-SHA** artifact from its Actions run, verify hashes,
 then copy the stable installers to the website's `public/downloads/` before its
 separate web build, or publish them to approved HTTPS URLs. Actions artifact URLs
-are not public student download URLs. The checked-in Windows/Linux placeholder
-files are **not replaced merely by changing this workflow**. Downloaded artifact
+are not public student download URLs. The local `public/downloads/` Windows/Linux placeholders have been replaced with
+verified outputs from this run. Binaries were not committed/published; use the
+Actions artifacts and `public/downloads/build-manifest.json` for provenance. Downloaded artifact
 ZIPs may lose Unix executable permissions: `chmod +x VignanExam.AppImage` before use.
 
 ## Local static checks

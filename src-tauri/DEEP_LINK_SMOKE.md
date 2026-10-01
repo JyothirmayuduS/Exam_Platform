@@ -30,9 +30,10 @@ regressions mock native IPC/navigation and do **not** open the kiosk.
   plus a static-server suffix-range bug. Login retains the exam route; the DMG
   probe uses the explicit final-byte range from Content-Range's total size.
 
-Windows/Linux builds and installed-device checks remain pending the authorized
-push/Actions dispatch and required public client configuration. See
-`scripts/lockdown/README.md`. Old artifacts are not substitutes for current builds.
+Windows/Linux builds and package/protocol verification now pass in Actions run
+[36846656016](https://github.com/JyothirmayuduS/Exam_Platform/actions/runs/36846656016).
+The approved build branch and four public settings are configured. Installed-device
+and authenticated media/exam tests remain pending; see `scripts/lockdown/README.md`.
 
 ## Build and installation prerequisite
 
@@ -44,10 +45,10 @@ push/Actions dispatch and required public client configuration. See
 2. Publish those installers to the exact URLs configured by
    `VITE_LOCKDOWN_DOWNLOAD_*` / `VITE_LOCKDOWN_DOWNLOAD_URL`, or copy them to the
    fallback filenames in `src/lib/platform.ts`: `VignanExam.dmg`,
-   `VignanExam_setup.exe`, and `VignanExam.AppImage`. The checked-in Windows and
-   Linux files are tiny placeholders, not usable installers; replace them with
-   real builds. `public/downloads/VignanExam.dmg` has been replaced with the
-   newly built Apple Silicon DMG; checksum and bundled URL scheme are verified.
+   `VignanExam_setup.exe`, and `VignanExam.AppImage`. Local staged Windows/Linux
+   files are now real CI builds; they are not committed release assets.
+   `public/downloads/VignanExam.dmg` is the rebuilt Apple Silicon DMG;
+   SHA-256 checksums and build provenance are alongside the installers.
    It has a verified ad-hoc signature and basic installed browser-launch checks.
    Developer ID/notarization and authenticated exam/media validation remain.
    Future web builds/source changes do not update those installers automatically.

@@ -1,0 +1,89 @@
+{
+  "runUrl": "https://github.com/JyothirmayuduS/Exam_Platform/actions/runs/36846656016",
+  "platforms": [
+    {
+      "commit": "e0d99f1bb53617ffc5a4b0d872bcd84525855d36",
+      "target": "x86_64-pc-windows-msvc",
+      "protocol": "vignan-exam",
+      "runId": "36846656016",
+      "installedOrLaunched": false,
+      "signingVerified": false,
+      "artifacts": [
+        {
+          "file": "VignanExam_setup.exe",
+          "bytes": 17493760,
+          "sha256": "f5094a3c2b6132319ad7142d6422e8a4c266a778c095d1d47c98db367d80be91",
+          "checks": [
+            "package-size",
+            "package-header",
+            "nsis-recipe-protocol",
+            "extracted-x64-payload-bundle-type-and-sha256"
+          ]
+        },
+        {
+          "file": "VignanExam.msi",
+          "bytes": 18046976,
+          "sha256": "2ce46c3e0ec5e4dc8ef2537a2a7c778fdfe2bdb6a756c041e08d711cef223275",
+          "checks": [
+            "package-size",
+            "package-header",
+            "msi-database-x64-product-file-and-protocol"
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "e0d99f1bb53617ffc5a4b0d872bcd84525855d36",
+      "target": "x86_64-unknown-linux-gnu",
+      "protocol": "vignan-exam",
+      "runId": "36846656016",
+      "installedOrLaunched": false,
+      "signingVerified": false,
+      "artifacts": [
+        {
+          "file": "VignanExam.AppImage",
+          "bytes": 164481528,
+          "sha256": "f0d0c536ddcea9e5427ee8411692cca18a40fa15dbfc9e2f9c4336bfeba05d65",
+          "checks": [
+            "package-size",
+            "package-header",
+            "appimage-extraction",
+            "extracted-elf-and-desktop-protocol"
+          ]
+        },
+        {
+          "file": "VignanExam.deb",
+          "bytes": 18398528,
+          "sha256": "323d499d6e6c5b1c2293fa0560235db4e3e10802dd8322c585a426372acf62bb",
+          "checks": [
+            "package-size",
+            "package-header",
+            "deb-amd64-dependencies",
+            "extracted-elf-and-desktop-protocol"
+          ]
+        }
+      ]
+    },
+    {
+      "commit": "e0d99f1bb53617ffc5a4b0d872bcd84525855d36",
+      "target": "aarch64-apple-darwin",
+      "protocol": "vignan-exam",
+      "runId": "36846656016",
+      "installedOrLaunched": false,
+      "signingVerified": false,
+      "artifacts": [
+        {
+          "file": "VignanExam.dmg",
+          "bytes": 17870003,
+          "sha256": "587c8561c7e90add29f54a36147958de0d2247f4538e74c029c367405f975c5f",
+          "checks": [
+            "package-size",
+            "hdiutil-verify",
+            "built-app-adhoc-signature-integrity",
+            "built-app-plist-protocol"
+          ]
+        }
+      ]
+    }
+  ]
+}

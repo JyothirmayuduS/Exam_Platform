@@ -167,8 +167,8 @@ Implemented locally:
 - Native launch listens to the real Tauri deep-link event before reading the
   initial URL. Install confirmation triggers the OS handler immediately.
 - A new Apple Silicon macOS installer is staged at
-  `public/downloads/VignanExam.dmg`. Windows/Linux staged files remain unusable
-  placeholders; build those on the target OS. Intel Macs need a compatible build.
+  `public/downloads/VignanExam.dmg`. Windows x64 EXE/MSI and Linux x64 AppImage/deb
+  are now built and verified in CI and staged locally. Intel Macs need a compatible build.
 
 **Deployment still required** (not executed by the coding change):
 1. Review `supabase db push --linked --dry-run`, then apply the reviewed migration
@@ -184,7 +184,7 @@ Implemented locally:
    cross-student access with real authenticated test accounts.
 
 Local checks (including installer follow-up): **137 unit tests**, **8 real-browser
-checks** in Chromium/WebKit, and **11 release-helper tests** passed. Commands:
+checks** in Chromium/WebKit, and **12 release-helper tests** passed. Commands:
 `npx vitest run --reporter=dot`, `npx playwright test --config playwright.lockdown.config.ts`,
 `node --test scripts/lockdown/checks.mjs`, `npx tsc -b`, `npm run build`,
 `npm run lint` (existing warnings), and `npm run tauri:build -- --bundles app,dmg`.
@@ -198,12 +198,13 @@ The macOS signature is ad-hoc, **not Developer ID/notarized** (`spctl` rejects t
 Docker was unavailable, so the new SQL policies were not exercised locally; Edge
 Function authorization/pagination tests use the real handler with mocked dependencies.
 
-Windows x64 NSIS/MSI and Linux x64 AppImage/deb jobs are prepared in
-`.github/workflows/build-lockdown.yml`, but no current-source builds were dispatched.
-They require an authorized push and repository public client configuration (the
-Actions secrets/variables lists were empty). See `scripts/lockdown/README.md` for
-required names, output verification and remaining installed-OS tests. The public
-Windows/Linux placeholder downloads have not been replaced with stale artifacts.
+Windows x64 NSIS/MSI, Linux x64 AppImage/deb and macOS arm64 jobs all passed in
+Actions run `36846656016`, building `e0d99f1` on `build/lockdown-installers-20261001`.
+The four required public client settings are configured in Actions (no server
+credentials uploaded). Verified artifacts are staged in local `public/downloads/`
+with SHA256SUMS/build-manifest.json; binaries were not pushed and no GitHub release
+or production deployment was made. See `scripts/lockdown/README.md`. Windows/Linux
+installed-device tests and trusted signing/notarization remain release requirements.
 
 Limits: old exams cannot gain frames that were never captured. One-second timers
 cannot capture while the OS sleeps, the app is suspended or the camera is off.
