@@ -1,6 +1,7 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import type { AuthRole } from "../lib/auth";
+import { isTauri } from "../lib/platform";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -17,6 +18,16 @@ export default function ProtectedRoute({ children, allowedRole }: ProtectedRoute
         <div className="h-8 w-8 animate-spin rounded-none border-4 border-ink border-t-transparent"></div>
       </div>
     );
+  }
+
+  // A deep-linked native exam restores the student's existing Supabase
+  // session before mount. If the webview has no session yet (for example while
+  // a warm macOS URL is still being hydrated), let StudentExam render its
+  // explicit account/link error instead of sending the candidate into a
+  // second login screen inside the lockdown app.
+  const nativeExamLaunch = isTauri() && allowedRole === "student" && location.pathname === "/student/exam" && new URLSearchParams(location.search).has("examId");
+  if (!user && nativeExamLaunch) {
+    return <>{children}</>;
   }
 
   if (!user) {

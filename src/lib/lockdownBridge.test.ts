@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getLaunchUrl, onVignanDeepLink } from "./lockdownBridge";
+import { getLaunchUrl, hydrateSessionFromDeepLink, onVignanDeepLink, openStudentSide } from "./lockdownBridge";
 
-const { invoke, listen } = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn() }));
+const { invoke, listen, setSession } = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(), setSession: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
+vi.mock("./supabase", () => ({ getSupabase: () => ({ auth: { setSession } }) }));
 
 describe("lockdown deep-link handoff", () => {
   beforeEach(() => {
@@ -50,6 +51,22 @@ describe("lockdown deep-link handoff", () => {
     invoke.mockResolvedValue("vignan-exam://open?exam=exam-1");
     expect(await getLaunchUrl()).toBe("vignan-exam://open?exam=exam-1");
     expect(invoke).toHaveBeenCalledWith("vignan_launch_url");
+  });
+
+  it("restores the existing student session from a native launch fragment", async () => {
+    setSession.mockResolvedValue({ error: null });
+    const url = "vignan-exam://open?exam=exam-1#access_token=access-token&refresh_token=refresh-token";
+    expect(await hydrateSessionFromDeepLink(url)).toBe(true);
+    expect(setSession).toHaveBeenCalledWith({ access_token: "access-token", refresh_token: "refresh-token" });
+  });
+
+  it("opens the browser student console through the native shell", async () => {
+    invoke.mockResolvedValue(undefined);
+    expect(await openStudentSide("/student/exams")).toBe(true);
+    const call = invoke.mock.calls.find(([command]) => command === "open_student_side");
+    expect(call?.[1]).toEqual({
+      url: `${(import.meta.env.VITE_APP_BASE_URL ?? window.location.origin).replace(/\/$/, "")}/student/exams`,
+    });
   });
 
   it("does not call native APIs in a normal browser", async () => {

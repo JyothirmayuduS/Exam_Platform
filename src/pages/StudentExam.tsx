@@ -28,7 +28,7 @@ import {
   type PaperSlot,
 } from "../lib/examApi";
 import { lockdownReady, isTauri, downloadUrl, osLabel, detectOS, probeInstaller } from "../lib/platform";
-import { launchExamInLockdown } from "../lib/lockdownBridge";
+import { launchExamInLockdown, openStudentSide } from "../lib/lockdownBridge";
 import { defaultWatermarkText, renderWatermarkTemplate } from "../lib/watermark";
 import useExamState from "../hooks/useExamState";
 import useExamTimer from "../hooks/useExamTimer";
@@ -50,6 +50,7 @@ import RegistrationScreen from "../components/exam/RegistrationScreen";
 import StartScreen from "../components/exam/StartScreen";
 import { useSearchParams } from "react-router-dom";
 import DeviceAccessFull from "../components/exam/DeviceAccessFull";
+import IdentityVerificationScreen from "../components/exam/IdentityVerificationScreen";
 
 type Question = { id: string; text: string; options: string[]; category: string; type?: "mcq" | "subjective" };
 
@@ -87,9 +88,10 @@ function runCompatChecks(): CheckResult[] {
 }
 
 // Steps (mirrors the reference flow): gate (browser download) / check / access
-// (devices) / register (name/email/USN + terms) / start (pick section) / exam
-// / submitted. "installed" is a transient gate sub-state.
-type Step = "gate" | "installed" | "check" | "access" | "register" | "start" | "exam" | "submitted";
+// (devices) / register (name/email/USN + terms) / optional photo-ID verify /
+// start (pick section) / exam / submitted. "installed" is a transient gate
+// sub-state.
+type Step = "gate" | "installed" | "check" | "access" | "register" | "verify" | "start" | "exam" | "submitted";
 
 export default function StudentExam() {
   const [params] = useSearchParams();
@@ -112,7 +114,7 @@ function StudentExamSession() {
   // ?roll= URL param is honoured ONLY in the explicit anon sandbox mode
   // (VITE_ALLOW_ANON_ROLL=true) — never as a silent production fallback.
   const anonRollAllowed = import.meta.env.VITE_ALLOW_ANON_ROLL === "true";
-  const { user: authUser, role: authRole, loading: authLoading } = useAuth();
+  const { user: authUser, role: authRole, session: authSession, loading: authLoading } = useAuth();
   const { profile: authProfile, loading: profileLoading } = useCurrentProfile();
   const [resolvedRoll, setResolvedRoll] = useState<string>(() =>
     searchRoll && anonRollAllowed ? searchRoll : "",
@@ -219,7 +221,10 @@ function StudentExamSession() {
     setStep("installed");
     setDeepLinkTried(true);
     setDeepLinkFailed(false);
-    deepLinkCleanupRef.current = launchExamInLockdown(EXAM_ID, STUDENT_ROLL, () => setDeepLinkFailed(true));
+    const onLaunchUnconfirmed = () => setDeepLinkFailed(true);
+    deepLinkCleanupRef.current = authSession
+      ? launchExamInLockdown(EXAM_ID, STUDENT_ROLL, onLaunchUnconfirmed, authSession)
+      : launchExamInLockdown(EXAM_ID, STUDENT_ROLL, onLaunchUnconfirmed);
   }
   // True while the invigilator has paused this candidate (attempt.state = "paused").
   const [proctorPaused, setProctorPaused] = useState(false);
@@ -909,10 +914,18 @@ function StudentExamSession() {
 
   // Auto-exit only after confirmed answer/evidence success, never on a fixed
   // timeout during a backlog. The receipt retains a manual Close button.
+  const returnedToStudentSideRef = useRef(false);
   useEffect(() => {
-    if (step !== "submitted" || submitFailed || artifactStatus?.state !== "stored" || !isTauri()) return;
+    if (step !== "submitted" || submitFailed || artifactStatus?.state !== "stored" || !isTauri() || returnedToStudentSideRef.current) return;
     const t = setTimeout(() => {
-      void invoke("exit_app").catch(() => { /* app already closed */ });
+      if (returnedToStudentSideRef.current) return;
+      returnedToStudentSideRef.current = true;
+      // Open the normal authenticated student console first, then close the
+      // kiosk. The browser session that launched this exam remains available,
+      // so the next exam does not ask the candidate to sign in again.
+      void openStudentSide("/student/exams").finally(() => {
+        void invoke("exit_app").catch(() => { /* app already closed */ });
+      });
     }, 800);
     return () => clearTimeout(t);
   }, [step, submitFailed, artifactStatus?.state]);
@@ -1327,8 +1340,23 @@ function StudentExamSession() {
         onDone={(info) => {
           if (info.firstName || info.lastName) setStudentName(`${info.firstName} ${info.lastName}`.trim());
           if (info.email) setStudentEmail(info.email);
-          setStep("start");
+          setStep(examSettings.photoId === true || examSettings.photoId === "true" ? "verify" : "start");
         }}
+      />
+    );
+  }
+
+  // ---------- Step: optional photo-ID verification ----------
+  if (step === "verify") {
+    return (
+      <IdentityVerificationScreen
+        examName={examName}
+        studentName={studentName}
+        studentRoll={STUDENT_ROLL}
+        stream={accessStreamRef.current}
+        previewRef={previewRef}
+        onBack={() => setStep("register")}
+        onVerified={() => setStep("start")}
       />
     );
   }

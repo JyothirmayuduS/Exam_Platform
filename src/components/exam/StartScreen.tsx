@@ -130,7 +130,7 @@ export default function StartScreen({
                   onClick={() => onStart(sel)}
                   className="border border-forest bg-forest px-10 py-3 text-[14px] font-medium text-paper transition hover:bg-forest-soft disabled:cursor-not-allowed disabled:border-line disabled:bg-line/40 disabled:text-soft"
                 >
-                  Start test
+                  Start now
                 </button>
               </div>
               {!consentGiven && (

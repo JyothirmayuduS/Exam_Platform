@@ -148,6 +148,35 @@ fn vignan_launch_url(app: tauri::AppHandle) -> Option<String> {
         .map(|url| url.to_string())
 }
 
+/// Open the normal browser-side student console before the kiosk exits.
+/// Only web URLs are accepted; the frontend supplies the configured public app
+/// origin, so an exam cannot use this command as an arbitrary process launcher.
+#[tauri::command]
+fn open_student_side(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("student-side URL must use http or https".into());
+    }
+
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg(&url).status();
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .status();
+    #[cfg(target_os = "linux")]
+    let status = std::process::Command::new("xdg-open").arg(&url).status();
+
+    status
+        .map_err(|err| format!("could not open student side: {err}"))
+        .and_then(|result| {
+            if result.success() {
+                Ok(())
+            } else {
+                Err(format!("browser exited with status {result}"))
+            }
+        })
+}
+
 #[tauri::command]
 fn exit_app() {
     enable_task_manager();
@@ -186,7 +215,7 @@ fn main() {
     enforce_admin_privileges();
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![check_prohibited_apps, exit_app, vignan_launch_url])
+        .invoke_handler(tauri::generate_handler![check_prohibited_apps, exit_app, open_student_side, vignan_launch_url])
         // Register first so a second process exits before other plugins start.
         // Its deep-link feature forwards Windows/Linux argv to the same plugin
         // event used by macOS OS-open events, and updates get_current().

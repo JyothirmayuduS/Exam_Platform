@@ -9,7 +9,7 @@ import * as Sentry from "@sentry/react";
 import LogRocket from 'logrocket';
 import { AuthProvider } from './lib/auth'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { examPathFromDeepLink, getLaunchUrl, onVignanDeepLink } from './lib/lockdownBridge'
+import { examPathFromDeepLink, getLaunchUrl, hasSessionHandoff, hydrateSessionFromDeepLink, onVignanDeepLink } from './lib/lockdownBridge'
 
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN?.replace(/^[\"']|[\"']$/g, '');
 const LOGROCKET_ID = import.meta.env.VITE_LOGROCKET_ID?.replace(/^[\"']|[\"']$/g, '');
@@ -73,12 +73,27 @@ const onOnboarding = window.location.pathname === "/" || /\/index\.html?$/i.test
 // Deep-link params from the vignan-exam:// launch. The kiosk hands us the
 // original URL (via `vignan_launch_url` / `deep-link://new-url`);
 // merge its exam & roll into the entry path so the exam page opens preloaded.
-function applyDeeplink(url: string) {
+function applyDeeplink(url: string, restoreSession = true) {
   const target = examPathFromDeepLink(url, entry);
-  if (!target || window.location.pathname + window.location.search === target) return;
-  window.history.replaceState(null, "", target);
-  // Also notify an already-mounted router (late macOS cold start / warm start).
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  if (!target) return;
+
+  const route = () => {
+    if (window.location.pathname + window.location.search === target) return;
+    window.history.replaceState(null, "", target);
+    // Also notify an already-mounted router (late macOS cold start / warm start).
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
+  // Warm launches can carry the browser's existing student session. If there
+  // is a token handoff, wait for it before routing so StudentExam never has to
+  // redirect to /login while the native webview is still hydrating. Legacy
+  // links without a handoff keep their synchronous route-update behavior.
+  if (restoreSession && hasSessionHandoff(url)) {
+    void hydrateSessionFromDeepLink(url).finally(route);
+  } else {
+    if (restoreSession) void hydrateSessionFromDeepLink(url);
+    route();
+  }
 }
 
 const queryClient = new QueryClient();
@@ -114,7 +129,10 @@ async function boot() {
       // exam/roll into the entry path BEFORE mounting so the first render
       // already points at the right exam (no flash of wrong content).
       const url = await getLaunchUrl().catch(() => null);
-      if (url) applyDeeplink(url);
+      if (url) {
+        await hydrateSessionFromDeepLink(url);
+        applyDeeplink(url, false);
+      }
     } catch {
       // Bridge unavailable — fall through and mount normally.
     }

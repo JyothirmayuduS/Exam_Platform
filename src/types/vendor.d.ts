@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL: string;
   readonly VITE_SUPABASE_ANON_KEY: string;
   readonly VITE_LIVEKIT_URL: string;
+  // Public browser origin reopened after the native exam closes.
+  readonly VITE_APP_BASE_URL?: string;
   // Where the desktop lockdown app should boot straight into.
   readonly VITE_EXAM_ENTRY_PATH?: string;
   // "true" turns on per-second proctoring screenshot capture / R2.

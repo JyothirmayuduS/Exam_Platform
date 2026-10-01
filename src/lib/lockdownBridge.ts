@@ -8,6 +8,9 @@
 
 type Unlisten = () => void;
 
+/** The minimum Supabase session data needed to open the native app without a second login. */
+export type LaunchSession = { access_token: string; refresh_token: string };
+
 function inKiosk(): boolean {
   return typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
 }
@@ -57,12 +60,68 @@ export function examPathFromDeepLink(url: string, entry = "/student/exam"): stri
 }
 
 /**
+ * Read the short-lived session handoff kept in the deep-link fragment. The
+ * fragment is not sent to a web server, but is available to the native app so
+ * it can restore the student's existing browser session without another login.
+ */
+function sessionFromDeepLink(url: string): LaunchSession | null {
+  try {
+    const link = new URL(url);
+    const accessToken = link.hash ? new URLSearchParams(link.hash.slice(1)).get("access_token") : null;
+    const refreshToken = link.hash ? new URLSearchParams(link.hash.slice(1)).get("refresh_token") : null;
+    return accessToken && refreshToken ? { access_token: accessToken, refresh_token: refreshToken } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when this launch can restore a browser session in the native webview. */
+export function hasSessionHandoff(url: string): boolean {
+  return sessionFromDeepLink(url) !== null;
+}
+
+/** Restore the browser's student session inside the native webview. */
+export async function hydrateSessionFromDeepLink(url: string): Promise<boolean> {
+  const session = sessionFromDeepLink(url);
+  if (!session || !inKiosk()) return false;
+  try {
+    const { getSupabase } = await import("./supabase");
+    const db = getSupabase();
+    if (!db) return false;
+    const { error } = await db.auth.setSession(session);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+/** Open the normal student console after the native exam closes. */
+export async function openStudentSide(path = "/student/exams"): Promise<boolean> {
+  const base = (import.meta.env.VITE_APP_BASE_URL ?? "").replace(/\/$/, "");
+  const fallback = typeof window !== "undefined" && /^https?:$/i.test(window.location.protocol)
+    ? window.location.origin
+    : "http://localhost:5173";
+  const url = `${base || fallback}${path.startsWith("/") ? path : `/${path}`}`;
+  if (!inKiosk()) {
+    window.location.assign(url);
+    return true;
+  }
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("open_student_side", { url });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Request the OS handler synchronously in the click gesture (never after an
  * await/timer). Browsers cannot confirm installation; offer a retry when the
  * page stays visible, and stop the fallback if the student switches to the app.
  */
-export function launchExamInLockdown(examId: string, roll: string, onUnconfirmed: () => void): Unlisten {
-  const url = `vignan-exam://open?exam=${encodeURIComponent(examId)}${roll ? `&roll=${encodeURIComponent(roll)}` : ""}`;
+export function launchExamInLockdown(examId: string, roll: string, onUnconfirmed: () => void, session?: LaunchSession | null): Unlisten {
+  const url = `vignan-exam://open?exam=${encodeURIComponent(examId)}${roll ? `&roll=${encodeURIComponent(roll)}` : ""}${session?.access_token && session.refresh_token ? `#access_token=${encodeURIComponent(session.access_token)}&refresh_token=${encodeURIComponent(session.refresh_token)}` : ""}`;
   const dispose = () => {
     window.clearTimeout(timer);
     document.removeEventListener("visibilitychange", onVisibilityChange);

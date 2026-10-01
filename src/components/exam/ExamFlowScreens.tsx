@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import { FiDownload } from "react-icons/fi";
 import Seal from "../Seal";
+import { openStudentSide } from "../../lib/lockdownBridge";
 
 export type CheckResult = { label: string; ok: boolean; detail: string };
 
@@ -214,9 +215,11 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
     const w = window as unknown as { __TAURI_INTERNALS__?: { invoke?: (cmd: string) => Promise<unknown> } };
     // Inside the Vignan lockdown desktop app, ask Rust to exit the app itself.
     if (w.__TAURI_INTERNALS__?.invoke) {
-      void w.__TAURI_INTERNALS__.invoke("exit_app").catch(() => {
-        try { window.close(); } catch { /* ignore */ }
-        backToDashboard();
+      void openStudentSide("/student/exams").finally(() => {
+        void w.__TAURI_INTERNALS__!.invoke!("exit_app").catch(() => {
+          try { window.close(); } catch { /* ignore */ }
+          backToDashboard();
+        });
       });
       return;
     }
