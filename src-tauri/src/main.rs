@@ -341,11 +341,6 @@ fn enforce_admin_privileges() {}
 #[cfg(target_os = "windows")]
 extern "system" {
     fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
-}
-
-#[cfg(target_os = "windows")]
-extern "system" {
-    fn SetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: u32) -> i32;
     fn GetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: *mut u32) -> i32;
 }
 
