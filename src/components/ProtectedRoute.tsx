@@ -1,6 +1,7 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import type { AuthRole } from "../lib/auth";
+import { isTauri } from "../lib/platform";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -20,6 +21,12 @@ export default function ProtectedRoute({ children, allowedRole }: ProtectedRoute
   }
 
   if (!user) {
+    // Lockdown desktop flow: the Tauri app deep-links directly into /student/exam
+    // and resolves the candidate from the link payload, so it must not bounce to
+    // /login first.
+    if (allowedRole === "student" && isTauri() && location.pathname === "/student/exam") {
+      return <>{children}</>;
+    }
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 

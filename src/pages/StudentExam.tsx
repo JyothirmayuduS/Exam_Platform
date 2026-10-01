@@ -585,9 +585,9 @@ export default function StudentExam() {
             if (!urlEmail) setStudentEmail(st.email ?? "");
           }
         }
-      } else if (anonRollAllowed && searchRoll) {
-        // Explicit sandbox escape: demo without Supabase Auth. Never active
-        // unless VITE_ALLOW_ANON_ROLL=true is set at build time.
+      } else if ((anonRollAllowed || isTauri()) && searchRoll) {
+        // Explicit sandbox escape: demo without Supabase Auth (VITE_ALLOW_ANON_ROLL),
+        // and lockdown desktop deep-link identity resolution (Tauri).
         const st = await getStudentProfile(searchRoll);
         if (st?.id) {
           studentIdRef.current = st.id;
