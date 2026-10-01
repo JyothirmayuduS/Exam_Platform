@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateEnvironment } from './validate-env.mjs';
-import { verifyDesktopEntry, verifyHeader, verifyNsisRecipe } from './stage-installers.mjs';
+import { verifyDesktopEntry, verifyHeader, verifyNsisRecipe, verifyNsisPayload } from './stage-installers.mjs';
 
 const valid = {
   VITE_SUPABASE_URL: 'https://release-test.supabase.co',
@@ -53,6 +53,18 @@ test('release safety flags cannot silently enable demo authentication or disable
     assert(validateEnvironment({ ...valid, [name]: value }).some(error => error.startsWith(name)));
   }
 });
+test('NSIS integrity permits only the documented Tauri UNK-to-NSS patch', () => {
+  const original = Buffer.from('prefix__TAURI_BUNDLE_TYPE_VAR_UNKbody__TAURI_BUNDLE_TYPE_VAR_UNKtail');
+  const packaged = Buffer.from('prefix__TAURI_BUNDLE_TYPE_VAR_NSSbody__TAURI_BUNDLE_TYPE_VAR_UNKtail');
+  verifyNsisPayload(packaged, original);
+  assert.throws(() => verifyNsisPayload(original, original), /differs/);
+  const tampered = Buffer.from(packaged);
+  tampered[0] ^= 1;
+  assert.throws(() => verifyNsisPayload(tampered, original), /differs/);
+  assert.throws(() => verifyNsisPayload(Buffer.from(packaged.toString().replace('UNK', 'NSS')), original), /differs/);
+  assert.throws(() => verifyNsisPayload(packaged, Buffer.from('no marker')), /missing/);
+});
+
 test('validates PE structure, not just MZ placeholder bytes', () => {
   assert.throws(() => verifyHeader(Buffer.from('MZ'), '.exe'));
   const pe = Buffer.alloc(128);

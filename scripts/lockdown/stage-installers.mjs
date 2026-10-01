@@ -35,6 +35,19 @@ export function verifyHeader(bytes, extension, x64 = false) {
   }
 }
 
+// Tauri 2.11 patches exactly the first UNK marker for each package and restores
+// the original cargo output afterward. Compare to that exact transformation;
+// do not ignore arbitrary bytes or weaken the payload integrity check.
+export function verifyNsisPayload(payload, cargoBinary) {
+  const marker = Buffer.from('__TAURI_BUNDLE_TYPE_VAR_UNK');
+  const index = cargoBinary.indexOf(marker);
+  assert(index >= 0, 'Cargo binary is missing the Tauri bundle-type marker');
+  const expected = Buffer.from(cargoBinary);
+  Buffer.from('__TAURI_BUNDLE_TYPE_VAR_NSS').copy(expected, index);
+  const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+  assert.equal(hash(payload), hash(expected), 'NSIS payload differs beyond the expected Tauri bundle-type patch');
+}
+
 export function verifyDesktopEntry(text) {
   const section = text.split(/^\[Desktop Entry\]\s*$/m)[1]?.split(/^\[/m)[0] ?? '';
   assert(/^Type=Application\r?$/m.test(section), 'Missing desktop application type');
@@ -121,8 +134,8 @@ export async function stageInstallers(platform, root = process.cwd()) {
         const executables = (await filesBelow(unpacked)).filter(file => path.basename(file) === 'vignan-lockdown.exe');
         assert.equal(executables.length, 1, 'NSIS must contain the main application');
         await header(executables[0], '.exe', true);
-        assert.equal(await sha256(executables[0]), await sha256(path.join(release, 'vignan-lockdown.exe')), 'NSIS payload differs from this build');
-        checks.push('nsis-recipe-protocol', 'extracted-x64-payload-sha256');
+        verifyNsisPayload(await readFile(executables[0]), await readFile(path.join(release, 'vignan-lockdown.exe')));
+        checks.push('nsis-recipe-protocol', 'extracted-x64-payload-bundle-type-and-sha256');
       } else if (extension === '.msi') {
         const result = JSON.parse(run('pwsh', ['-NoProfile', '-File', path.join(root, 'scripts/lockdown/verify-msi.ps1'), '-Path', source]));
         assert.equal(result.protocol, 'vignan-exam');

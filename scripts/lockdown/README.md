@@ -63,7 +63,10 @@ package of **each** requested format and refuses a pre-existing staging folder.
 Checks performed on the native runner:
 - NSIS: nontrivial size and PE header, generated per-user protocol registry recipe
   with quoted executable/URL, extraction with 7-Zip, x64 payload and SHA-256 match
-  against the just-built executable. **Not an installed registry test.**
+  against the just-built executable with only Tauri's documented first
+  `__TAURI_BUNDLE_TYPE_VAR_UNK` → `..._NSS` package marker patch applied. Tauri
+  restores the original Cargo executable after bundling, so raw hashes otherwise
+  differ; any change beyond that exact patch fails. **Not an installed registry test.**
 - MSI: compound-file header and read-only Windows Installer database inspection
   of product, x64 architecture, main file and quoted `vignan-exam` registry command.
   **No MSI installation is performed.**
