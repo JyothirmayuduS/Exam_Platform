@@ -9,6 +9,7 @@ import * as Sentry from "@sentry/react";
 import LogRocket from 'logrocket';
 import { AuthProvider } from './lib/auth'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { examPathFromDeepLink, getLaunchUrl, onVignanDeepLink } from './lib/lockdownBridge'
 
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN?.replace(/^[\"']|[\"']$/g, '');
 const LOGROCKET_ID = import.meta.env.VITE_LOGROCKET_ID?.replace(/^[\"']|[\"']$/g, '');
@@ -70,21 +71,14 @@ const entry = import.meta.env.VITE_EXAM_ENTRY_PATH ?? "/student/exam";
 const onOnboarding = window.location.pathname === "/" || /\/index\.html?$/i.test(window.location.pathname);
 
 // Deep-link params from the vignan-exam:// launch. The kiosk hands us the
-// original URL (via the `vignan_launch_url` command / `vignan-deeplink` event);
+// original URL (via `vignan_launch_url` / `deep-link://new-url`);
 // merge its exam & roll into the entry path so the exam page opens preloaded.
 function applyDeeplink(url: string) {
-  try {
-    const u = new URL(url);
-    const exam = u.searchParams.get("exam");
-    if (!exam) return;
-    const roll = u.searchParams.get("roll");
-    const target = `/student/exam?examId=${encodeURIComponent(exam)}${roll ? `&roll=${encodeURIComponent(roll)}` : ""}`;
-    if (window.location.pathname + window.location.search !== target) {
-      window.history.replaceState(null, "", target);
-    }
-  } catch {
-    // Not a parseable launch URL — ignore.
-  }
+  const target = examPathFromDeepLink(url, entry);
+  if (!target || window.location.pathname + window.location.search === target) return;
+  window.history.replaceState(null, "", target);
+  // Also notify an already-mounted router (late macOS cold start / warm start).
+  window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 const queryClient = new QueryClient();
@@ -107,23 +101,16 @@ function mount() {
 
 async function boot() {
   if (inTauri) {
-    // Kiosk: land directly on the exam entry path, then pull the launch URL the
-    // shell persisted (cold start) and subscribe to warm-start deep links.
+    // Kiosk: land on the exam entry path, subscribe to OS URL events, then
+    // read the plugin's current launch URL (if the OS already delivered it).
     if (onOnboarding && window.location.pathname !== entry) {
       window.history.replaceState(null, "", entry);
     }
     try {
-      const { getLaunchUrl, onVignanDeepLink } = await import("./lib/lockdownBridge");
-      // Warm start: exam opened again while the kiosk is running — navigate.
-      onVignanDeepLink((url) => {
-        applyDeeplink(url);
-        if (window.location.pathname !== entry) {
-          window.history.replaceState(null, "", entry);
-        }
-        // Re-run the router on the (possibly replaced) URL.
-        window.dispatchEvent(new PopStateEvent("popstate"));
-      });
-      // Cold start: fetch the launch URL the shell persisted, merge its
+      // Await registration BEFORE querying the current URL. Otherwise an OS
+      // event between the query and listener registration is lost.
+      await onVignanDeepLink(applyDeeplink);
+      // Cold start: fetch the launch URL the plugin holds in memory, merge its
       // exam/roll into the entry path BEFORE mounting so the first render
       // already points at the right exam (no flash of wrong content).
       const url = await getLaunchUrl().catch(() => null);

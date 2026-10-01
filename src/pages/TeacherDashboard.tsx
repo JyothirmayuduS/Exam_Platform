@@ -383,9 +383,23 @@ function Reports({ notify }: { notify: (s: string) => void }) {
     startedAt: a.startedAtIso ?? null,
     violations: a.flags.map((f) => ({ description: f.label, type: "flag", severity: f.severity, offset_seconds: null, created_at: f.atIso ?? f.at })),
   });
-  const exportPdf = () => {
-    notify(`Session report exporting (includes per-snapshot timeline)…`);
-    void downloadSessionReportPdf(selectedExam?.name ?? "Exam", examId || "all", liveAttempts.map(toReportRow));
+  const [pdfProgress, setPdfProgress] = useState<string | null>(null);
+  const exportPdf = async (candidates?: typeof liveAttempts) => {
+    if (pdfProgress) return;
+    const jobs = candidates ? candidates.map((a) => ({ id: `${examId}-${a.roll}`, rows: [toReportRow(a)] }))
+      : [{ id: examId || "all", rows: liveAttempts.map(toReportRow) }];
+    try {
+      // One PDF at a time: long-exam images must not be loaded for every
+      // student concurrently. No sampling or frame limits in either path.
+      for (let i = 0; i < jobs.length; i++) {
+        setPdfProgress(`Preparing PDF ${i + 1}/${jobs.length} - all stored snapshots…`);
+        await downloadSessionReportPdf(selectedExam?.name ?? "Exam", jobs[i].id, jobs[i].rows);
+      }
+      notify("PDF export finished. Check snapshot pages for any missing evidence.");
+    } catch (err) {
+      console.error("[Reports] PDF export failed:", err);
+      notify("PDF export failed. Please retry a single student's report.");
+    } finally { setPdfProgress(null); }
   };
   const exportCsv = () => {
     downloadCsv(
@@ -455,10 +469,11 @@ function Reports({ notify }: { notify: (s: string) => void }) {
           </select>
           <Button onClick={() => void releaseResults()}>{busy ? "Releasing…" : resultsPublished ? "✓ Results Released" : "Release Results"}</Button>
           <Button onClick={() => void publishAnswerKey()}>{answerKeyPublished ? "✓ Answer Key Published" : "Publish Answer Key"}</Button>
-          <Button onClick={exportPdf}>Export PDF</Button>
+          <Button onClick={() => void exportPdf()} disabled={!!pdfProgress}>{pdfProgress ? "Exporting…" : "Export PDF"}</Button>
           <Button onClick={exportCsv}>Export CSV</Button>
         </div>
       } />
+      {pdfProgress && <p role="status" className="mt-4 text-[12px] text-soft">{pdfProgress} Long exams can create large PDFs; keep this tab open.</p>}
       <div className="mt-8 flex gap-2 border-b border-line pb-3 font-mono text-[10px] uppercase tracking-wider text-soft">
         {["Overview", "Item Analysis", "Student Reports", "Trends"].map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)} className={`px-3 py-1.5 hover:text-ink ${activeTab === tab ? "border-b-2 border-forest text-forest pb-3 -mb-[14px]" : ""}`}>{tab}</button>
@@ -502,14 +517,14 @@ function Reports({ notify }: { notify: (s: string) => void }) {
             <p className="mt-1 font-mono text-[10px] text-soft">Per-candidate PDFs plus a ZIP of every student's recordings (recording/) and screenshots (ss/).</p></div>
             <div className="flex flex-wrap items-center gap-2">
               <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Download Evidence ZIP"}</Button>
-              <Button onClick={() => { notify(`Exporting ${submitted.length} PDF(s) with snapshot timelines…`); submitted.forEach((a) => void downloadSessionReportPdf(selectedExam?.name ?? "Exam", `${examId}-${a.roll}`, [toReportRow(a)])); }} disabled={submitted.length === 0}>Generate All PDFs</Button>
+              <Button onClick={() => void exportPdf(submitted)} disabled={submitted.length === 0 || !!pdfProgress}>Generate All PDFs</Button>
             </div>
           </div>
           <div className="divide-y divide-line">
             {submitted.map((a) => (
               <div key={a.id} className="flex items-center justify-between gap-4 px-5 py-4">
                 <div><p className="text-[13px] font-medium">{a.name}</p><p className="mt-0.5 font-mono text-[10px] text-soft">{a.roll} · {a.answered}/{a.total} answered · score {a.score != null ? `${a.score}%` : "pending"}</p></div>
-                <Button onClick={() => void downloadSessionReportPdf(selectedExam?.name ?? "Exam", `${examId}-${a.roll}`, [toReportRow(a)])}>PDF</Button>
+                <Button onClick={() => void exportPdf([a])} disabled={!!pdfProgress}>PDF</Button>
               </div>
             ))}
             {submitted.length === 0 && <p className="px-5 py-10 text-center text-[12px] text-soft">No submissions for this exam yet.</p>}

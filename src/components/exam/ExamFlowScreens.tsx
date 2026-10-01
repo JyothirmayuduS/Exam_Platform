@@ -248,7 +248,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
             <p className="mt-1">
               {uploadState === "stored" && <>Your exam recording has been secured. You may close this window.</>}
               {uploadState === "uploading" && <>{uploadDetail ?? "Securing your exam recording…"}</>}
-              {uploadState === "partial" && <>Finishing up — your recording is being secured. You may close this window.</>}
+              {uploadState === "partial" && <>{uploadDetail ?? "Some exam evidence is still pending. Keep the app open and inform your invigilator."}</>}
               {uploadState === "failed" && <>Your answers are submitted. Please tell the invigilator before leaving so your recording can be verified.</>}
             </p>
           </div>

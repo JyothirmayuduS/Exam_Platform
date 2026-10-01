@@ -26,8 +26,10 @@
 
 import { jsPDF } from "jspdf";
 import { getSupabase } from "./supabase";
+import { createSnapshotOutbox } from "./snapshotOutbox";
+import type { ReportRow } from "./sessionReport";
 import { supabaseConfigured } from "./env";
-import { r2List, r2ListFolders, r2PresignGet, r2PutBlob, type R2Kind } from "./r2Function";
+import { r2FetchData, r2List, r2ListFolders, r2PresignGet, r2PutBlob, type R2Kind } from "./r2Function";
 
 // Storage policy: Cloudflare R2 is PRIMARY, Supabase Storage is the BACKUP.
 // Every artifact is written to R2 first; only when the R2 write fails (auth,
@@ -162,12 +164,10 @@ export async function listArtifactsByPrefix(prefix: string): Promise<R2Artifact[
       for (const a of r2) merged.set(a.key, a);
     }
   }
-  if (!anyTierWorked) {
-    const sb = await listSupabaseArtifacts(clean);
-    if (sb) {
-      anyTierWorked = true;
-      for (const a of sb) merged.set(a.key, a);
-    }
+  const sb = await listSupabaseArtifacts(clean);
+  if (sb) {
+    anyTierWorked = true;
+    for (const a of sb) if (!merged.has(a.key)) merged.set(a.key, a);
   }
   return anyTierWorked ? Array.from(merged.values()) : null;
 }
@@ -218,30 +218,38 @@ export async function listStudentArtifacts(
   folder?: string,
 ): Promise<R2Artifact[] | null> {
   const segment = folder?.replace(/\/+$/, "") || (await resolveExamStorageSegment(examId));
-  const prefixes = [`${segment}/${roll}/`];
-  if (!folder && segment !== examId) prefixes.push(`${examId}/${roll}/`); // legacy id folders
+  const owners = new Set([roll]);
+  if (!folder) {
+    // Older/server-side uploads use the student's UUID rather than their
+    // roll. Read both without changing the identity displayed in the report.
+    try {
+      const { getStudentIdByRoll } = await import("./api/students");
+      const studentId = await getStudentIdByRoll(roll);
+      if (studentId) owners.add(studentId);
+    } catch { /* preserve roll-based reads while profile lookup is offline */ }
+  }
+  const folders = new Set([segment]);
+  if (!folder) folders.add(examId);
+  const prefixes = [...folders].flatMap((name) => [...owners].map((owner) => `${name}/${owner}/`));
 
   const merged = new Map<string, R2Artifact>();
   let anyTierWorked = false;
 
-  // Primary: Cloudflare R2. When R2 isn't configured / errors, fall back to the
-  // Supabase backup bucket so artifacts are still reviewable.
+  // Merge both tiers: frames may have gone to backup during an R2 outage.
   if (r2Configured) {
-    let r2Ok = false;
     for (const prefix of prefixes) {
       const r2 = await listR2Artifacts(prefix);
       if (r2) {
-        r2Ok = true;
+        anyTierWorked = true;
         for (const a of r2) merged.set(a.key, a);
       }
     }
-    if (r2Ok) return Array.from(merged.values());
   }
   for (const prefix of prefixes) {
     const sb = await listSupabaseArtifacts(prefix);
     if (sb) {
       anyTierWorked = true;
-      for (const a of sb) merged.set(a.key, a);
+      for (const a of sb) if (!merged.has(a.key)) merged.set(a.key, a);
     }
   }
   return anyTierWorked ? Array.from(merged.values()) : null;
@@ -253,30 +261,50 @@ async function listSupabaseArtifacts(prefix: string): Promise<R2Artifact[] | nul
   const db = getSupabase();
   if (!db) return null;
   try {
-    const { data, error } = await db.storage
-      .from(supabaseBucketName())
-      .list(prefix.replace(/\/+$/, "") + "/", { limit: 1000, offset: 0 });
-    if (error || !data) {
-      console.warn(`[examStorage] Supabase backup list failed (${prefix}):`, error?.message ?? "no data");
-      return null;
+    const objects: R2Artifact[] = [];
+    const folders = [prefix.replace(/\/+$/, "")];
+    while (folders.length) {
+      const folder = folders.pop()!;
+      for (let offset = 0; ; offset += 1000) {
+        const { data, error } = await db.storage.from(supabaseBucketName()).list(folder, {
+          limit: 1000, offset, sortBy: { column: "name", order: "asc" },
+        });
+        if (error || !data) return null;
+        for (const object of data) {
+          const key = `${folder}/${object.name}`;
+          if (!object.id) { folders.push(key); continue; }
+          objects.push({
+            key, kind: key.split("/")[2] as ArtifactKind, name: object.name,
+            size: object.metadata?.size ?? 0, lastModified: object.created_at ?? null,
+          });
+        }
+        if (data.length < 1000) break;
+      }
     }
-    return data
-      .filter((o: { id?: string | null; name?: string }) => Boolean(o.id && o.name)) // only real objects, skip folder markers
-      .map((o: { id?: string | null; name?: string; metadata?: { size?: number }; created_at?: string | null }) => {
-        const key = `${prefix}${o.name}`;
-        const parts = key.split("/");
-        return {
-          key,
-          kind: (parts[2] as ArtifactKind | undefined) ?? "screenshots",
-          name: o.name,
-          size: o.metadata?.size ?? 0,
-          lastModified: o.created_at ?? null,
-        };
-      });
+    return objects;
   } catch (err) {
     console.warn(`[examStorage] Supabase backup list error (${prefix}):`, err);
     return null;
   }
+}
+
+/** Read private evidence bytes, including frames written only to backup. */
+export async function getArtifactBlob(key: string): Promise<Blob | null> {
+  const relayed = await r2FetchData(key);
+  if (relayed) return new Blob([relayed.bytes as BlobPart], { type: relayed.contentType });
+  try {
+    const url = await getR2ObjectUrl(key, 600);
+    if (url) {
+      const response = await fetch(url);
+      if (response.ok) return await response.blob();
+    }
+  } catch { /* backup below, also on R2 CORS failure */ }
+  const db = supabaseConfigured ? getSupabase() : null;
+  if (!db) return null;
+  try {
+    const { data, error } = await db.storage.from(supabaseBucketName()).download(key);
+    return error ? null : data;
+  } catch { return null; }
 }
 
 /**
@@ -500,7 +528,8 @@ export type ViolationSnap = {
 
 export type ScreenshotHandle = {
   setVideo: (video: HTMLVideoElement | null) => void;
-  stop: () => void;
+  /** Stop sampling and wait for queued snapshots; false means evidence gaps. */
+  stop: () => Promise<boolean>;
   captureViolationSnapshot: (violationType: string) => Promise<Blob | null>;
 };
 
@@ -510,41 +539,59 @@ export function startScreenshotCapture(opts: {
   examName?: string | null;
   roll: string;
   intervalMs?: number;
+  onError?: (message: string) => void;
 }): ScreenshotHandle {
-  const { examId, examName, roll, intervalMs = 2000 } = opts;
+  const { examId, examName, roll, intervalMs = 1000 } = opts;
   const folder = storageFolderSegment(examId, examName);
   let video: HTMLVideoElement | null = null;
   let stopped = false;
-  let busy = false;
+  let lastCapture = -Infinity;
+  let missedFrame = false;
+  const outbox = createSnapshotOutbox({
+    prefix: `${folder}/${roll}/screenshots/`,
+    upload: async (key, blob) => !!await storeArtifactWithRetry(key, blob, "image/jpeg"),
+    onError: opts.onError,
+  });
 
-  // Serialised: one upload at a time so a slow network can never pile up an
-  // ever-growing queue of screenshots (the other cause of student-side lag).
-  const tick = async () => {
-    if (stopped || busy || !video || video.readyState < 2) return;
-    busy = true;
+  // Sampling is independent of upload speed. Small JPEGs are persisted to
+  // IndexedDB and uploaded by bounded workers, never skipped because busy.
+  const tick = () => {
+    if (stopped || !video) return;
+    const capturedAt = Date.now();
+    if (capturedAt - lastCapture < intervalMs * 0.8) return;
     try {
-      const blob = captureFrame(video, 0.55, 1280);
-      if (blob) {
-        await storeArtifact(
-          buildR2Path(folder, roll, "screenshots", `snap_${Date.now()}.jpg`),
-          blob,
-          "image/jpeg",
-        );
-      }
-    } catch { /* keep the loop alive */ } finally {
-      busy = false;
+      const blob = video.readyState >= 2 ? captureFrame(video, 0.6, 640) : null;
+      if (!blob) throw new Error("Camera frame unavailable");
+      if (Number.isFinite(lastCapture) && capturedAt - lastCapture > intervalMs * 2) missedFrame = true;
+      lastCapture = capturedAt;
+      outbox.enqueue(buildR2Path(folder, roll, "screenshots", `snap_${capturedAt}.jpg`), blob);
+    } catch {
+      missedFrame = true;
+      opts.onError?.("Camera snapshots are unavailable. Check that your camera is connected.");
     }
   };
-
-  void tick();
-  const id = window.setInterval(() => void tick(), intervalMs);
-
+  const id = window.setInterval(tick, intervalMs);
+  const retryId = window.setInterval(() => outbox.retry(), 10_000);
+  let stopping: Promise<boolean> | undefined;
   return {
-    setVideo: (v) => { video = v; },
+    setVideo: (v) => {
+      video?.removeEventListener("loadeddata", tick);
+      video = v;
+      video?.addEventListener("loadeddata", tick);
+      if (video && video.readyState >= 2) tick();
+    },
     stop: () => {
       stopped = true;
       window.clearInterval(id);
+      window.clearInterval(retryId);
+      video?.removeEventListener("loadeddata", tick);
       video = null;
+      return stopping ??= (async () => {
+        // Keep retrying after submit while the app remains open. Failure is
+        // visible via onError; queued bytes remain on disk across a crash.
+        while (!await outbox.flush()) await new Promise((resolve) => window.setTimeout(resolve, 10_000));
+        return Number.isFinite(lastCapture) && !missedFrame;
+      })();
     },
     captureViolationSnapshot: async (violationType: string) => {
       if (!video || video.readyState < 2) return null;
@@ -573,6 +620,8 @@ export async function uploadExamRecords(opts: {
   videoBlob: Blob;
   violationSnapshots?: ViolationSnap[];
   durationSec?: number;
+  startedAt?: string | null;
+  violations?: ReportRow["violations"];
 }): Promise<{ recordingKey: string | null; pdfKey: string | null; snapshotKeys: string[] }> {
   const { examId, examName, roll, studentName, videoBlob, violationSnapshots = [], durationSec } = opts;
   const folder = storageFolderSegment(examId, examName);
@@ -609,6 +658,8 @@ export async function uploadExamRecords(opts: {
       violationSnapshots,
       durationSec,
       recordingKey: uploaded.recordingKey,
+      startedAt: opts.startedAt,
+      violations: opts.violations,
     });
     const pdf = await storeArtifact(
       buildR2Path(folder, roll, "report", `report_${Date.now()}.pdf`),
@@ -656,6 +707,8 @@ async function generateProctorReport(opts: {
   violationSnapshots?: ViolationSnap[];
   durationSec?: number;
   recordingKey?: string | null;
+  startedAt?: string | null;
+  violations?: ReportRow["violations"];
 }): Promise<Blob> {
   const { examId, examName, roll, studentName, violationSnapshots = [], durationSec, recordingKey } = opts;
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
@@ -730,7 +783,7 @@ async function generateProctorReport(opts: {
     y += 20;
   } else {
     doc.setFontSize(9.5);
-    violationSnapshots.slice(0, 14).forEach((v, i) => {
+    violationSnapshots.forEach((v, i) => {
       const over = y > 760;
       if (over) { doc.addPage(); y = 60; }
       doc.setTextColor(200, 0, 0);
@@ -795,5 +848,19 @@ async function generateProctorReport(opts: {
     }
   }
 
+  // The stored per-student PDF must contain the same clean-frame timeline as
+  // teacher exports, not just violation stills. Import lazily to avoid a
+  // module initialization cycle with sessionReport's storage reader.
+  const { drawSnapshotTimeline } = await import("./sessionReport");
+  const startedAt = opts.startedAt ?? null;
+  const startMs = Date.parse(startedAt ?? "");
+  await drawSnapshotTimeline(doc, {
+    name: studentName, roll, state: "Submitted", progress: 100, startedAt,
+    violations: opts.violations ?? violationSnapshots.map((snap) => ({
+      type: "flag", description: snap.label, severity: "warning", offset_seconds: snap.offsetSec ?? null,
+      created_at: Number.isFinite(startMs) && snap.offsetSec != null
+        ? new Date(startMs + snap.offsetSec * 1000).toISOString() : "",
+    })),
+  }, examId);
   return doc.output("blob");
 }

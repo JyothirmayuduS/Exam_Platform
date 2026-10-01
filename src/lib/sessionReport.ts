@@ -2,18 +2,17 @@
 //
 // Generates the PDF and CSV client-side with jsPDF from the live roster +
 // violation events already loaded from the DB, PLUS the candidate's stored
-// per-interval camera snapshots from Cloudflare R2. No server round trip, no
+// per-second camera snapshots from private artifact storage. No
 // HTML masquerading as a PDF.
 //
 // Snapshot timeline: for EVERY candidate the report embeds each stored
-// snapshot (the frames the exam client uploads every few seconds) with its
+// snapshot (the frames the exam client captures every second) with its
 // timestamp, and any violation whose moment falls under that snapshot is
 // printed directly beneath it — so the reviewer sees exactly what the camera
 // saw when each flag fired.
 
 import { jsPDF } from "jspdf";
-import { listStudentArtifacts, getArtifactObjectUrl } from "./examStorage";
-import { r2FetchData } from "./r2Function";
+import { listStudentArtifacts, getArtifactBlob } from "./examStorage";
 
 export type ReportRow = {
   name: string;
@@ -57,10 +56,9 @@ export type SnapshotEntry = {
   violations: ReportRow["violations"];
 };
 
-/** Safety cap — a marathon exam must not produce an unbounded PDF. */
-const MAX_SNAPS_PER_CANDIDATE = 720;
-const SNAPS_PER_ROW = 2;
-const SNAPS_PER_PAGE = SNAPS_PER_ROW * 3; // 2 cols × 3 rows
+// No duration/frame cap: fetch and render a row at a time instead of keeping
+// a second copy of every thumbnail in memory. The PDF itself still grows.
+const SNAPS_PER_ROW = 3;
 
 function snapEpochFromKey(key: string): number | null {
   const m = /snap_(\d{10,})\.jpe?g$/i.exec(key);
@@ -72,13 +70,14 @@ function snapEpochFromKey(key: string): number | null {
 /**
  * Build the snapshot timeline for one candidate: every stored interval
  * snapshot, sorted by capture time, with the violations whose moment falls
- * under it (wall-clock window between the previous and this snapshot).
+ * in the same second (or within one second for legacy/jittered captures).
  * Returns null when storage is unavailable or holds no snapshots.
  */
 export async function collectSnapshotTimeline(
   examId: string,
   roll: string,
   violations: ReportRow["violations"],
+  startedAt?: string | null,
 ): Promise<SnapshotEntry[] | null> {
   if (!examId || !roll || roll === "—") return null;
   // Per-candidate exports append the roll to the examId argument
@@ -111,45 +110,47 @@ export async function collectSnapshotTimeline(
     .filter((a) => a.kind === "screenshots")
     .map((a) => ({ key: a.key, epochMs: snapEpochFromKey(a.key) }))
     .filter((s): s is { key: string; epochMs: number } => s.epochMs !== null)
-    .sort((a, b) => a.epochMs - b.epochMs)
-    .slice(0, MAX_SNAPS_PER_CANDIDATE);
+    .sort((a, b) => a.epochMs - b.epochMs);
   if (snaps.length === 0) return null;
 
-  const timed = violations
-    .map((v) => ({ v, t: new Date(v.created_at).getTime() }))
-    .filter((x) => Number.isFinite(x.t));
-
-  return snaps.map((snap, i) => {
-    const prev = i > 0 ? snaps[i - 1].epochMs : Number.NEGATIVE_INFINITY;
-    return {
-      key: snap.key,
-      epochMs: snap.epochMs,
-      violations: timed.filter((x) => x.t > prev && x.t <= snap.epochMs).map((x) => x.v),
-    };
-  });
+  const timeline: SnapshotEntry[] = snaps.map((snap) => ({ ...snap, violations: [] }));
+  const seconds = new Map<number, SnapshotEntry>();
+  for (const snap of timeline) {
+    const second = Math.floor(snap.epochMs / 1000);
+    if (!seconds.has(second)) seconds.set(second, snap);
+  }
+  const startMs = Date.parse(startedAt ?? "");
+  for (const v of violations) {
+    const createdMs = Date.parse(v.created_at);
+    const t = Number.isFinite(createdMs) ? createdMs
+      : v.offset_seconds != null && Number.isFinite(startMs) ? startMs + v.offset_seconds * 1000 : NaN;
+    if (!Number.isFinite(t)) continue;
+    let match = seconds.get(Math.floor(t / 1000));
+    if (!match) {
+      // Binary search keeps multi-hour reports linearithmic, rather than
+      // scanning the entire violation log for every frame.
+      let lo = 0, hi = timeline.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (timeline[mid].epochMs < t) lo = mid + 1;
+        else hi = mid;
+      }
+      match = [timeline[lo - 1], timeline[lo]].filter(Boolean)
+        .sort((a, b) => Math.abs(a.epochMs - t) - Math.abs(b.epochMs - t))[0];
+      // Never imply a warning during a camera gap was photographed. It still
+      // appears in the full violation detail section.
+      if (match && Math.abs(match.epochMs - t) > 1000) match = undefined;
+    }
+    match?.violations.push(v);
+  }
+  return timeline;
 }
 
 /** Fetch a stored snapshot and downscale it to a small embedded JPEG. */
 async function snapshotThumbDataUrl(key: string, maxEdge = 480): Promise<string | null> {
   try {
-    // Primary: read the bytes through the edge function (same-origin
-    // response). A direct presigned-R2 GET is cross-origin — without permissive
-    // CORS on the bucket the blob is fine to download, but createImageBitmap
-    // / canvas readback is tainted and the PDF ends up with empty frames.
-    // The relay avoids CORS entirely, so thumbnails always render.
-    let bytes: Uint8Array | null = null;
-    const relayed = await r2FetchData(key);
-    if (relayed) {
-      bytes = relayed.bytes;
-    } else {
-      // Fallback: presigned GET (works when bucket CORS allows canvas reads).
-      const url = await getArtifactObjectUrl(key, 600);
-      if (!url) return null;
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      bytes = new Uint8Array(await res.arrayBuffer());
-    }
-    const blob = new Blob([bytes as unknown as BlobPart], { type: "image/jpeg" });
+    const blob = await getArtifactBlob(key);
+    if (!blob) return null;
     const bitmap = await createImageBitmap(blob);
     const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
     const w = Math.max(1, Math.round(bitmap.width * scale));
@@ -170,131 +171,102 @@ async function snapshotThumbDataUrl(key: string, maxEdge = 480): Promise<string 
   }
 }
 
-/** Render one candidate's snapshot timeline into the open PDF document. */
-async function drawSnapshotTimeline(
-  doc: jsPDF,
-  row: ReportRow,
-  examId: string,
-): Promise<number> {
+/** Render all available evidence, including clean frames and explicit gaps. */
+export async function drawSnapshotTimeline(doc: jsPDF, row: ReportRow, examId: string): Promise<number> {
   const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
   const M = 32;
-  const CW = W - M * 2;
-
-  const timeline = await collectSnapshotTimeline(examId, row.roll, row.violations);
-  if (!timeline || timeline.length === 0) return 0;
-
-  const startMs = row.startedAt ? new Date(row.startedAt).getTime() : null;
-  const elapsedLabel = (epochMs: number): string =>
-    startMs && epochMs >= startMs ? `+${fmtReportClock((epochMs - startMs) / 1000)}` : "";
-
-  // Section header page.
-  doc.addPage();
-  doc.setFillColor(26, 58, 42);
-  doc.rect(0, 0, W, 56, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.text(`Snapshot Timeline — ${row.name} (${row.roll})`, M, 26);
-  doc.setFontSize(9);
-  const withViolations = timeline.filter((s) => s.violations.length > 0).length;
-  doc.text(
-    `${timeline.length} camera snapshot(s) · ${withViolations} under a violation — frames upload automatically every few seconds during the exam.`,
-    M,
-    42,
-  );
-
-  // Fetch thumbs in small batches to keep memory bounded.
-  const thumbs: (string | null)[] = new Array(timeline.length).fill(null);
-  const BATCH = 6;
-  for (let i = 0; i < timeline.length; i += BATCH) {
-    const slice = timeline.slice(i, i + BATCH);
-    const results = await Promise.all(slice.map((s) => snapshotThumbDataUrl(s.key)));
-    results.forEach((r, j) => { thumbs[i + j] = r; });
+  const timeline = await collectSnapshotTimeline(examId, row.roll, row.violations, row.startedAt);
+  const startMs = Date.parse(row.startedAt ?? "");
+  const newPage = () => {
+    doc.addPage();
+    doc.setFillColor(26, 58, 42);
+    doc.rect(0, 0, W, 56, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text(`Snapshot Timeline - ${row.name} (${row.roll})`, M, 26);
+    doc.setFontSize(8);
+    doc.text(`${timeline?.length ?? 0} stored snapshots | Target: 1 webcam frame/second | Warnings are not required for capture.`, M, 43);
+  };
+  newPage();
+  if (!timeline?.length) {
+    doc.setTextColor(155, 28, 28);
+    doc.setFontSize(10);
+    doc.text("No snapshots available. Evidence may be missing, still uploading, or storage is unreachable.", M, 85);
+    return 0;
   }
 
-  const gutter = 10;
-  const cellW = (CW - gutter) / SNAPS_PER_ROW;
-  const imgH = Math.round(cellW * 0.5625); // 16:9-ish camera crop
-  const captionH = 11;
-  const violationH = 9;
-  const rowH = imgH + captionH + violationH * 2 + 8;
-
+  const gutter = 12;
+  const cellW = (W - M * 2 - gutter * (SNAPS_PER_ROW - 1)) / SNAPS_PER_ROW;
+  const imgH = Math.round(cellW * 0.75);
+  const lineH = 10;
+  const baseH = imgH + 27;
+  const maxLines = Math.max(1, Math.floor((H - 110 - baseH) / lineH));
   let y = 74;
-  let placed = 0;
-  for (let i = 0; i < timeline.length; i++) {
-    const col = placed % SNAPS_PER_ROW;
-    if (col === 0) {
-      if (y + rowH > doc.internal.pageSize.getHeight() - 40) {
-        doc.addPage();
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(9);
-        doc.setTextColor(90, 90, 90);
-        doc.text(`Snapshot Timeline — ${row.name} (${row.roll}) · continued`, M, 34);
-        y = 52;
+  for (let i = 0; i < timeline.length; i += SNAPS_PER_ROW) {
+    const slice = timeline.slice(i, i + SNAPS_PER_ROW);
+    const thumbs = await Promise.all(slice.map((s) => snapshotThumbDataUrl(s.key)));
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    const captions = slice.map((snap, j) => {
+      const lines: string[] = [];
+      const previous = timeline[i + j - 1];
+      if (previous && snap.epochMs - previous.epochMs > 2000) {
+        lines.push(`Evidence gap: ${fmtReportClock((snap.epochMs - previous.epochMs) / 1000)} since previous frame.`);
       }
-    }
-    const snap = timeline[i];
-    const x = M + col * (cellW + gutter);
-
-    // Frame
-    doc.setDrawColor(180, 180, 180);
-    doc.setLineWidth(0.7);
-    doc.rect(x, y, cellW, imgH, "S");
-    const thumb = thumbs[i];
-    if (thumb) {
-      try {
-        doc.addImage(thumb, "JPEG", x, y, cellW, imgH, undefined, "FAST");
-      } catch { /* bad image — keep the empty frame */ }
-    } else {
-      doc.setTextColor(150, 150, 150);
-      doc.setFont("courier", "normal");
-      doc.setFontSize(6.5);
-      doc.text("(frame unavailable)", x + 4, y + imgH / 2);
-    }
-
-    // Caption: wall clock + elapsed exam time + violation count badge
-    doc.setFont("courier", "bold");
-    doc.setFontSize(7.5);
-    doc.setTextColor(30, 30, 30);
-    const elapsed = elapsedLabel(snap.epochMs);
-    doc.text(
-      `${fmtWallClock(snap.epochMs)}${elapsed ? ` · ${elapsed}` : ""}`,
-      x,
-      y + imgH + captionH - 3,
-    );
-    if (snap.violations.length > 0) {
-      doc.setTextColor(200, 0, 0);
-      doc.text(`${snap.violations.length} violation(s)`, x + cellW, y + imgH + captionH - 3, { align: "right" });
-    }
-
-    // Violations under THIS snapshot, with their timestamps.
-    let vy = y + imgH + captionH + 1;
-    doc.setFont("courier", "normal");
-    if (snap.violations.length > 0) {
-      for (const v of snap.violations.slice(0, 2)) {
-        doc.setFontSize(6.3);
-        doc.setTextColor(155, 28, 28);
-        const line = `! ${v.description || v.type}`.slice(0, 68);
-        doc.text(line, x, vy);
-        doc.setTextColor(110, 110, 110);
-        doc.text(fmtWallClock(new Date(v.created_at).getTime()), x + cellW, vy, { align: "right" });
-        vy += violationH;
+      for (const v of snap.violations) {
+        const stamp = Number.isFinite(Date.parse(v.created_at)) ? fmtWallClock(Date.parse(v.created_at)) : fmtReportClock(v.offset_seconds);
+        lines.push(`Warning [${v.severity}] ${stamp}: ${v.description || v.type}`);
       }
-      if (snap.violations.length > 2) {
-        doc.setFontSize(6.3);
-        doc.setTextColor(155, 28, 28);
-        doc.text(`+ ${snap.violations.length - 2} more in violation detail`, x, vy);
-      }
-    } else {
-      doc.setFontSize(6.3);
-      doc.setTextColor(150, 150, 150);
-      doc.text("no violation under this snap", x, vy);
+      if (!snap.violations.length) lines.push("No warning recorded for this snapshot.");
+      return lines.flatMap((line) => doc.splitTextToSize(line, cellW) as string[]);
+    });
+    const longest = Math.max(...captions.map((c) => c.length));
+    // An unusually long transcript continues below the SAME image on another
+    // page instead of being cut off or overlapping the next row.
+    for (let offset = 0; offset < longest; offset += maxLines) {
+      const lineCount = Math.min(maxLines, longest - offset);
+      const rowH = baseH + lineCount * lineH;
+      if (y + rowH > H - 30) { newPage(); y = 74; }
+      slice.forEach((snap, col) => {
+        if (offset > 0 && captions[col].length <= offset) return;
+        const x = M + col * (cellW + gutter);
+        doc.setDrawColor(180, 180, 180);
+        doc.setLineWidth(0.7);
+        doc.rect(x, y, cellW, imgH, "S");
+        let embedded = false;
+        if (thumbs[col]) {
+          try {
+            const thumb = thumbs[col]!;
+            // Preserve the camera's aspect ratio rather than stretching faces.
+            const props = doc.getImageProperties(thumb);
+            const scale = Math.min(cellW / props.width, imgH / props.height);
+            const w = props.width * scale, h = props.height * scale;
+            doc.addImage(thumb, "JPEG", x + (cellW - w) / 2, y + (imgH - h) / 2, w, h, undefined, "FAST");
+            embedded = true;
+          } catch { /* explicitly mark unavailable images below */ }
+        }
+        if (!embedded) {
+          doc.setTextColor(130, 130, 130);
+          doc.setFontSize(7);
+          doc.text("(frame unavailable)", x + 4, y + imgH / 2);
+        }
+        doc.setFont("courier", "bold");
+        doc.setFontSize(7.5);
+        doc.setTextColor(30, 30, 30);
+        const elapsed = Number.isFinite(startMs) && snap.epochMs >= startMs ? ` +${fmtReportClock((snap.epochMs - startMs) / 1000)}` : "";
+        doc.text(`${fmtWallClock(snap.epochMs)}${elapsed}${offset ? " (continued)" : ""}`, x, y + imgH + 12);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7);
+        doc.setTextColor(snap.violations.length ? 155 : 100, snap.violations.length ? 28 : 100, snap.violations.length ? 28 : 100);
+        captions[col].slice(offset, offset + maxLines).forEach((line, n) => {
+          doc.text(line, x, y + imgH + 24 + n * lineH);
+        });
+      });
+      y += rowH + 10;
     }
-
-    placed += 1;
-    if (placed % SNAPS_PER_ROW === 0) y += rowH;
   }
-
   return timeline.length;
 }
 
@@ -387,16 +359,22 @@ export async function downloadSessionReportPdf(
         doc.setFont("courier", "normal");
         doc.setTextColor(40, 40, 40);
         const stamp = v.offset_seconds != null ? ` @ ${fmtReportClock(v.offset_seconds)}` : "";
-        doc.text(`${vi + 1}. ${v.description || v.type}${stamp}`, M + 16, y);
+        const detailLines = doc.splitTextToSize(`${vi + 1}. ${v.description || v.type}${stamp}`, CW - 32) as string[];
+        for (const line of detailLines) {
+          if (y > 510) { doc.addPage(); y = 60; }
+          doc.text(line, M + 16, y);
+          y += 12;
+        }
+        if (y > 510) { doc.addPage(); y = 60; }
         doc.setFontSize(7.5);
         doc.setTextColor(130, 130, 130);
         doc.text(
           `${v.type} · ${v.severity} · ${new Date(v.created_at).toLocaleString()}`,
           M + 16,
-          y + 10,
+          y,
         );
         doc.setFontSize(9);
-        y += 24;
+        y += 18;
       });
       y += 10;
     });
@@ -412,6 +390,10 @@ export async function downloadSessionReportPdf(
         await drawSnapshotTimeline(doc, r, examId);
       } catch (err) {
         console.warn(`[sessionReport] snapshot timeline failed for ${r.roll}:`, err);
+        doc.addPage();
+        doc.setFontSize(11);
+        doc.setTextColor(155, 28, 28);
+        doc.text(`Snapshot export incomplete for ${r.name} (${r.roll}). Please retry this student's report.`, M, 60);
       }
     }
   }

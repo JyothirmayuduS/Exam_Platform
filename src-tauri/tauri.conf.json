@@ -39,6 +39,9 @@
       "icons/icon.ico",
       "icons/icon.icns"
     ],
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"

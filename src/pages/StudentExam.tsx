@@ -28,6 +28,7 @@ import {
   type PaperSlot,
 } from "../lib/examApi";
 import { lockdownReady, isTauri, downloadUrl, osLabel, detectOS, probeInstaller } from "../lib/platform";
+import { launchExamInLockdown } from "../lib/lockdownBridge";
 import { defaultWatermarkText, renderWatermarkTemplate } from "../lib/watermark";
 import useExamState from "../hooks/useExamState";
 import useExamTimer from "../hooks/useExamTimer";
@@ -91,6 +92,13 @@ function runCompatChecks(): CheckResult[] {
 type Step = "gate" | "installed" | "check" | "access" | "register" | "start" | "exam" | "submitted";
 
 export default function StudentExam() {
+  const [params] = useSearchParams();
+  // A late/warm native link must load its own paper and preflight state, not
+  // reuse the previous exam's answers, timers or missing-reference error.
+  return <StudentExamSession key={params.get("examId") ?? params.get("exam") ?? ""} />;
+}
+
+function StudentExamSession() {
   const [searchParams] = useSearchParams();
   const searchExamId = searchParams.get("examId") ?? searchParams.get("exam");
   const searchRoll = searchParams.get("roll");
@@ -165,7 +173,7 @@ export default function StudentExam() {
   const [screen, setScreen] = useState<"idle" | "granted" | "denied">("idle");
   const [requesting, setRequesting] = useState(false);
   const previewRef = useRef<HTMLVideoElement | null>(null);
-  // Hidden video element for screenshot capture from screen stream
+  // Hidden webcam video for the student's per-second snapshot timeline
   const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
   // Screenshot capture handle (startScreenshotCapture)
   const screenshotHandleRef = useRef<ScreenshotHandle | null>(null);
@@ -204,12 +212,21 @@ export default function StudentExam() {
   // "installed" deep-link state: tracks whether we tried vignan-exam:// launch
   const [deepLinkTried, setDeepLinkTried] = useState(false);
   const [deepLinkFailed, setDeepLinkFailed] = useState(false);
+  const deepLinkCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => { deepLinkCleanupRef.current?.(); }, []);
+  function openInstalledExam() {
+    deepLinkCleanupRef.current?.();
+    setStep("installed");
+    setDeepLinkTried(true);
+    setDeepLinkFailed(false);
+    deepLinkCleanupRef.current = launchExamInLockdown(EXAM_ID, STUDENT_ROLL, () => setDeepLinkFailed(true));
+  }
   // True while the invigilator has paused this candidate (attempt.state = "paused").
   const [proctorPaused, setProctorPaused] = useState(false);
   // Latest exam-wide broadcast from the proctor/teacher consoles.
   const [broadcast, setBroadcast] = useState<{ id: string; body: string; sender: string } | null>(null);
 
-  // Recording state (screen recording only — no per-second screenshots, no PDF)
+  // Screen recording runs separately from the webcam snapshot timeline.
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   // Crash-proof recording: every chunk the recorder emits is also uploaded to
@@ -447,13 +464,11 @@ export default function StudentExam() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViolation]);
 
-  // Start screenshot capture when the exam begins. The capture frame source is
-  // the student's screen when screen-share was granted (that is the recorded
-  // exam view), otherwise the shared camera stream — so snapshots exist on
-  // phones too, where screen share isn't available.
+  // Capture the STUDENT every second, whether or not AI raises a warning.
+  // The screen stream remains the source for the separate screen recording.
   useEffect(() => {
     if (step !== "exam") return;
-    const source = screenStreamRef.current ?? cameraStreamRef.current;
+    const source = cameraStreamRef.current;
     const el = hiddenVideoRef.current;
     if (source && el) {
       el.srcObject = source;
@@ -462,9 +477,11 @@ export default function StudentExam() {
         examId: EXAM_ID,
         examName: examNameRef.current,
         roll: STUDENT_ROLL,
-        // ~12 frames/min keeps the Cloudflare record readable without flooding
-        // the bucket (R2 lifecycle clears everything after 90 days).
-        intervalMs: 5000,
+        intervalMs: 1000,
+        onError: (message) => {
+          console.warn("[StudentExam]", message);
+          setArtifactStatus({ state: "partial", detail: message });
+        },
       });
       screenshotHandleRef.current.setVideo(el);
     }
@@ -479,7 +496,7 @@ export default function StudentExam() {
     // Stop when exam ends
     return () => {
       if (screenshotHandleRef.current) {
-        screenshotHandleRef.current.stop();
+        void screenshotHandleRef.current.stop();
         screenshotHandleRef.current = null;
       }
       if (serverProctorRef.current) {
@@ -649,6 +666,7 @@ export default function StudentExam() {
   // Release any held media on unmount.
   useEffect(() => () => {
     accessStreamRef.current?.getTracks().forEach((t) => t.stop());
+    cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
     screenStreamRef.current?.getTracks().forEach((t) => t.stop());
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
@@ -889,25 +907,15 @@ export default function StudentExam() {
     },
   });
 
-  // Resolved when the merged recording + PDF have finished uploading. Tauri
-  // waits for it before exiting so the full video is NEVER cut off mid-upload
-  // by the 5 s auto-exit (that left reviewers with only crash-parts).
-  const artifactUploadPromiseRef = useRef<Promise<void> | null>(null);
+  // Auto-exit only after confirmed answer/evidence success, never on a fixed
+  // timeout during a backlog. The receipt retains a manual Close button.
   useEffect(() => {
-    if (step !== "submitted" || !isTauri()) return;
-    let cancelled = false;
+    if (step !== "submitted" || submitFailed || artifactStatus?.state !== "stored" || !isTauri()) return;
     const t = setTimeout(() => {
-      void (async () => {
-        // Wait up to 90 s for the merged upload, then exit either way.
-        const upload = artifactUploadPromiseRef.current ?? Promise.resolve();
-        await Promise.race([upload, new Promise((r) => setTimeout(r, 90_000))]);
-        if (!cancelled) {
-          try { await invoke("exit_app"); } catch { /* app already closed */ }
-        }
-      })();
+      void invoke("exit_app").catch(() => { /* app already closed */ });
     }, 800);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [step]);
+    return () => clearTimeout(t);
+  }, [step, submitFailed, artifactStatus?.state]);
 
   // ── Authoritative violation count (student↔teacher parity) ────────────────
   // The local `violations` list counts ONLY what this browser flagged. The
@@ -1094,11 +1102,11 @@ export default function StudentExam() {
       mediaRecorderRef.current.stop();
     }
     setArtifactStatus({ state: "uploading", detail: "Securing your exam recording…" });
-    // Stop per-second screenshot capture
-    if (screenshotHandleRef.current) {
-      screenshotHandleRef.current.stop();
-      screenshotHandleRef.current = null;
-    }
+    // Stop sampling immediately, but keep uploading queued frames. The exit
+    // flow waits for this promise as well as the recording, so the tail of a
+    // slow-network exam is not abandoned when the native window closes.
+    const snapshotsStored = screenshotHandleRef.current?.stop() ?? Promise.resolve(false);
+    screenshotHandleRef.current = null;
 
     if (supabaseConfigured && studentIdRef.current) {
       const minutesUsed = Math.round((durationMin * 60 - secondsLeft) / 60);
@@ -1127,14 +1135,15 @@ export default function StudentExam() {
     }
 
     // Upload all exam artifacts: recording + violation snapshots + PDF — all to
-    // Cloudflare R2 (never Supabase). Stored on a ref so the Tauri exit waits
-    // for the merged full video to land before closing the app.
-    artifactUploadPromiseRef.current = (async () => {
+    // private storage. The successful status enables Tauri auto-exit only
+    // after the queued frames, merged video and complete PDF have landed.
+    void (async () => {
       try {
         // 1. Give the recorder a moment to emit its final chunk, then flush any
         //    remaining crash-parts so remote order matches local order.
         await new Promise((r) => setTimeout(r, 400));
         await drainRecordingParts(20_000);
+        const allSnapshotsStored = await snapshotsStored;
         // 2. Merge the local chunks into one full video and upload it. This is
         //    the file the teacher's review prefers — parts are the crash fallback.
         const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
@@ -1146,17 +1155,23 @@ export default function StudentExam() {
           videoBlob,
           violationSnapshots: violationSnapshotsRef.current,
           durationSec: Math.max(0, Math.round(durationMin * 60 - secondsLeft)),
+          startedAt: examStartedAtRef.current ? new Date(examStartedAtRef.current).toISOString() : null,
+          violations: attemptIdRef.current
+            ? await (await import("../lib/examApi")).listAttemptViolations(attemptIdRef.current).then((events) =>
+                (events ?? []).map((v) => ({ ...v, type: v.violation_type })),
+              ).catch(() => undefined)
+            : undefined,
         });
         console.log("[StudentExam] artifacts stored:", result);
         // Tell the submitted screen what actually landed so the student (and
         // invigilator) can see storage worked instead of silently losing a
         // recording. Parts uploaded live during the exam are the crash fallback.
-        if (result.recordingKey) {
+        if (result.recordingKey && result.pdfKey && allSnapshotsStored) {
           console.info("[StudentExam] recording stored:", result.recordingKey);
           setArtifactStatus({ state: "stored", detail: "Exam recording secured." });
         } else {
-          console.warn("[StudentExam] merged recording upload failed — crash-safe parts remain in storage");
-          setArtifactStatus({ state: "partial", detail: "Recording partially stored." });
+          console.warn("[StudentExam] exam evidence is incomplete or pending upload");
+          setArtifactStatus({ state: "partial", detail: "Some exam evidence is missing or still pending upload. Please inform your invigilator before closing the app." });
         }
       } catch (err) {
         console.error("Failed to upload recording:", err);
@@ -1221,10 +1236,7 @@ export default function StudentExam() {
         os={os}
         href={href}
         downloadFilename={downloadFilename}
-        onDoneInstall={() => {
-          setStep("installed");
-          window.location.href = `vignan-exam://open?exam=${encodeURIComponent(EXAM_ID)}&roll=${encodeURIComponent(STUDENT_ROLL)}`;
-        }}
+        onDoneInstall={openInstalledExam}
         onPreview={() => {
           const url = new URL(window.location.href);
           url.searchParams.set("lockdown", "1");
@@ -1235,25 +1247,23 @@ export default function StudentExam() {
   }
 
   // ---------- Step: installed / Enter exam via deep link ----------
-  // Student installed the Vignan Exam Browser. Now "Enter exam" fires the
-  // vignan-exam:// URL scheme — the OS opens the app with the exam pre-loaded.
-  // If the scheme is not handled (app not actually installed / wrong OS),
-  // we show the download button as fallback after a 3-second timeout.
-    if (step === "installed") {
+  // The install-confirmation click already requested the OS handler. All retry
+  // buttons use the same synchronous launch and reset its fallback state.
+  // A timeout is only a retry hint — browsers cannot prove an app is installed.
+  if (step === "installed") {
     return (
       <InstalledScreen
         examName={examName}
         deepLinkTried={deepLinkTried}
         deepLinkFailed={deepLinkFailed}
-        onEnter={() => {
-          setDeepLinkTried(true);
-          window.location.href = `vignan-exam://open?exam=${encodeURIComponent(EXAM_ID)}&roll=${encodeURIComponent(STUDENT_ROLL)}`;
-          setTimeout(() => setDeepLinkFailed(true), 3000);
+        onEnter={openInstalledExam}
+        onTryAgain={openInstalledExam}
+        onBack={() => {
+          deepLinkCleanupRef.current?.();
+          setDeepLinkTried(false);
+          setDeepLinkFailed(false);
+          setStep("gate");
         }}
-        onTryAgain={() => {
-          window.location.href = `vignan-exam://open?exam=${encodeURIComponent(EXAM_ID)}&roll=${encodeURIComponent(STUDENT_ROLL)}`;
-        }}
-        onBack={() => setStep("gate")}
         downloadHref={downloadUrl(detectOS()) || ""}
         downloadFilename={detectOS() === "windows" ? "Vignan Exam Browser Setup.exe" : detectOS() === "macos" ? "Vignan Exam Browser.dmg" : "Vignan Exam Browser.AppImage"}
         onPreview={() => {

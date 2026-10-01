@@ -1,14 +1,10 @@
 // Bridge between the Vignan lockdown kiosk (Tauri shell) and the web layer.
 //
 // The shell hands the web app the original `vignan-exam://open?exam=…&roll=…`
-// launch URL two ways:
-//   1. Cold start — `vignan_launch_url` command returns the URL the OS used to
-//      start the app (persisted by the shell before the webview loaded).
-//   2. Warm start — a `vignan-deeplink` event fires on the webview when the OS
-//      re-opens the scheme while the kiosk is already running.
-//
-// Everything degrades to a no-op outside the kiosk (normal browser), so this
-// module is safe to import unconditionally.
+// launch URL through `vignan_launch_url` and the deep-link plugin's
+// `deep-link://new-url` event. macOS delivers both cold and warm links as OS
+// events, not process arguments, so subscribe BEFORE reading the current URL.
+// Native subscriptions degrade to a no-op in a normal browser.
 
 type Unlisten = () => void;
 
@@ -28,15 +24,64 @@ export async function getLaunchUrl(): Promise<string | null> {
   }
 }
 
-/** Subscribe to warm-start deep links fired by the kiosk shell. */
+/** Subscribe to OS open-URL events, including late-arriving macOS cold starts. */
 export async function onVignanDeepLink(cb: (url: string) => void): Promise<Unlisten> {
   if (!inKiosk()) return () => {};
+  const unlisteners: Unlisten[] = [];
+  const dispose = () => unlisteners.forEach((unlisten) => unlisten());
   try {
     const { listen } = await import("@tauri-apps/api/event");
-    return await listen<string>("vignan-deeplink", (e) => cb(e.payload));
+    unlisteners.push(await listen<string[]>("deep-link://new-url", (e) => {
+      for (const url of e.payload) cb(url);
+    }));
+    // Retain compatibility with shells that emit the old custom event.
+    unlisteners.push(await listen<string>("vignan-deeplink", (e) => cb(e.payload)));
+    return dispose;
   } catch {
+    dispose();
     return () => {};
   }
+}
+
+/** Only exam launch links may change the kiosk route; the roll is not auth. */
+export function examPathFromDeepLink(url: string, entry = "/student/exam"): string | null {
+  try {
+    const link = new URL(url);
+    const exam = link.searchParams.get("exam");
+    if (link.protocol !== "vignan-exam:" || link.hostname !== "open" || !exam?.trim()) return null;
+    const roll = link.searchParams.get("roll");
+    return `${entry}?examId=${encodeURIComponent(exam)}${roll ? `&roll=${encodeURIComponent(roll)}` : ""}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Request the OS handler synchronously in the click gesture (never after an
+ * await/timer). Browsers cannot confirm installation; offer a retry when the
+ * page stays visible, and stop the fallback if the student switches to the app.
+ */
+export function launchExamInLockdown(examId: string, roll: string, onUnconfirmed: () => void): Unlisten {
+  const url = `vignan-exam://open?exam=${encodeURIComponent(examId)}${roll ? `&roll=${encodeURIComponent(roll)}` : ""}`;
+  const dispose = () => {
+    window.clearTimeout(timer);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "hidden") dispose();
+  };
+  const timer = window.setTimeout(() => {
+    dispose();
+    if (document.visibilityState !== "hidden") onUnconfirmed();
+  }, 3000);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  try {
+    window.location.assign(url);
+  } catch {
+    dispose();
+    onUnconfirmed();
+  }
+  return dispose;
 }
 
 /** Lockdown shell notices: prohibited-app detection, VM detection. */

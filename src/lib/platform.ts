@@ -61,10 +61,10 @@ export function detectOS(): DesktopOS {
  * "not configured" notice. Point these at your hosted release assets.
  */
 const DEFAULT_DOWNLOAD: Record<DesktopOS, string> = {
-  windows: "/downloads/Vignan Exam Browser Setup.exe",
-  macos: "/downloads/Vignan Exam Browser.dmg",
-  linux: "/downloads/Vignan Exam Browser.AppImage",
-  unknown: "/downloads/Vignan Exam Browser Setup.exe",
+  windows: "/downloads/VignanExam_setup.exe",
+  macos: "/downloads/VignanExam.dmg",
+  linux: "/downloads/VignanExam.AppImage",
+  unknown: "/downloads/VignanExam_setup.exe",
 };
 
 /**
@@ -119,20 +119,24 @@ function looksLikeHtml(buf: Uint8Array): boolean {
   return s.startsWith("<!doctype") || s.startsWith("<html") || s.startsWith("<head");
 }
 
-/** Windows executables start with the "MZ" DOS header. */
+/** Reject tiny placeholder files; a DOS header alone is not an installer. */
 function isExeHead(buf: Uint8Array): boolean {
-  return buf.length >= 2 && buf[0] === 0x4d && buf[1] === 0x5a;
+  if (buf.length < 64 || buf[0] !== 0x4d || buf[1] !== 0x5a) return false;
+  const peOffset = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(60, true);
+  return peOffset >= 64 && (peOffset + 4 > buf.length ||
+    (buf[peOffset] === 0x50 && buf[peOffset + 1] === 0x45 && buf[peOffset + 2] === 0 && buf[peOffset + 3] === 0));
 }
 
 /** AppImage files are ELF binaries — they start with the 0x7F "ELF" magic. */
 function isElfHead(buf: Uint8Array): boolean {
-  return buf.length >= 4 && buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46;
+  return buf.length >= 64 && buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46
+    && (buf[4] === 1 || buf[4] === 2) && (buf[5] === 1 || buf[5] === 2) && buf[6] === 1;
 }
 
-/** UDIF disk images (macOS .dmg) end with a "koly" trailer — their last 4 bytes. */
+/** UDIF's "koly" signature starts the final 512-byte trailer. */
 function isDmgTail(buf: Uint8Array): boolean {
-  if (buf.length < 4) return false;
-  const i = buf.length - 4;
+  if (buf.length < 512) return false;
+  const i = buf.length - 512;
   return buf[i] === 0x6b && buf[i + 1] === 0x6f && buf[i + 2] === 0x6c && buf[i + 3] === 0x79;
 }
 
@@ -173,35 +177,41 @@ async function probeSameOrigin(href: string, os: DesktopOS): Promise<InstallerPr
   try {
     const headRes = await fetch(href, { method: "GET", headers: { Range: "bytes=0-511" } });
     const type = (headRes.headers.get("content-type") ?? "").toLowerCase();
-    // File not found on this server (dev mode or not yet hosted) — treat as
-    // "release" so the gate still shows the download button pointing to the
-    // configured URL, rather than hiding it entirely.
-    if (!headRes.ok) return "release";
-    if (type.includes("text/html")) return "release";
+    if (!headRes.ok) { await headRes.body?.cancel(); return "missing"; }
+    const assetPath = /\.(dmg|exe|appimage)$/i.test(new URL(href, window.location.href).pathname);
+    if (type.includes("text/html")) { await headRes.body?.cancel(); return assetPath ? "missing" : "release"; }
+    // Some static servers mishandle suffix ranges (`bytes=-512`) and return
+    // the FIRST 513 bytes with status 206. Use an explicit final range when
+    // the first response tells us the full object size.
+    const totalSize = Number(/\/(\d+)$/.exec(headRes.headers.get("content-range") ?? "")?.[1]
+      ?? (headRes.status === 200 ? headRes.headers.get("content-length") : 0));
     const head = await readBytes(headRes, 512);
-    // A 404 / SPA fallback is served as HTML — open in tab, don't force-save.
-    if (looksLikeHtml(head)) return "release";
-    if (os === "windows") return isExeHead(head) ? "ready" : "release";
-    if (os === "linux") return isElfHead(head) ? "ready" : "release";
+    if (looksLikeHtml(head)) return assetPath ? "missing" : "release";
+    if (os === "windows") return isExeHead(head) ? "ready" : "missing";
+    if (os === "linux") return isElfHead(head) ? "ready" : "missing";
     if (os === "macos") {
       let verified = false;
       try {
-        const tailRes = await fetch(href, { method: "GET", headers: { Range: "bytes=-512" } });
+        const range = Number.isSafeInteger(totalSize) && totalSize >= 512
+          ? `bytes=${totalSize - 512}-${totalSize - 1}` : "bytes=-512";
+        const tailRes = await fetch(href, { method: "GET", cache: "no-store", headers: { Range: range } });
         if (tailRes.ok && tailRes.status === 206) {
           const tail = await readBytes(tailRes, 512);
           verified = isDmgTail(tail);
         } else if (tailRes.ok && tailRes.status === 200) {
-          const full = await readBytes(tailRes, 8192 * 1024);
+          // Do not download a huge installer just to probe it. If the server
+          // ignores Range, offer a normal link rather than claim verification.
+          const length = Number(tailRes.headers.get("content-length"));
+          if (!length || length > 8 * 1024 * 1024) { await tailRes.body?.cancel(); return "release"; }
+          const full = await readBytes(tailRes, length);
           verified = isDmgTail(full);
         }
-      } catch { /* suffix range unsupported — fall through */ }
-      if (verified) return "ready";
-      return "ready";
+      } catch { return "release"; }
+      return verified ? "ready" : "missing";
     }
     return "ready";
   } catch {
-    // Network error or CORS — show the button anyway ("release" mode opens in tab).
-    return "release";
+    return "missing";
   }
 }
 

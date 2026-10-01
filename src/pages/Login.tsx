@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation, Link } from "react-router-dom";
 import { getSupabase } from "../lib/supabase";
 import { supabaseConfigured } from "../lib/env";
 import { useAuth } from "../lib/auth";
@@ -8,6 +8,13 @@ type LoginMode = "student" | "teacher" | "proctor";
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // The desktop app has its own login session. Keep the exam reference from
+  // ProtectedRoute across sign-in rather than sending a cold launch home.
+  const from = location.state?.from;
+  const studentDestination = from?.pathname === "/student/exam"
+    ? `/student/exam${typeof from.search === "string" && from.search.startsWith("?") ? from.search : ""}`
+    : "/student";
   const { signInDemo } = useAuth();
   const [searchParams] = useSearchParams();
   const queryRole = searchParams.get("role") as LoginMode | null;
@@ -88,7 +95,7 @@ export default function Login() {
         navigate("/teacher");
       }
     } else {
-      navigate("/student");
+      navigate(studentDestination, { replace: true });
     }
   };
 
@@ -229,7 +236,7 @@ export default function Login() {
                     type="button"
                     onClick={() => {
                       signInDemo!(role);
-                      navigate(role === "proctor" ? "/proctor" : role === "teacher" ? "/teacher" : "/student");
+                      navigate(role === "proctor" ? "/proctor" : role === "teacher" ? "/teacher" : studentDestination, { replace: true });
                     }}
                     className="border border-line bg-paper px-3 py-2 text-left font-mono text-[10px] uppercase tracking-wider text-ink hover:bg-paper-raised hover:border-forest hover:text-forest"
                   >

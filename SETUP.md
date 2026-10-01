@@ -154,6 +154,66 @@ The teacher console now follows the Mettl pattern end to end:
 3. **Publish & share** enrolls the batch (or hand-picked candidates) and emails
    the join link, or schedules the test.
 
+## Snapshot PDF / desktop launch update (2026-10-01)
+
+Implemented locally:
+- Webcam capture every 1,000 ms, independent of AI warnings. Small JPEGs queue
+  in IndexedDB with three upload workers, retries and submit-time draining.
+- PDFs include every stored frame (no 720-frame cap), timestamps, and full
+  matching warning/voice text. R2 and backup lists are paginated and merged;
+  missing frames are labeled, not fabricated. Bulk PDFs run sequentially.
+- `store-artifact` authorizes the signed-in student's roll OR UUID folder.
+  Backup Storage policies follow the same rule and allow safe own-file upserts.
+- Native launch listens to the real Tauri deep-link event before reading the
+  initial URL. Install confirmation triggers the OS handler immediately.
+- A new Apple Silicon macOS installer is staged at
+  `public/downloads/VignanExam.dmg`. Windows/Linux staged files remain unusable
+  placeholders; build those on the target OS. Intel Macs need a compatible build.
+
+**Deployment still required** (not executed by the coding change):
+1. Review `supabase db push --linked --dry-run`, then apply the reviewed migration
+   `20261001072820_snapshot_roll_storage_policies.sql` using `supabase db push --linked`.
+   The verified dry-run showed only this migration pending.
+2. Deploy `supabase functions deploy store-artifact` with authentication retained.
+3. Deploy the rebuilt web app and publish compatible installers; ensure any
+   `VITE_LOCKDOWN_DOWNLOAD_*` overrides point to the rebuilt assets.
+4. Reinstall and run `src-tauri/DEEP_LINK_SMOKE.md` on a designated test device.
+5. Run a short clean exam and one with a voice flag. Verify the final snapshot,
+   timestamped captions, individual PDF and bulk PDF. Repeat beyond 1,000 seconds
+   and with temporary network loss. Test own-folder upload/read/upsert and denied
+   cross-student access with real authenticated test accounts.
+
+Local checks (including installer follow-up): **137 unit tests**, **8 real-browser
+checks** in Chromium/WebKit, and **11 release-helper tests** passed. Commands:
+`npx vitest run --reporter=dot`, `npx playwright test --config playwright.lockdown.config.ts`,
+`node --test scripts/lockdown/checks.mjs`, `npx tsc -b`, `npm run build`,
+`npm run lint` (existing warnings), and `npm run tauri:build -- --bundles app,dmg`.
+The DMG passes `hdiutil verify`, the installed/extracted app passes `codesign --verify
+--deep --strict`, and its bundled Info.plist contains `vignan-exam`. An opt-in real
+Chrome → installed app check verified cold and warm single-process launch using
+`scripts/smoke-lockdown-macos.mjs --allow-kiosk`; all test processes were stopped.
+This does not verify native UI content, first-time browser approval, live sign-in,
+or media/evidence upload. Accessibility/Screen Recording permissions were unavailable.
+The macOS signature is ad-hoc, **not Developer ID/notarized** (`spctl` rejects trust).
+Docker was unavailable, so the new SQL policies were not exercised locally; Edge
+Function authorization/pagination tests use the real handler with mocked dependencies.
+
+Windows x64 NSIS/MSI and Linux x64 AppImage/deb jobs are prepared in
+`.github/workflows/build-lockdown.yml`, but no current-source builds were dispatched.
+They require an authorized push and repository public client configuration (the
+Actions secrets/variables lists were empty). See `scripts/lockdown/README.md` for
+required names, output verification and remaining installed-OS tests. The public
+Windows/Linux placeholder downloads have not been replaced with stale artifacts.
+
+Limits: old exams cannot gain frames that were never captured. One-second timers
+cannot capture while the OS sleeps, the app is suspended or the camera is off.
+Disk quotas/network capacity still apply; keep the app open while evidence drains.
+All-frame PDFs can be large and browser memory still bounds a single PDF. Pending
+local snapshots contain private student imagery: uploaded entries are deleted,
+failed entries stay for retry on the same exam/owner and should be removed under
+institutional retention rules if the device is decommissioned. Voice captions
+show recorded detection/transcription text; they do not embed playable audio.
+
 ## 4a. Recording storage — Cloudflare R2 (exam recordings & screenshots)
 
 Every recording, per-second screenshot, violation frame and PDF report is

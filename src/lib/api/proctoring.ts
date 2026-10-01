@@ -23,6 +23,9 @@ export async function saveViolation(
   description: string,
   extra: { severity?: ViolationSeverity; source?: ViolationSource; snapshotKey?: string | null } = {},
 ): Promise<boolean> {
+  // Preserve the detection moment BEFORE auth/database round trips. Otherwise
+  // slow networking moves a voice warning underneath a later camera frame.
+  const detectedAt = Date.now();
   const db = getSupabase();
   if (!db) return false;
 
@@ -58,7 +61,7 @@ export async function saveViolation(
         .eq("id", realAttemptId)
         .maybeSingle();
       const started = att?.started_at ? new Date(att.started_at as string).getTime() : null;
-      if (started) offsetSeconds = Math.max(0, Math.floor((Date.now() - started) / 1000));
+      if (started) offsetSeconds = Math.max(0, Math.floor((detectedAt - started) / 1000));
     }
   } catch { /* offset is best-effort */ }
 
@@ -70,6 +73,7 @@ export async function saveViolation(
     severity: extra.severity ?? severityForType(violationType),
     source: extra.source ?? sourceForType(violationType),
     description,
+    created_at: new Date(detectedAt).toISOString(),
     offset_seconds: offsetSeconds,
     snapshot_key: extra.snapshotKey ?? null,
   });

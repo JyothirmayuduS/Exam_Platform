@@ -10,18 +10,6 @@
 
 use tauri::{Manager, WindowEvent};
 
-// Single instance / deep link: when the OS opens `vignan-exam://` while the
-// kiosk is already running, forward the URL to the live webview (which listens
-// for `vignan-deeplink` events) instead of stacking a second kiosk process.
-const DEEPLINK_EVENT: &str = "vignan-deeplink";
-
-fn forward_deeplink_to_webview(app: &tauri::AppHandle, url: &str) {
-    use tauri::Emitter;
-    if let Some(win) = app.get_webview_window("exam") {
-        let _ = win.emit(DEEPLINK_EVENT, url);
-    }
-}
-
 const LOCKDOWN_JS: &str = r#"
 (() => {
   const block = (e) => { e.preventDefault(); e.stopPropagation(); return false; };
@@ -146,19 +134,18 @@ fn detect_vm() -> bool {
     false
 }
 
-/// Hand the cold-start deep link (vignan-exam://open?exam=…&roll=…) to the
-/// web layer. Written by setup() before the webview loaded; main.tsx reads it
-/// once at boot and preloads the exam.
+/// Read the plugin's live URL state, not a setup-time snapshot. macOS delivers
+/// its launch URL through RunEvent::Opened, which may arrive AFTER setup().
+/// The frontend subscribes to new-url events before invoking this command.
 #[tauri::command]
-fn vignan_launch_url() -> Option<String> {
-    let flag = std::env::temp_dir().join("vignan_launch_url.txt");
-    match std::fs::read_to_string(&flag) {
-        Ok(url) => {
-            let _ = std::fs::remove_file(&flag); // one-shot
-            Some(url.trim().to_string())
-        }
-        Err(_) => None,
-    }
+fn vignan_launch_url(app: tauri::AppHandle) -> Option<String> {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    app.deep_link()
+        .get_current()
+        .ok()
+        .flatten()
+        .and_then(|urls| urls.into_iter().find(|url| url.scheme() == "vignan-exam"))
+        .map(|url| url.to_string())
 }
 
 #[tauri::command]
@@ -200,15 +187,10 @@ fn main() {
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![check_prohibited_apps, exit_app, vignan_launch_url])
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            // A second launch attempt (e.g. the OS handing us the deep link
-            // again while we're already running) — surface it to the live
-            // webview and make sure the kiosk is front and centre.
-            if let Some(url) = argv.iter().find(|a| a.starts_with("vignan-exam://")) {
-                forward_deeplink_to_webview(app, url);
-            }
+        // Register first so a second process exits before other plugins start.
+        // Its deep-link feature forwards Windows/Linux argv to the same plugin
+        // event used by macOS OS-open events, and updates get_current().
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(win) = app.get_webview_window("exam") {
                 let _ = win.unminimize();
                 let _ = win.set_fullscreen(true);
@@ -216,37 +198,18 @@ fn main() {
                 let _ = win.set_focus();
             }
         }))
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
-            // On Windows, register the vignan-exam:// URL scheme in the registry.
-            // On macOS the scheme is registered automatically via Info.plist
-            // (embedded from tauri.conf.json plugins.deep-link) — calling
-            // register() on macOS panics with "unsupported platform".
-            // Deep link: register the scheme on Windows, and on every platform
-            // forward the launch URL (cold start) into the webview so the exam
-            // opens with the right exam/roll preloaded. This fires BEFORE the
-            // webview finishes loading, so also stash the URL for main.tsx to
-            // read via the `vignan_launch_url` command at boot.
-            #[cfg(target_os = "windows")]
+            // macOS registers via the bundled Info.plist. Windows/Linux can
+            // also register at runtime (needed for a manually run AppImage).
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
-                app.deep_link().register("vignan-exam")?;
-            }
-            {
-                use tauri_plugin_deep_link::DeepLinkExt;
-                // get_current() is Option<Vec<Url>> — the OS may deliver several.
-                let launch_url = app
-                    .deep_link()
-                    .get_current()
-                    .ok()
-                    .flatten()
-                    .and_then(|urls| urls.first().map(|u| u.to_string()));
-                if let Some(url) = launch_url {
-                    println!("launch deep link: {url}");
-                    // Persist for the boot script in main.tsx.
-                    let flag = std::env::temp_dir().join("vignan_launch_url.txt");
-                    let _ = std::fs::write(&flag, &url);
-                    // Also emit for the (unlikely) case the webview is ready.
-                    forward_deeplink_to_webview(app.handle(), &url);
+                if let Err(err) = app.deep_link().register_all() {
+                    // Do not abort an otherwise usable installed app if the OS
+                    // refuses to change the handler; the installer may own it.
+                    eprintln!("Could not register exam URL handler: {err}");
                 }
             }
             #[cfg(target_os = "macos")]

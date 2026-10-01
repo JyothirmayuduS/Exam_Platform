@@ -1,61 +1,122 @@
 name: Build Lockdown Browser
 
-# Builds the Vignan Exam Browser desktop installers.
-# - Windows: NSIS .exe (per-user) + WiX .msi — the bundle students install.
-# - macOS: .app / .dmg.
-# Trigger manually (workflow_dispatch) or by pushing a `lockdown-v*` tag.
-# Artifacts appear on the run page; wire a release upload later if desired.
-
+# Build-only: no release publishing, installation, or kiosk launch.
+# See scripts/lockdown/README.md for required repository configuration and smoke tests.
 on:
   workflow_dispatch:
   push:
     tags: ["lockdown-v*"]
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    name: Build and verify ${{ matrix.name }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             name: windows
-            paths: |
-              src-tauri/target/release/bundle/nsis/*.exe
-              src-tauri/target/release/bundle/msi/*.msi
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+            config: ''
+          - os: ubuntu-22.04
+            name: linux
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage,deb
+            config: --config scripts/lockdown/tauri-linux.json
           - os: macos-latest
             name: macos
-            paths: |
-              src-tauri/target/release/bundle/dmg/*.dmg
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+            config: ''
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # These are public client settings even when kept in Actions secrets.
+      # Empty/malformed/demo values fail preflight; NEVER supply service_role/R2/LiveKit secrets.
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY }}
+      VITE_LIVEKIT_URL: ${{ secrets.VITE_LIVEKIT_URL || vars.VITE_LIVEKIT_URL }}
+      VITE_APP_BASE_URL: ${{ secrets.VITE_APP_BASE_URL || vars.VITE_APP_BASE_URL }}
+      VITE_SUPABASE_BUCKET_NAME: ${{ vars.VITE_SUPABASE_BUCKET_NAME || 'exam-records' }}
+      VITE_EXAM_ENTRY_PATH: /student/exam
+      VITE_PROCTOR_CAPTURE: 'true'
+      VITE_ALLOW_ANON_ROLL: 'false'
+      VITE_LOCKDOWN_DOWNLOAD_URL: ${{ secrets.VITE_LOCKDOWN_DOWNLOAD_URL || vars.VITE_LOCKDOWN_DOWNLOAD_URL }}
+      VITE_LOCKDOWN_DOWNLOAD_WIN: ${{ secrets.VITE_LOCKDOWN_DOWNLOAD_WIN || vars.VITE_LOCKDOWN_DOWNLOAD_WIN }}
+      VITE_LOCKDOWN_DOWNLOAD_MAC: ${{ secrets.VITE_LOCKDOWN_DOWNLOAD_MAC || vars.VITE_LOCKDOWN_DOWNLOAD_MAC }}
+      VITE_LOCKDOWN_DOWNLOAD_LINUX: ${{ secrets.VITE_LOCKDOWN_DOWNLOAD_LINUX || vars.VITE_LOCKDOWN_DOWNLOAD_LINUX }}
+      VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN || vars.VITE_SENTRY_DSN }}
+      # Allows build-time AppImage tooling on runners without a FUSE mount.
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+      # Ad-hoc macOS signature only; NOT a Developer ID or notarization claim.
+      APPLE_SIGNING_IDENTITY: '-'
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
           cache: npm
 
+      - name: Check release helpers and required frontend configuration
+        run: |
+          node --test scripts/lockdown/checks.mjs
+          node scripts/lockdown/validate-env.mjs
+
+      - name: Install Linux build and package-check dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl wget file libssl-dev libgtk-3-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            patchelf libfuse2 xdg-utils desktop-file-utils \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
+
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build Tauri bundles
-        uses: tauri-apps/tauri-action@v0
+      - name: Remove stale package outputs and embedded download installers
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: src-tauri
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          node --input-type=module -e '
+            import { rmSync } from "node:fs";
+            const release = `src-tauri/target/${process.env.BUILD_TARGET}/release`;
+            for (const directory of [`${release}/bundle`, `${release}/nsis`, `${release}/wix`, "src-tauri/target/installers", "public/downloads"]) {
+              rmSync(directory, { recursive: true, force: true });
+            }
+          '
 
-      - name: Upload installers
+      - name: Build locked native bundles from this checkout
+        run: npm run tauri:build -- --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} ${{ matrix.config }} -- --locked
+
+      - name: Verify packages and protocol metadata, then stage stable filenames
+        run: node scripts/lockdown/stage-installers.mjs ${{ matrix.name }}
+
+      - name: Upload verified installers and checksum manifest
         uses: actions/upload-artifact@v4
         with:
           name: vignan-exam-browser-${{ matrix.name }}
-          path: ${{ matrix.paths }}
+          path: src-tauri/target/installers/${{ matrix.name }}/
           if-no-files-found: error
+          compression-level: 0
           retention-days: 30

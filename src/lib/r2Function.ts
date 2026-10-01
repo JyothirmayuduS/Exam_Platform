@@ -87,8 +87,23 @@ export async function r2PresignGet(key: string, expiresSec = 3600): Promise<stri
 
 /** List objects under a prefix (e.g. `${examId}/${owner}/${kind}/`). */
 export async function r2List(prefix: string): Promise<R2ListedObject[] | null> {
-  const res = await invoke<{ objects: R2ListedObject[] }>({ op: "list", prefix });
-  return res?.objects ?? null;
+  const objects = new Map<string, R2ListedObject>();
+  const seenTokens = new Set<string>();
+  let continuationToken: string | undefined;
+  do {
+    const res = await invoke<{ objects: R2ListedObject[]; nextContinuationToken?: string | null }>({
+      op: "list", prefix, ...(continuationToken ? { continuationToken } : {}),
+    });
+    // Never present a partial list as a complete exam if a later page failed.
+    if (!res?.objects) return null;
+    for (const object of res.objects) objects.set(object.key, object);
+    continuationToken = res.nextContinuationToken || undefined;
+    if (continuationToken) {
+      if (seenTokens.has(continuationToken)) return null;
+      seenTokens.add(continuationToken);
+    }
+  } while (continuationToken);
+  return [...objects.values()];
 }
 
 /**
