@@ -1396,6 +1396,13 @@ function StudentExamSession() {
         onOpenMediaSettings={openKioskMediaSettings}
         previewRef={previewRef}
         onRequest={requestDevices}
+        onExit={() => {
+          if (isTauri()) {
+            void invoke("exit_app");
+          } else {
+            window.location.href = "/student/dashboard";
+          }
+        }}
         onContinue={() => {
           // If already authenticated and inside the kiosk, we know who they are.
           // Skip the manual registration form and go straight to identity verification or start.
