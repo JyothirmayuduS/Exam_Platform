@@ -679,6 +679,29 @@ function StudentExamSession() {
     }
   }, []);
 
+  // Eagerly create the attempt as soon as the student is identified (e.g. during access check),
+  // so that the Desk Monitor QR (which requires an attempt_id) can be shown early.
+  useEffect(() => {
+    if (supabaseConfigured && studentIdRef.current && EXAM_ID && questions.length > 0 && !attemptStartedRef.current) {
+      // Only start if they are past the gate
+      if (step !== "gate" && step !== "installed" && step !== "check") {
+        attemptStartedRef.current = true;
+        void import("@/shared/data/examApi").then(m => 
+          m.startAttempt({ 
+            examId: EXAM_ID, 
+            studentId: studentIdRef.current!, 
+            total: questions.length 
+          })
+        ).then(id => {
+          if (id) setAttemptId(id);
+        }).catch(err => {
+          console.error("[StudentExam] eager startAttempt failed:", err);
+          attemptStartedRef.current = false;
+        });
+      }
+    }
+  }, [supabaseConfigured, EXAM_ID, questions.length, step]);
+
   const { secondsLeft, setSecondsLeft, timeString, tone: timerTone } = useExamTimer({
     durationMinutes: durationMin,
     // A proctor pause freezes the countdown until the attempt is resumed.
@@ -1077,33 +1100,27 @@ function StudentExamSession() {
       forceUpdate(n => n + 1);
     }
     // Enter full-screen lock (best-effort; Tauri kiosk is already fullscreen).
-    try { void document.documentElement.requestFullscreen?.(); } catch { /* ignore */ }
+    try { if (!isTauri()) void document.documentElement.requestFullscreen?.(); } catch { /* ignore */ }
     // Start at the first question of the section the student picked.
     if (startIndexRef.current > 0 && startIndexRef.current < questions.length) {
       goTo(startIndexRef.current);
     }
-    // Start / resume the DB attempt.
-    if (supabaseConfigured && studentIdRef.current && !attemptStartedRef.current) {
-      attemptStartedRef.current = true;
-      void startAttempt({ examId: EXAM_ID, studentId: studentIdRef.current, total: questions.length, paper: paperRef.current }).then(id => {
-        if (id) {
-          setAttemptId(id);
-          // Persist the candidate's consent timestamp for audit purposes.
-          if (consentGiven) {
-            void import("@/shared/data/examApi").then((m) =>
-              m.recordConsent(id, {
-                text: "Candidate consented to video/audio/screen monitoring, automated integrity analysis, and secure retention of recordings/snapshots for audit and result-review purposes.",
-                version: "1.0",
-              }),
-            );
-          }
-        }
-      }).catch((err) => {
-        // Never leave the attempt silently uncreated: autosave/submit now
-        // self-heal (see upsertAttemptPatch), so answers still land even if
-        // this first insert fails — but log it so the failure is visible.
-        console.error("[StudentExam] startAttempt failed (autosave will self-heal):", err);
-      });
+    // Update the DB attempt with the generated paper and consent.
+    if (supabaseConfigured && attemptId) {
+      void import("@/shared/data/examApi").then(m => m.startAttempt({
+        examId: EXAM_ID,
+        studentId: studentIdRef.current!,
+        total: questions.length,
+        paper: paperRef.current
+      }));
+      if (consentGiven && attemptId) {
+        void import("@/shared/data/examApi").then((m) =>
+          m.recordConsent(attemptId, {
+            text: "Candidate consented to video/audio/screen monitoring, automated integrity analysis, and secure retention of recordings/snapshots for audit and result-review purposes.",
+            version: "1.0",
+          }),
+        );
+      }
     }
     
     // Start Recording and Screenshots. Record the screen stream only while its
@@ -1340,6 +1357,7 @@ function StudentExamSession() {
     const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
     return (
       <DeviceAccessFull
+        attemptId={attemptId}
         cam={cam}
         mic={mic}
         screen={screen}
@@ -1359,9 +1377,9 @@ function StudentExamSession() {
           }
         }}
         onContinue={() => {
-          // If already authenticated and inside the kiosk, we know who they are.
+          // If already authenticated, we know who they are.
           // Skip the manual registration form and go straight to identity verification or start.
-          if (isTauri() && authProfile && resolvedRoll) {
+          if (authProfile && resolvedRoll) {
             setStudentName(authProfile.full_name || "Candidate");
             if (authUser?.email) setStudentEmail(authUser.email);
             setStep(examSettings.photoId === true || examSettings.photoId === "true" ? "verify" : "start");
@@ -1554,7 +1572,7 @@ function StudentExamSession() {
           if (document.fullscreenElement) {
             void document.exitFullscreen();
           } else {
-            void document.documentElement.requestFullscreen?.();
+            if (!isTauri()) void document.documentElement.requestFullscreen?.();
           }
         }}
       />
@@ -1659,7 +1677,7 @@ function StudentExamSession() {
                 REC
               </span>
             </p>
-            <div className="hidden">
+            <div className="mt-4">
               <ProctorCamera
                 room={ROOM}
                 identity={STUDENT_ROLL}

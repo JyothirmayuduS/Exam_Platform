@@ -398,8 +398,9 @@ async function uploadToSupabase(path: string, blob: Blob, contentType: string): 
 async function storeArtifact(path: string, blob: Blob, contentType: string): Promise<StoredArtifact | null> {
   const r2key = await uploadToR2(path, blob);
   if (r2key) return { key: r2key, provider: "r2" };
-  const sbKey = await uploadToSupabase(path, blob, contentType);
-  return sbKey ? { key: sbKey, provider: "supabase" } : null;
+  // The user explicitly requested to NOT store in Supabase Storage.
+  // We remove the fallback so that it only relies on Cloudflare R2.
+  return null;
 }
 
 /**

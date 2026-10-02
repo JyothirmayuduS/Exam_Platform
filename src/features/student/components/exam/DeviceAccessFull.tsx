@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { FiCheck, FiAlertTriangle, FiAlertOctagon, FiLock, FiArrowRight } from "react-icons/fi";
 import { useAudioTest, AudioBars, runDeviceDetection, useScreenShareTest, type DeviceRisk } from "@/features/proctoring/services/proctorUtils";
 import type { RefObject } from "react";
+import MonitorQRPanel from "@/features/student/components/exam/MonitorQRPanel";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DeviceAccessScreen — replaces the basic one in ExamFlowScreens
@@ -12,6 +13,7 @@ import type { RefObject } from "react";
 type AccessState = "idle" | "granted" | "denied";
 
 type DeviceAccessFullProps = {
+  attemptId?: string;
   cam: AccessState;
   mic: AccessState;
   screen: AccessState;
@@ -32,6 +34,7 @@ type DeviceAccessFullProps = {
 };
 
 export default function DeviceAccessFull({
+  attemptId,
   cam,
   mic,
   screen,
@@ -267,6 +270,9 @@ export default function DeviceAccessFull({
             )}
           </section>
         )}
+
+        {/* ── Desk Monitor ── */}
+        <MonitorQRPanel attemptId={attemptId} />
 
         {/* ── Continue button ── */}
         <button
