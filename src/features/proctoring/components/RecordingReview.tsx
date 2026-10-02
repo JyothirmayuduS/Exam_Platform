@@ -579,10 +579,10 @@ export default function RecordingReviewer({
             const isAudio = /voice|speak|audio|talk|sound/i.test(m.label);
             const sevColor =
               m.severity === "critical" || m.severity === "high" ? "text-alert border-alert"
-              : m.severity === "medium" ? "text-amber border-amber"
+              : m.severity === "warning" ? "text-amber border-amber"
               : "text-ink-soft border-line";
             return (
-            <div key={m.v.id} className={`flex items-center justify-between gap-3 border-l-2 ${m.severity === "critical" || m.severity === "high" ? "border-alert" : m.severity === "medium" ? "border-amber" : "border-forest"} bg-alert/[0.04] p-3`}>
+            <div key={m.v.id} className={`flex items-center justify-between gap-3 border-l-2 ${m.severity === "critical" || m.severity === "high" ? "border-alert" : m.severity === "warning" ? "border-amber" : "border-forest"} bg-alert/[0.04] p-3`}>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="text-[13px] font-medium">{m.label}</p>
