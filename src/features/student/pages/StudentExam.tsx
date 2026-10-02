@@ -1399,13 +1399,9 @@ function StudentExamSession() {
           // If already authenticated and inside the kiosk, we know who they are.
           // Skip the manual registration form and go straight to identity verification or start.
           if (isTauri() && authProfile && resolvedRoll) {
-            setRegInfo({
-              email: authUser?.email ?? "",
-              firstName: authProfile?.full_name?.split(" ")[0] ?? "",
-              lastName: authProfile?.full_name?.split(" ").slice(1).join(" ") ?? "",
-              usn: resolvedRoll,
-            });
-            setStep(examSettings.identity_verification === true ? "verify" : "start");
+            setStudentName(authProfile.full_name || "Candidate");
+            if (authUser?.email) setStudentEmail(authUser.email);
+            setStep(examSettings.photoId === true || examSettings.photoId === "true" ? "verify" : "start");
           } else {
             setStep("register");
           }
