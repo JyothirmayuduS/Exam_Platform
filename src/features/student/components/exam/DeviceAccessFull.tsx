@@ -26,6 +26,8 @@ type DeviceAccessFullProps = {
   previewRef: RefObject<HTMLVideoElement | null>;
   onRequest: () => void;
   onContinue: () => void;
+  /** Let the user exit the lockdown browser completely to fix OS issues */
+  onExit?: () => void;
 };
 
 export default function DeviceAccessFull({
@@ -40,6 +42,7 @@ export default function DeviceAccessFull({
   previewRef,
   onRequest,
   onContinue,
+  onExit,
 }: DeviceAccessFullProps) {
   const audio = useAudioTest();
   const screenTest = useScreenShareTest();
@@ -118,6 +121,14 @@ export default function DeviceAccessFull({
                       >
                         {requesting ? "Checking…" : "Grant access again"}
                       </button>
+                      {onExit && (
+                        <button
+                          onClick={onExit}
+                          className="border border-line bg-transparent px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:bg-raised ml-auto"
+                        >
+                          Exit Exam Browser
+                        </button>
+                      )}
                     </div>
                   </>
                 ) : (
