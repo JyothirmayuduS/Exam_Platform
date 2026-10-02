@@ -304,14 +304,9 @@ function StudentExamSession() {
           "video/webm;codecs=vp9,opus",
           "video/webm;codecs=vp8,opus",
           "video/webm",
-        ].find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm";
-      const mr = new MediaRecorder(stream, {
-        mimeType: mime,
-        // Cap the bitrate so a long exam doesn't saturate the student's
-        // upload link (which is what made the live feeds lag) — ~1.6 Mbps is
-        // plenty readable for review at 720p-class quality.
-        videoBitsPerSecond: 1_600_000,
-      });
+          "video/mp4",
+        ].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 1600000 } : { videoBitsPerSecond: 1600000 });
       mr.ondataavailable = (e) => {
         if (e.data.size <= 0) return;
         // 1) Local accumulation / merged full video at submit (unchanged).
@@ -1045,10 +1040,18 @@ function StudentExamSession() {
           setScreen("granted"); // API missing entirely: kiosk lockdown replaces screen evidence
         } else {
           try {
-            const disp = await mdTauri.getDisplayMedia({
-              video: { displaySurface: "monitor" } as MediaTrackConstraints,
-              audio: false,
-            });
+            let disp: MediaStream;
+            try {
+              disp = await mdTauri.getDisplayMedia({
+                video: { displaySurface: "monitor" } as MediaTrackConstraints,
+                audio: false,
+              });
+            } catch {
+              disp = await mdTauri.getDisplayMedia({
+                video: true,
+                audio: false,
+              });
+            }
             screenStreamRef.current = disp;
             setScreen("granted");
             disp.getVideoTracks()[0]?.addEventListener("ended", () => {
@@ -1217,7 +1220,8 @@ function StudentExamSession() {
         const allSnapshotsStored = await snapshotsStored;
         // 2. Merge the local chunks into one full video and upload it. This is
         //    the file the teacher's review prefers — parts are the crash fallback.
-        const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
+        const type = recordedChunksRef.current[0]?.type || "video/webm";
+        const videoBlob = new Blob(recordedChunksRef.current, { type });
         const result = await uploadExamRecords({
           examId: EXAM_ID,
           examName: examNameRef.current,

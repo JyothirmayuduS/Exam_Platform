@@ -62,7 +62,8 @@ export function useAudioTest() {
     const rec = new MediaRecorder(streamRef.current);
     rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
     rec.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+      const type = chunksRef.current[0]?.type || "audio/webm";
+      const blob = new Blob(chunksRef.current, { type });
       setSampleUrl(URL.createObjectURL(blob));
       setState("done");
     };
