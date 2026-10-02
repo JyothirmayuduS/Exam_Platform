@@ -67,7 +67,16 @@ if (LOGROCKET_ID) {
 // Tauri webview may serve the bundle at "/" or "/index.html", so match both and
 // simply redirect whenever we're not already on the exam entry path.
 const inTauri = "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
-const entry = import.meta.env.VITE_EXAM_ENTRY_PATH ?? "/student/exam";
+// Resolve the kiosk entry path defensively. `??` only falls back for
+// null/undefined, so an env file that sets VITE_EXAM_ENTRY_PATH="" (which
+// Vercel's CLI writes) made `entry` the EMPTY STRING. That single mistake
+// routed a cold start to the bare origin (the marketing landing page) and made
+// a deep link resolve to "?examId=…" against whatever path was current — i.e.
+// /login?examId=… instead of the exam. Only a real absolute path is honoured.
+const entry = (() => {
+  const configured = (import.meta.env.VITE_EXAM_ENTRY_PATH ?? "").trim();
+  return configured.startsWith("/") ? configured : "/student/exam";
+})();
 const onOnboarding = window.location.pathname === "/" || /\/index\.html?$/i.test(window.location.pathname);
 
 // Deep-link params from the vignan-exam:// launch. The kiosk hands us the
@@ -112,6 +121,32 @@ function mount() {
       </QueryClientProvider>
     </StrictMode>,
   );
+}
+
+// Handoff probe: scripts/lockdown/smoke-handoff.mjs cannot see the exam window
+// (it is deliberately excluded from screen capture), so when built with
+// VITE_VIGNAN_PROBE=1 we report the visible route + text back to Rust, which
+// records it to a temp file. Never set in CI, so production installers are
+// unaffected.
+const probeEnabled = import.meta.env.DEV || import.meta.env.VITE_VIGNAN_PROBE === "1";
+if (probeEnabled && inTauri) {
+  const report = () => {
+    void import("@tauri-apps/api/core")
+      .then(({ invoke }) =>
+        invoke("lockdown_log_probe", {
+          payload: JSON.stringify({
+            route: window.location.pathname + window.location.search,
+            title: document.title,
+            text: (document.body?.innerText ?? "").slice(0, 4000),
+            at: new Date().toISOString(),
+          }),
+        }),
+      )
+      .catch(() => {});
+  };
+  window.addEventListener("popstate", () => window.setTimeout(report, 400));
+  window.addEventListener("load", () => window.setTimeout(report, 1500));
+  window.setTimeout(report, 2000);
 }
 
 async function boot() {

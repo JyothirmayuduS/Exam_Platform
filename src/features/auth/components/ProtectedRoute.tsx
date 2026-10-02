@@ -12,22 +12,27 @@ export default function ProtectedRoute({ children, allowedRole }: ProtectedRoute
   const { user, role, loading } = useAuth();
   const location = useLocation();
 
+  // A deep-linked native exam restores the student's existing Supabase
+  // session before mount. If the webview has no session yet (for example while
+  // a warm macOS URL is still being hydrated), let StudentExam render its
+  // explicit account/link error instead of sending the candidate into a
+  // second login screen inside the lockdown app.
+  //
+  // This check comes BEFORE the loading spinner on purpose: while the kiosk
+  // restores its session, the candidate should already be looking at the
+  // exam's first system check. Gating on `loading` first swapped that instant
+  // pre-flight screen for a blank spinner on every deep-link launch.
+  const nativeExamLaunch = isTauri() && allowedRole === "student" && location.pathname === "/student/exam" && new URLSearchParams(location.search).has("examId");
+  if (!user && nativeExamLaunch) {
+    return <>{children}</>;
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-paper">
         <div className="h-8 w-8 animate-spin rounded-none border-4 border-ink border-t-transparent"></div>
       </div>
     );
-  }
-
-  // A deep-linked native exam restores the student's existing Supabase
-  // session before mount. If the webview has no session yet (for example while
-  // a warm macOS URL is still being hydrated), let StudentExam render its
-  // explicit account/link error instead of sending the candidate into a
-  // second login screen inside the lockdown app.
-  const nativeExamLaunch = isTauri() && allowedRole === "student" && location.pathname === "/student/exam" && new URLSearchParams(location.search).has("examId");
-  if (!user && nativeExamLaunch) {
-    return <>{children}</>;
   }
 
   if (!user) {

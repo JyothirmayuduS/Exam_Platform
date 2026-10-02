@@ -53,7 +53,12 @@ export function examPathFromDeepLink(url: string, entry = "/student/exam"): stri
     const exam = link.searchParams.get("exam");
     if (link.protocol !== "vignan-exam:" || link.hostname !== "open" || !exam?.trim()) return null;
     const roll = link.searchParams.get("roll");
-    return `${entry}?examId=${encodeURIComponent(exam)}${roll ? `&roll=${encodeURIComponent(roll)}` : ""}`;
+    // The entry MUST be an absolute path. A relative one (e.g. "" from a blank
+    // VITE_EXAM_ENTRY_PATH) resolves against whatever route happens to be
+    // current, which is how a deep link ended up at /login?examId=… instead of
+    // the exam. Fall back to the real exam route rather than misroute.
+    const base = entry.trim().startsWith("/") ? entry.trim() : "/student/exam";
+    return `${base}?examId=${encodeURIComponent(exam)}${roll ? `&roll=${encodeURIComponent(roll)}` : ""}`;
   } catch {
     return null;
   }

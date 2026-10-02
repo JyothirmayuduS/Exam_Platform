@@ -69,6 +69,29 @@ describe("native deep-link boot order", () => {
     }
   });
 
+  it("never lands on a relative route when the entry path env is blank", async () => {
+    // The exact production trap: Vercel CLI writes VITE_EXAM_ENTRY_PATH="".
+    vi.stubEnv("VITE_EXAM_ENTRY_PATH", "");
+    getLaunchUrl.mockResolvedValue("vignan-exam://open?exam=exam-one&roll=R1");
+    await import("./main");
+    await vi.waitFor(() => expect(render).toHaveBeenCalledOnce());
+    // Must be the absolute exam route — not "/" (landing) and not a bare
+    // "?examId=…" that would resolve against the current path (/login).
+    expect(window.location.pathname + window.location.search).toBe("/student/exam?examId=exam-one&roll=R1");
+    expect(window.location.pathname).not.toBe("/");
+    expect(window.location.pathname).not.toBe("/login");
+  });
+
+  it("keeps the exam route when a warm link arrives with a blank entry path", async () => {
+    vi.stubEnv("VITE_EXAM_ENTRY_PATH", "");
+    await import("./main");
+    await vi.waitFor(() => expect(render).toHaveBeenCalledOnce());
+    const onUrl = subscribe.mock.calls[0][0] as (url: string) => void;
+    onUrl("vignan-exam://open?exam=warm-one");
+    expect(window.location.pathname).toBe("/student/exam");
+    expect(window.location.search).toBe("?examId=warm-one");
+  });
+
   it("mounts normally without native APIs in a browser", async () => {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
     await import("./main");
