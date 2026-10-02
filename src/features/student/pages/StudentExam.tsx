@@ -304,14 +304,9 @@ function StudentExamSession() {
           "video/webm;codecs=vp9,opus",
           "video/webm;codecs=vp8,opus",
           "video/webm",
-        ].find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm";
-      const mr = new MediaRecorder(stream, {
-        mimeType: mime,
-        // Cap the bitrate so a long exam doesn't saturate the student's
-        // upload link (which is what made the live feeds lag) — ~1.6 Mbps is
-        // plenty readable for review at 720p-class quality.
-        videoBitsPerSecond: 1_600_000,
-      });
+          "video/mp4",
+        ].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 1600000 } : { videoBitsPerSecond: 1600000 });
       mr.ondataavailable = (e) => {
         if (e.data.size <= 0) return;
         // 1) Local accumulation / merged full video at submit (unchanged).
@@ -1019,9 +1014,6 @@ function StudentExamSession() {
       if (previewRef.current) previewRef.current.srcObject = stream;
     } catch (e: any) {
       // Distinguish "OS-level deny" from "dialog dismissed".
-      // Note: If the user clicked "Block" on the WKWebView prompt, the OS status
-      // will still be "prompt", but getUserMedia will instantly reject.
-      // We must set it to "denied" so the user sees the error UI and can recover.
       if (isTauri()) {
         void Promise.all([
           mediaPermissionStatus("camera"),
@@ -1031,54 +1023,18 @@ function StudentExamSession() {
       setCam("denied");
       setMic("denied");
     }
-    // Screen share — request the entire monitor (not just a tab or window).
-    try {
-      if (isTauri()) {
-        // Tauri WebView2 (Windows) and recent WKWebView builds DO support
-        // getDisplayMedia — try it first so the proctor gets a REAL screen
-        // recording + live screen feed. Only fall back to the legacy bypass
-        // when the WebView genuinely has no capture API (older macOS WKWebView);
-        // a dismissed picker or failure keeps the row BLOCKED so the student
-        // can press Grant again instead of silently continuing unshared.
-        const mdTauri = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
-        if (!mdTauri.getDisplayMedia) {
-          setScreen("granted"); // API missing entirely: kiosk lockdown replaces screen evidence
-        } else {
-          try {
-            const disp = await mdTauri.getDisplayMedia({
-              video: { displaySurface: "monitor" } as MediaTrackConstraints,
-              audio: false,
-            });
-            screenStreamRef.current = disp;
-            setScreen("granted");
-            disp.getVideoTracks()[0]?.addEventListener("ended", () => {
-              handleScreenTrackEnded();
-            });
-          } catch {
-            setScreen("denied");
-          }
-        }
-      } else {
-        const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
-        if (md.getDisplayMedia) {
-          const disp = await md.getDisplayMedia({
-            video: { displaySurface: "monitor" } as MediaTrackConstraints,
-            audio: false,
-          });
-          screenStreamRef.current = disp;
-          setScreen("granted");
-          disp.getVideoTracks()[0]?.addEventListener("ended", () => {
-            handleScreenTrackEnded();
-          });
-        } else {
-          setScreen("denied");
-        }
-      }
-    } catch {
-      setScreen("denied");
-    }
+    
     setRequesting(false);
   }
+
+  const handleScreenGranted = useCallback((stream: MediaStream) => {
+    screenStreamRef.current = stream;
+    setScreen("granted");
+    stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+      handleScreenTrackEnded();
+    });
+  }, []);
+
 
   const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
 
@@ -1217,7 +1173,8 @@ function StudentExamSession() {
         const allSnapshotsStored = await snapshotsStored;
         // 2. Merge the local chunks into one full video and upload it. This is
         //    the file the teacher's review prefers — parts are the crash fallback.
-        const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
+        const type = recordedChunksRef.current[0]?.type || "video/webm";
+        const videoBlob = new Blob(recordedChunksRef.current, { type });
         const result = await uploadExamRecords({
           examId: EXAM_ID,
           examName: examNameRef.current,
@@ -1393,6 +1350,7 @@ function StudentExamSession() {
         onOpenMediaSettings={openKioskMediaSettings}
         previewRef={previewRef}
         onRequest={requestDevices}
+        onScreenGranted={handleScreenGranted}
         onExit={() => {
           if (isTauri()) {
             void invoke("exit_app");
