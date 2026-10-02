@@ -298,6 +298,47 @@ fn open_media_settings(kind: String) -> Result<(), String> {
     }
 }
 
+/// Temporarily allow or disallow the exam window to appear in OS screen
+/// capture APIs. Called from the frontend around getDisplayMedia() so that
+/// the WKWebView can present the screen picker — NSWindowSharingNone blocks
+/// the webview's own capture API on macOS. After the stream is acquired the
+/// frontend calls this again with `allow = false` to restore the lockdown.
+///
+/// On Windows the WDA_EXCLUDEFROMCAPTURE flag is toggled equivalently.
+#[tauri::command]
+fn set_window_sharing(app: tauri::AppHandle, allow: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(win) = app.get_webview_window("exam") {
+            if let Ok(ns_win) = win.ns_window() {
+                unsafe {
+                    let ns_win = ns_win as *mut objc2::runtime::AnyObject;
+                    // 0 = NSWindowSharingNone (excluded from capture)
+                    // 1 = NSWindowSharingReadOnly (visible to capture APIs)
+                    let sharing_type: isize = if allow { 1 } else { 0 };
+                    let _: () = objc2::msg_send![ns_win, setSharingType: sharing_type];
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(win) = app.get_webview_window("exam") {
+            if let Ok(hwnd) = win.hwnd() {
+                unsafe {
+                    // 0x00 = WDA_NONE (capturable), 0x11 = WDA_EXCLUDEFROMCAPTURE
+                    let affinity: u32 = if allow { 0x00 } else { 0x11 };
+                    SetWindowDisplayAffinity(hwnd.0 as *mut _, affinity);
+                }
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (app, allow);
+    }
+}
+
 /// Diagnostic: is the exam window excluded from OS screen capture? The web
 /// layer shows a lockdown notice if the exclusion could not be applied.
 #[tauri::command]
@@ -381,7 +422,8 @@ fn main() {
             media_permission_prompt,
             open_media_settings,
             screen_capture_excluded,
-            lockdown_log_probe
+            lockdown_log_probe,
+            set_window_sharing
         ])
         // Register first so a second process exits before other plugins start.
         // Its deep-link feature forwards Windows/Linux argv to the same plugin
@@ -470,7 +512,16 @@ fn main() {
             .closable(false)
             .minimizable(false)
             .on_permission_request(|_, req| match req {
-                tauri::webview::PermissionKind::Camera | tauri::webview::PermissionKind::Microphone => {
+                // Camera and microphone are needed for proctoring identity
+                // verification and audio monitoring.
+                tauri::webview::PermissionKind::Camera
+                | tauri::webview::PermissionKind::Microphone => {
+                    tauri::webview::PermissionResponse::Allow
+                }
+                // DisplayCapture is needed for getDisplayMedia() — the student
+                // must share their screen so the proctor can monitor it.
+                // Without this, the browser-side picker never appears.
+                tauri::webview::PermissionKind::DisplayCapture => {
                     tauri::webview::PermissionResponse::Allow
                 }
                 _ => tauri::webview::PermissionResponse::Deny,

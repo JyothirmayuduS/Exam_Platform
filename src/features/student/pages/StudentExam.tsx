@@ -1040,23 +1040,35 @@ function StudentExamSession() {
           setScreen("granted"); // API missing entirely: kiosk lockdown replaces screen evidence
         } else {
           try {
+            // On macOS the exam window is set to NSWindowSharingNone at startup
+            // so it is excluded from OS screen capture (students can't screenshot
+            // exam content). That same flag prevents WKWebView's own getDisplayMedia
+            // picker from launching. Temporarily lift the restriction, acquire the
+            // stream, then immediately re-lock the window.
+            // On Windows the equivalent WDA_EXCLUDEFROMCAPTURE toggle is applied.
+            await invoke("set_window_sharing", { allow: true }).catch(() => {});
             let disp: MediaStream;
             try {
-              disp = await mdTauri.getDisplayMedia({
-                video: { displaySurface: "monitor" } as MediaTrackConstraints,
-                audio: false,
+              try {
+                disp = await mdTauri.getDisplayMedia({
+                  video: { displaySurface: "monitor" } as MediaTrackConstraints,
+                  audio: false,
+                });
+              } catch {
+                disp = await mdTauri.getDisplayMedia({
+                  video: true,
+                  audio: false,
+                });
+              }
+              screenStreamRef.current = disp;
+              setScreen("granted");
+              disp.getVideoTracks()[0]?.addEventListener("ended", () => {
+                handleScreenTrackEnded();
               });
-            } catch {
-              disp = await mdTauri.getDisplayMedia({
-                video: true,
-                audio: false,
-              });
+            } finally {
+              // Always restore the capture exclusion, whether we succeeded or not.
+              await invoke("set_window_sharing", { allow: false }).catch(() => {});
             }
-            screenStreamRef.current = disp;
-            setScreen("granted");
-            disp.getVideoTracks()[0]?.addEventListener("ended", () => {
-              handleScreenTrackEnded();
-            });
           } catch {
             setScreen("denied");
           }
@@ -1082,6 +1094,7 @@ function StudentExamSession() {
     }
     setRequesting(false);
   }
+
 
   const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
 

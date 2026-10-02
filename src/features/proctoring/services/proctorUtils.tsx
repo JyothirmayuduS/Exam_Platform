@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 
 // ── Audio Level Meter ─────────────────────────────────────────────────────────
 // Measures real-time microphone input level using Web Audio API.
@@ -179,7 +181,16 @@ export function useScreenShareTest() {
     try {
       const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
       if (!md.getDisplayMedia) throw new Error("Screen share not supported in this browser. Use Chrome, Firefox, or Edge.");
-      const stream = await md.getDisplayMedia({ video: true, audio: false });
+      // On macOS the exam window uses NSWindowSharingNone to block OS screenshots;
+      // that flag also prevents WKWebView from showing the getDisplayMedia picker.
+      // Temporarily lift it, start the stream, then immediately re-lock.
+      if (isTauri()) await invoke("set_window_sharing", { allow: true }).catch(() => {});
+      let stream: MediaStream;
+      try {
+        stream = await md.getDisplayMedia({ video: true, audio: false });
+      } finally {
+        if (isTauri()) await invoke("set_window_sharing", { allow: false }).catch(() => {});
+      }
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       stream.getVideoTracks()[0]?.addEventListener("ended", stop);
