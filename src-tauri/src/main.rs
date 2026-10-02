@@ -448,7 +448,7 @@ fn main() {
 
             // Manually spawn the exam window so we can attach a permission handler.
             // By auto-allowing Webview permissions, we defer to the REAL native OS popup.
-            let mut builder = tauri::WebviewWindowBuilder::new(
+            let win = tauri::WebviewWindowBuilder::new(
                 app,
                 "exam",
                 tauri::WebviewUrl::App("index.html".into()),
@@ -460,23 +460,15 @@ fn main() {
             .resizable(false)
             .maximized(true)
             .skip_taskbar(false)
-            .focus(true)
             .visible(true)
             .closable(false)
-            .minimizable(false);
-
-            #[cfg(target_os = "macos")]
-            {
-                // In older wry/tauri versions, on_permission_request might not be available,
-                // or we might need it. We use a runtime check if possible, or just build.
-                // Wait, if it's Tauri 2.12+, it will compile. If not, we might get a compile error.
-            }
-
-            // Note: If this fails to compile due to on_permission_request, we will remove it.
-            let win = builder
-                .on_permission_request(|_, _| tauri::webview::PermissionResponse::Allow)
-                .build()
-                .expect("Failed to build exam window");
+            .minimizable(false)
+            .on_permission_request(|_, _| tauri::webview::PermissionResponse::Allow)
+            .build()
+            .expect("Failed to build exam window");
+            
+            // Note: `.focus(true)` was deprecated and removed; the window is focused by default.
+            let _ = win.set_focus();
 
             if let Some(win) = app.get_webview_window("exam") {
                 let _ = win.set_fullscreen(true);
