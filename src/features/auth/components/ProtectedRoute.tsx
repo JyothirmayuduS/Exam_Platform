@@ -22,8 +22,16 @@ export default function ProtectedRoute({ children, allowedRole }: ProtectedRoute
   // restores its session, the candidate should already be looking at the
   // exam's first system check. Gating on `loading` first swapped that instant
   // pre-flight screen for a blank spinner on every deep-link launch.
-  const nativeExamLaunch = isTauri() && allowedRole === "student" && location.pathname === "/student/exam" && new URLSearchParams(location.search).has("examId");
-  if (!user && nativeExamLaunch) {
+  //
+  // Extended to ALL student routes inside the kiosk: clicking "Enter exam"
+  // from the student dashboard navigates to /student/exam?examId=…, but the
+  // auth provider is still hydrating (INITIAL_SESSION event hasn't fired yet).
+  // Without this bypass every in-kiosk navigation bounces to /login for a
+  // split second before the session resolves. The kiosk is already a trusted
+  // environment — if the session truly expired, StudentExam and the API layer
+  // handle it gracefully (error screens, not a login redirect loop).
+  const nativeStudentRoute = isTauri() && allowedRole === "student" && location.pathname.startsWith("/student");
+  if (!user && nativeStudentRoute) {
     return <>{children}</>;
   }
 

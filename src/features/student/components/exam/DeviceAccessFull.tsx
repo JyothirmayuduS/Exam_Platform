@@ -89,9 +89,14 @@ export default function DeviceAccessFull({
                   <>
                     <p className="font-mono text-[10px] uppercase tracking-wider text-alert mb-1">Camera / microphone blocked</p>
                     <p className="text-soft">
-                      The {cam === "denied" ? "camera" : "microphone"} was denied to the Vignan Exam Browser in your system privacy
-                      settings. Allow it there, then click Grant again — the exam continues in this window.
+                      The {cam === "denied" && mic === "denied" ? "camera and microphone were" : cam === "denied" ? "camera was" : "microphone was"} denied to the Vignan Exam Browser.
+                      Follow these steps to fix:
                     </p>
+                    <ol className="list-decimal pl-4 space-y-0.5 text-soft mt-1.5">
+                      <li>Click <strong>"Open system settings"</strong> below</li>
+                      <li>Find Vignan Exam Browser and toggle {cam === "denied" ? "Camera" : "Microphone"} to <strong>ON</strong></li>
+                      <li>Return here and click <strong>"Grant access again"</strong></li>
+                    </ol>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
                         onClick={() => onOpenMediaSettings?.(cam === "denied" ? "camera" : "microphone")}
@@ -99,15 +104,21 @@ export default function DeviceAccessFull({
                       >
                         Open system settings
                       </button>
-                      {onReRequest && (
+                      {cam === "denied" && mic === "denied" && (
                         <button
-                          onClick={onReRequest}
-                          disabled={requesting}
-                          className="border border-line px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:bg-raised disabled:opacity-60"
+                          onClick={() => onOpenMediaSettings?.("microphone")}
+                          className="border border-alert bg-alert/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/20"
                         >
-                          {requesting ? "Checking…" : "Try permission again"}
+                          Open mic settings
                         </button>
                       )}
+                      <button
+                        onClick={onReRequest ?? onRequest}
+                        disabled={requesting}
+                        className="border border-maroon bg-maroon px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-maroon/90 disabled:opacity-60"
+                      >
+                        {requesting ? "Checking…" : "Grant access again"}
+                      </button>
                     </div>
                   </>
                 ) : (

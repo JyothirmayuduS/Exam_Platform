@@ -45,6 +45,8 @@ type LoadingArtifacts = {
   rebuilt: boolean;
   posterUrl: string | null;
   snapshotUrls: string[];
+  /** Per-second screenshot timeline URLs (from screenshots/ folder). */
+  screenshotTimelineUrls: { url: string; timestamp: number }[];
   reportUrl: string | null;
   status: "loading" | "ready" | "empty" | "error";
 };
@@ -56,6 +58,7 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
     rebuilt: false,
     posterUrl: null,
     snapshotUrls: [],
+    screenshotTimelineUrls: [],
     reportUrl: null,
     status: "loading",
   });
@@ -66,7 +69,7 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
       setState((s) => ({ ...s, status: "empty" }));
       return;
     }
-    setState((s) => ({ ...s, status: "loading", recordingUrl: null, parts: [], snapshotUrls: [], reportUrl: null }));
+    setState((s) => ({ ...s, status: "loading", recordingUrl: null, parts: [], snapshotUrls: [], screenshotTimelineUrls: [], reportUrl: null }));
     void (async () => {
       try {
         const arts = await listStudentArtifacts(examId, roll, folderOverride);
@@ -132,6 +135,27 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
             .map((a, i) => ({ key: a.key, url: urls[i] ?? "" }))
             .filter((p): p is PartItem => Boolean(p.url));
         }
+        // Per-second screenshot timeline from screenshots/ folder.
+        // Sort by snap_ timestamp to display in chronological order.
+        const screenshotArts = arts
+          .filter((a) => a.kind === "screenshots" && a.name.startsWith("snap_"))
+          .sort((a, b) => {
+            const tsA = Number(a.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0);
+            const tsB = Number(b.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0);
+            return tsA - tsB;
+          })
+          .slice(0, 120); // Cap at 120 to avoid signing too many URLs
+        const screenshotTimeline: { url: string; timestamp: number }[] = [];
+        if (screenshotArts.length > 0) {
+          const screenshotSignedUrls = await Promise.all(
+            screenshotArts.map((a) => getArtifactObjectUrl(a.key)),
+          );
+          for (let i = 0; i < screenshotArts.length; i++) {
+            const url = screenshotSignedUrls[i];
+            const ts = Number(screenshotArts[i].name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0);
+            if (url) screenshotTimeline.push({ url, timestamp: ts });
+          }
+        }
         if (cancelled) return;
         const preferParts = partsWithUrl.length > 0 && (!recUrl || mergedIsUnstable);
         setState({
@@ -140,6 +164,7 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
           rebuilt: partsWithUrl.length > 0,
           posterUrl,
           snapshotUrls: snapshotUrls.filter((u): u is string => !!u),
+          screenshotTimelineUrls: screenshotTimeline,
           reportUrl,
           status: recUrl || partsWithUrl.length > 0 ? "ready" : "empty",
         });
@@ -550,12 +575,28 @@ export default function RecordingReviewer({
               No proctoring flags recorded for this candidate.
             </p>
           )}
-          {markers.map((m, i) => (
-            <div key={m.v.id} className="flex items-center justify-between gap-3 border-l-2 border-alert bg-alert/[0.04] p-3">
+          {markers.map((m, i) => {
+            const isAudio = /voice|speak|audio|talk|sound/i.test(m.label);
+            const sevColor =
+              m.severity === "critical" || m.severity === "high" ? "text-alert border-alert"
+              : m.severity === "medium" ? "text-amber border-amber"
+              : "text-ink-soft border-line";
+            return (
+            <div key={m.v.id} className={`flex items-center justify-between gap-3 border-l-2 ${m.severity === "critical" || m.severity === "high" ? "border-alert" : m.severity === "medium" ? "border-amber" : "border-forest"} bg-alert/[0.04] p-3`}>
               <div className="min-w-0">
-                <p className="text-[13px] font-medium">{m.label}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[13px] font-medium">{m.label}</p>
+                  <span className={`border px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider ${sevColor}`}>
+                    {m.severity ?? "low"}
+                  </span>
+                  {isAudio && (
+                    <span className="border border-amber/40 bg-amber/10 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-amber">
+                      🔊 Audio
+                    </span>
+                  )}
+                </div>
                 <p className="mt-0.5 font-mono text-[10px] text-ink-soft">
-                  #{i + 1} · {m.v.violation_type} · {m.v.severity} · {new Date(m.created).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  #{i + 1} · {m.v.violation_type} · {new Date(m.created).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                 </p>
               </div>
               <button
@@ -566,9 +607,47 @@ export default function RecordingReviewer({
                 Jump to {clock(m.seconds)}
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
+
+      {/* Per-second screenshot timeline — scrollable strip of camera
+          snapshots taken every 1 second during the exam. Teachers can
+          visually scan what the student looked like at any moment. */}
+      {artifacts.screenshotTimelineUrls.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Screenshot timeline · {artifacts.screenshotTimelineUrls.length} frame{artifacts.screenshotTimelineUrls.length === 1 ? "" : "s"}</p>
+            <p className="font-mono text-[9px] text-ink-soft">1 frame / second</p>
+          </div>
+          <div className="mt-2 flex gap-1.5 overflow-x-auto pb-2" style={{ scrollbarWidth: "thin" }}>
+            {artifacts.screenshotTimelineUrls.map((snap, i) => {
+              // Compute the relative offset from the first snapshot
+              const firstTs = artifacts.screenshotTimelineUrls[0]?.timestamp ?? snap.timestamp;
+              const offsetSec = Math.round((snap.timestamp - firstTs) / 1000);
+              return (
+                <button
+                  key={snap.url}
+                  title={`${clock(offsetSec)} into exam`}
+                  onClick={() => seekTo(offsetSec)}
+                  className="group relative flex-shrink-0 border border-line hover:border-forest transition-colors"
+                >
+                  <img
+                    src={snap.url}
+                    alt={`frame ${i + 1}`}
+                    loading="lazy"
+                    className="h-14 w-20 object-cover"
+                  />
+                  <span className="absolute bottom-0 left-0 right-0 bg-ink/60 px-1 py-0.5 text-center font-mono text-[8px] text-paper">
+                    {clock(offsetSec)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Violation snapshots + report */}
       {(artifacts.snapshotUrls.length > 0 || artifacts.reportUrl) && (
