@@ -1381,7 +1381,12 @@ function StudentExamSession() {
         sectionCount={Math.max(1, sections.length)}
         durationMin={durationMin}
         studentName={studentName}
-        initial={{ email: studentEmail, firstName: studentName === "Candidate" ? "" : studentName.split(" ")[0], lastName: studentName === "Candidate" ? "" : studentName.split(" ").slice(1).join(" "), usn: STUDENT_ROLL }}
+        initial={{
+          email: studentEmail || authUser?.email || "",
+          firstName: studentName !== "Candidate" && studentName ? studentName.split(" ")[0] : (authProfile?.full_name || authUser?.user_metadata?.full_name || "").split(" ")[0] || "",
+          lastName: studentName !== "Candidate" && studentName ? studentName.split(" ").slice(1).join(" ") : (authProfile?.full_name || authUser?.user_metadata?.full_name || "").split(" ").slice(1).join(" ") || "",
+          usn: STUDENT_ROLL || (authProfile && "roll" in authProfile ? (authProfile as any).roll : "") || ""
+        }}
         onBack={() => setStep("access")}
         onDone={(info) => {
           if (info.firstName || info.lastName) setStudentName(`${info.firstName} ${info.lastName}`.trim());
