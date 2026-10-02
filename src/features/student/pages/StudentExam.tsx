@@ -1020,7 +1020,7 @@ function StudentExamSession() {
       setCam(stream.getVideoTracks().length ? "granted" : "denied");
       setMic(stream.getAudioTracks().length ? "granted" : "denied");
       if (previewRef.current) previewRef.current.srcObject = stream;
-    } catch {
+    } catch (e: any) {
       // Distinguish "OS-level deny" from "dialog dismissed".
       // Note: If the user clicked "Block" on the WKWebView prompt, the OS status
       // will still be "prompt", but getUserMedia will instantly reject.
@@ -1031,6 +1031,7 @@ function StudentExamSession() {
           mediaPermissionStatus("microphone"),
         ]).then(([c, m]) => console.log("OS Media Status:", { camera: c, microphone: m }));
       }
+      alert("Camera/Mic Error: " + (e instanceof Error ? e.message + " (" + e.name + ")" : String(e)));
       setCam("denied");
       setMic("denied");
     }
