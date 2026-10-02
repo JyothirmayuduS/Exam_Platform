@@ -1,5 +1,6 @@
-import { Routes, Route } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import Landing from "@/shared/pages/Landing";
+import { isTauri } from "@/shared/platform/platform";
 import ErrorPage from "@/shared/pages/ErrorPage";
 import StudentExam from "@/features/student/pages/StudentExam";
 import TeacherDashboard from "@/features/teacher/pages/TeacherDashboard";
@@ -28,7 +29,14 @@ export default function App() {
       <OfflineIndicator />
       <LockdownNotice />
       <Routes>
-        <Route path="/" element={<Landing />} />
+        {/* The lockdown kiosk has no marketing surface: a candidate must never
+            land on the role-picker ("One examination hall, three vantage
+            points"). main.tsx normally rewrites the path before mount; this
+            route is the backstop for any residual "/" (e.g. a deep link that
+            arrived while the webview was still booting). A signed-in kiosk
+            goes to My exams — one click from "Enter exam"; a signed-out one
+            falls through to the in-app waiting screen. */}
+        <Route path="/" element={isTauri() ? <Navigate to="/student/exams" replace /> : <Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/forgot" element={<ForgotPassword />} />
         <Route path="/recover" element={<PasswordRecover />} />

@@ -360,7 +360,21 @@ fn main() {
         // Register first so a second process exits before other plugins start.
         // Its deep-link feature forwards Windows/Linux argv to the same plugin
         // event used by macOS OS-open events, and updates get_current().
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // The OS can hand the exam URL to a SECOND process instead of the
+            // running one: Windows/Linux pass it as argv, and macOS
+            // LaunchServices starts a fresh instance when the running one is
+            // hidden behind NSApplicationPresentationOptions::HideDock. That
+            // process exits immediately (see above), so this callback is the
+            // ONLY place the URL still exists — without forwarding it the
+            // running kiosk never learns about the exam and the student is
+            // left staring at the previous screen. Emit it to the frontend,
+            // which already listens for "vignan-deeplink" alongside the
+            // plugin's own deep-link://new-url event.
+            if let Some(url) = argv.iter().find(|arg| arg.starts_with("vignan-exam://")) {
+                use tauri::Emitter;
+                let _ = app.emit("vignan-deeplink", url.clone());
+            }
             if let Some(win) = app.get_webview_window("exam") {
                 let _ = win.unminimize();
                 let _ = win.set_fullscreen(true);
