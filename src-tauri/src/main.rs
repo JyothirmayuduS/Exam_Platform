@@ -463,7 +463,12 @@ fn main() {
             .visible(true)
             .closable(false)
             .minimizable(false)
-            .on_permission_request(|_, _| tauri::webview::PermissionResponse::Allow)
+            .on_permission_request(|_, req| match req {
+                tauri::webview::PermissionKind::Camera | tauri::webview::PermissionKind::Microphone => {
+                    tauri::webview::PermissionResponse::Allow
+                }
+                _ => tauri::webview::PermissionResponse::Deny,
+            })
             .build()
             .expect("Failed to build exam window");
             

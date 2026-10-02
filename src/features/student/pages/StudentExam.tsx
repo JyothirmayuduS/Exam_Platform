@@ -999,12 +999,9 @@ function StudentExamSession() {
       const virtualKeywords = ["obs", "virtual", "snap camera", "epoccam", "camtwist"];
       
       let isVirtual = false;
-      for (const d of videoDevices) {
-        const label = d.label.toLowerCase();
-        if (virtualKeywords.some(kw => label.includes(kw))) {
-          isVirtual = true;
-          break;
-        }
+      const activeVideoLabel = stream.getVideoTracks()[0]?.label.toLowerCase() || "";
+      if (virtualKeywords.some(kw => activeVideoLabel.includes(kw))) {
+        isVirtual = true;
       }
       
       if (isVirtual) {
@@ -1031,7 +1028,6 @@ function StudentExamSession() {
           mediaPermissionStatus("microphone"),
         ]).then(([c, m]) => console.log("OS Media Status:", { camera: c, microphone: m }));
       }
-      alert("Camera/Mic Error: " + (e instanceof Error ? e.message + " (" + e.name + ")" : String(e)));
       setCam("denied");
       setMic("denied");
     }
