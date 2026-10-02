@@ -158,6 +158,25 @@ fn vignan_launch_url(app: tauri::AppHandle) -> Option<String> {
         .map(|url| url.to_string())
 }
 
+/// Handoff probe used by scripts/lockdown/smoke-handoff.mjs.
+///
+/// The exam window is excluded from screen capture, so verifying "did the deep
+/// link land on the system check?" cannot rely on pixels. When the app is built
+/// with VIGNAN_PROBE=1, this command records the payload the webview injected
+/// (route, title, visible text) to a temp file the smoke script reads.
+///
+/// It is opt-in at COMPILE time: release installers built by CI (which never
+/// sets VIGNAN_PROBE) compile the body out entirely, so a candidate can never
+/// read app state on demand.
+#[tauri::command]
+fn lockdown_log_probe(payload: String) {
+    if option_env!("VIGNAN_PROBE").is_some() {
+        let path = std::env::temp_dir().join("vignan_probe.json");
+        let _ = std::fs::write(path, payload);
+    }
+    let _ = payload;
+}
+
 /// Open the normal browser-side student console before the kiosk exits.
 /// Only web URLs are accepted; the frontend supplies the configured public app
 /// origin, so an exam cannot use this command as an arbitrary process launcher.
@@ -355,7 +374,8 @@ fn main() {
             vignan_launch_url,
             media_permission_prompt,
             open_media_settings,
-            screen_capture_excluded
+            screen_capture_excluded,
+            lockdown_log_probe
         ])
         // Register first so a second process exits before other plugins start.
         // Its deep-link feature forwards Windows/Linux argv to the same plugin

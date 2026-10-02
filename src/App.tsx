@@ -24,6 +24,20 @@ import OfflineIndicator from "@/shared/components/OfflineIndicator";
 import LockdownNotice from "@/shared/components/LockdownNotice";
 
 export default function App() {
+  // Inside the Vignan Exam Browser the candidate sees exactly ONE surface: the
+  // exam flow (system checks → devices → exam) reached from My exams. Every
+  // other route — the marketing root, the teacher/proctor consoles, the
+  // password-recovery pages, the mobile pages, even the 404 — is unreachable
+  // marketing or staff surface that must never appear on a candidate's
+  // screen. main.tsx still rewrites the path before mount; this is the
+  // structural backstop for anything that arrives afterwards (deep link, late
+  // OS event, manual navigation).
+  const inKiosk = isTauri();
+  // Signed-in kiosks go to My exams (one click from "Enter exam"); a
+  // signed-out one falls through to Login, whose kiosk face is the
+  // waiting-for-exam screen rather than a credential form.
+  const studentOnly = <Navigate to="/student/exams" replace />;
+
   return (
     <>
       <OfflineIndicator />
@@ -36,10 +50,10 @@ export default function App() {
             arrived while the webview was still booting). A signed-in kiosk
             goes to My exams — one click from "Enter exam"; a signed-out one
             falls through to the in-app waiting screen. */}
-        <Route path="/" element={isTauri() ? <Navigate to="/student/exams" replace /> : <Landing />} />
+        <Route path="/" element={inKiosk ? studentOnly : <Landing />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/forgot" element={<ForgotPassword />} />
-        <Route path="/recover" element={<PasswordRecover />} />
+        <Route path="/forgot" element={inKiosk ? studentOnly : <ForgotPassword />} />
+        <Route path="/recover" element={inKiosk ? studentOnly : <PasswordRecover />} />
       
       {/* Student Routes */}
       <Route path="/student" element={<ProtectedRoute allowedRole="student"><StudentHome /></ProtectedRoute>} />
@@ -57,15 +71,15 @@ export default function App() {
       <Route path="/mobile-upload" element={<MobileUpload />} />
       <Route path="/mobile-monitor/:token" element={<MobileMonitor />} />
       
-      {/* Teacher Routes */}
-      <Route path="/teacher/proctoring" element={<ProtectedRoute allowedRole="teacher"><TeacherProctoring /></ProtectedRoute>} />
-      <Route path="/teacher/*" element={<ProtectedRoute allowedRole="teacher"><TeacherDashboard /></ProtectedRoute>} />
-      <Route path="/proctor" element={<ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
-      <Route path="/proctor/flags" element={<ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
-      <Route path="/proctor/recordings" element={<ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
+      {/* Teacher Routes — staff consoles, never reachable from the kiosk */}
+      <Route path="/teacher/proctoring" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><TeacherProctoring /></ProtectedRoute>} />
+      <Route path="/teacher/*" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><TeacherDashboard /></ProtectedRoute>} />
+      <Route path="/proctor" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
+      <Route path="/proctor/flags" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
+      <Route path="/proctor/recordings" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
       
       {/* 404 Catch All */}
-      <Route path="*" element={<ErrorPage />} />
+      <Route path="*" element={inKiosk ? studentOnly : <ErrorPage />} />
     </Routes>
     </>
   );

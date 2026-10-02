@@ -16,7 +16,13 @@ export const env = {
   supabaseUrl: rawUrl,
   supabaseAnonKey: rawKey,
   livekitUrl: import.meta.env.VITE_LIVEKIT_URL ?? "",
-  examEntryPath: import.meta.env.VITE_EXAM_ENTRY_PATH ?? "/student/exam",
+  // An empty or non-absolute VITE_EXAM_ENTRY_PATH is treated as unset — see
+  // the same normalisation in main.tsx. Accepting "" here silently routed
+  // deep links to a bare "?examId=…" relative path.
+  examEntryPath: (() => {
+    const configured = (import.meta.env.VITE_EXAM_ENTRY_PATH ?? "").trim();
+    return configured.startsWith("/") ? configured : "/student/exam";
+  })(),
   // When "true", the exam captures a proctoring screenshot every second and
   // uploads it to R2 via the store-artifact edge function. Off by default so
   // the prototype doesn't attempt uploads without a backend.
