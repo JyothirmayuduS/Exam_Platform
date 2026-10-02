@@ -1395,7 +1395,21 @@ function StudentExamSession() {
         onOpenMediaSettings={openKioskMediaSettings}
         previewRef={previewRef}
         onRequest={requestDevices}
-        onContinue={() => setStep("register")}
+        onContinue={() => {
+          // If already authenticated and inside the kiosk, we know who they are.
+          // Skip the manual registration form and go straight to identity verification or start.
+          if (isTauri() && authProfile && resolvedRoll) {
+            setRegInfo({
+              email: authUser?.email ?? "",
+              firstName: authProfile?.full_name?.split(" ")[0] ?? "",
+              lastName: authProfile?.full_name?.split(" ").slice(1).join(" ") ?? "",
+              usn: resolvedRoll,
+            });
+            setStep(examSettings.identity_verification === true ? "verify" : "start");
+          } else {
+            setStep("register");
+          }
+        }}
       />
     );
   }
