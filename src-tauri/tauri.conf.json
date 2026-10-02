@@ -24,7 +24,9 @@
       "icons/icon.icns"
     ],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "entitlements": "entitlements.macOS.plist",
+      "infoPlist": "Info.plist"
     },
     "windows": {
       "nsis": {
