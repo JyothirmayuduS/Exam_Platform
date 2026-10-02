@@ -31,7 +31,10 @@ export function useAudioTest() {
     stop();
     setState("testing");
     setError(null);
-    setSampleUrl(null);
+    if (sampleUrl) {
+      URL.revokeObjectURL(sampleUrl);
+      setSampleUrl(null);
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       streamRef.current = stream;
@@ -61,11 +64,16 @@ export function useAudioTest() {
   const startRecording = () => {
     if (!streamRef.current) return;
     chunksRef.current = [];
-    const rec = new MediaRecorder(streamRef.current);
+    let mimeType = "";
+    if (typeof MediaRecorder.isTypeSupported === "function") {
+      mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find(t => MediaRecorder.isTypeSupported(t)) || "";
+    }
+    const rec = mimeType ? new MediaRecorder(streamRef.current, { mimeType }) : new MediaRecorder(streamRef.current);
     rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
     rec.onstop = () => {
-      const type = chunksRef.current[0]?.type || "audio/webm";
+      const type = chunksRef.current[0]?.type || rec.mimeType || mimeType || "audio/mp4";
       const blob = new Blob(chunksRef.current, { type });
+      if (sampleUrl) URL.revokeObjectURL(sampleUrl);
       setSampleUrl(URL.createObjectURL(blob));
       setState("done");
     };
@@ -79,7 +87,12 @@ export function useAudioTest() {
     stop();
   };
 
-  useEffect(() => () => stop(), []);
+  useEffect(() => {
+    return () => {
+      stop();
+      if (sampleUrl) URL.revokeObjectURL(sampleUrl);
+    };
+  }, [sampleUrl]);
 
   return { state, level, error, sampleUrl, startTest, startRecording, stopRecording };
 }
@@ -184,21 +197,23 @@ export function useScreenShareTest() {
       // On macOS the exam window uses NSWindowSharingNone to block OS screenshots;
       // that flag also prevents WKWebView from showing the getDisplayMedia picker.
       // Temporarily lift it, start the stream, then immediately re-lock.
-      if (isTauri()) await invoke("set_window_sharing", { allow: true }).catch(() => {});
+      if (isTauri()) void invoke("set_window_sharing", { allow: true }).catch(() => {});
       let stream: MediaStream;
       try {
         stream = await md.getDisplayMedia({ video: true, audio: false });
       } finally {
-        if (isTauri()) await invoke("set_window_sharing", { allow: false }).catch(() => {});
+        if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
       }
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       stream.getVideoTracks()[0]?.addEventListener("ended", stop);
       setState("active");
+      return stream;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed";
       setError(msg.includes("denied") || msg.includes("Permission") ? "Screen share permission denied. Click 'Share' when the browser asks." : msg);
       setState("error");
+      throw err;
     }
   };
 

@@ -25,6 +25,7 @@ type DeviceAccessFullProps = {
   onOpenMediaSettings?: (kind: "camera" | "microphone") => void;
   previewRef: RefObject<HTMLVideoElement | null>;
   onRequest: () => void;
+  onScreenGranted?: (stream: MediaStream) => void;
   onContinue: () => void;
   /** Let the user exit the lockdown browser completely to fix OS issues */
   onExit?: () => void;
@@ -41,6 +42,7 @@ export default function DeviceAccessFull({
   onOpenMediaSettings,
   previewRef,
   onRequest,
+  onScreenGranted,
   onContinue,
   onExit,
 }: DeviceAccessFullProps) {
@@ -201,17 +203,31 @@ export default function DeviceAccessFull({
         )}
 
         {/* ── Screen share test ── */}
-        {screen === "granted" && (
+        {(cam === "granted" && mic === "granted") && (
           <section className="border border-line p-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Screen share test</p>
-              {screenTest.state === "idle" ? (
-                <button onClick={() => void screenTest.start()} className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-raised">
-                  Preview screen
+              {screenTest.state === "idle" || screenTest.state === "error" ? (
+                <button 
+                  onClick={async () => {
+                    try {
+                      const stream = await screenTest.start();
+                      if (stream) onScreenGranted?.(stream);
+                    } catch (e) {
+                      // error state handled by useScreenShareTest
+                    }
+                  }} 
+                  className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-raised"
+                >
+                  Test Screen Sharing
                 </button>
               ) : (
-                <button onClick={screenTest.stop} className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider">
-                  Stop preview
+                <button onClick={() => {
+                  screenTest.stop();
+                  // The stream stop will trigger handleScreenTrackEnded in StudentExam.tsx
+                  // which sets screen back to "denied".
+                }} className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider">
+                  Stop sharing
                 </button>
               )}
             </div>

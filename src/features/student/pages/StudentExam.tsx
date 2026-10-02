@@ -1014,9 +1014,6 @@ function StudentExamSession() {
       if (previewRef.current) previewRef.current.srcObject = stream;
     } catch (e: any) {
       // Distinguish "OS-level deny" from "dialog dismissed".
-      // Note: If the user clicked "Block" on the WKWebView prompt, the OS status
-      // will still be "prompt", but getUserMedia will instantly reject.
-      // We must set it to "denied" so the user sees the error UI and can recover.
       if (isTauri()) {
         void Promise.all([
           mediaPermissionStatus("camera"),
@@ -1026,74 +1023,17 @@ function StudentExamSession() {
       setCam("denied");
       setMic("denied");
     }
-    // Screen share — request the entire monitor (not just a tab or window).
-    try {
-      if (isTauri()) {
-        // Tauri WebView2 (Windows) and recent WKWebView builds DO support
-        // getDisplayMedia — try it first so the proctor gets a REAL screen
-        // recording + live screen feed. Only fall back to the legacy bypass
-        // when the WebView genuinely has no capture API (older macOS WKWebView);
-        // a dismissed picker or failure keeps the row BLOCKED so the student
-        // can press Grant again instead of silently continuing unshared.
-        const mdTauri = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
-        if (!mdTauri.getDisplayMedia) {
-          setScreen("granted"); // API missing entirely: kiosk lockdown replaces screen evidence
-        } else {
-          try {
-            // On macOS the exam window is set to NSWindowSharingNone at startup
-            // so it is excluded from OS screen capture (students can't screenshot
-            // exam content). That same flag prevents WKWebView's own getDisplayMedia
-            // picker from launching. Temporarily lift the restriction, acquire the
-            // stream, then immediately re-lock the window.
-            // On Windows the equivalent WDA_EXCLUDEFROMCAPTURE toggle is applied.
-            await invoke("set_window_sharing", { allow: true }).catch(() => {});
-            let disp: MediaStream;
-            try {
-              try {
-                disp = await mdTauri.getDisplayMedia({
-                  video: { displaySurface: "monitor" } as MediaTrackConstraints,
-                  audio: false,
-                });
-              } catch {
-                disp = await mdTauri.getDisplayMedia({
-                  video: true,
-                  audio: false,
-                });
-              }
-              screenStreamRef.current = disp;
-              setScreen("granted");
-              disp.getVideoTracks()[0]?.addEventListener("ended", () => {
-                handleScreenTrackEnded();
-              });
-            } finally {
-              // Always restore the capture exclusion, whether we succeeded or not.
-              await invoke("set_window_sharing", { allow: false }).catch(() => {});
-            }
-          } catch {
-            setScreen("denied");
-          }
-        }
-      } else {
-        const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
-        if (md.getDisplayMedia) {
-          const disp = await md.getDisplayMedia({
-            video: { displaySurface: "monitor" } as MediaTrackConstraints,
-            audio: false,
-          });
-          screenStreamRef.current = disp;
-          setScreen("granted");
-          disp.getVideoTracks()[0]?.addEventListener("ended", () => {
-            handleScreenTrackEnded();
-          });
-        } else {
-          setScreen("denied");
-        }
-      }
-    } catch {
-      setScreen("denied");
-    }
+    
     setRequesting(false);
   }
+
+  const handleScreenGranted = useCallback((stream: MediaStream) => {
+    screenStreamRef.current = stream;
+    setScreen("granted");
+    stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+      handleScreenTrackEnded();
+    });
+  }, []);
 
 
   const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
@@ -1410,6 +1350,7 @@ function StudentExamSession() {
         onOpenMediaSettings={openKioskMediaSettings}
         previewRef={previewRef}
         onRequest={requestDevices}
+        onScreenGranted={handleScreenGranted}
         onExit={() => {
           if (isTauri()) {
             void invoke("exit_app");
