@@ -577,6 +577,11 @@ function StudentExamSession() {
     // session) still get a student id. authUser is set from useAuth for both
     // demo and real accounts.
     if (authLoading) return;
+    // A warm deep link can hydrate the session AFTER this page mounts: the
+    // first run (pre-auth) legitimately finds no student row, and the re-run
+    // after SIGNED_IN must clear that transient error or it blocks the exam
+    // forever behind the "Cannot Load Exam" notice.
+    setLoadError("");
     let active = true;
     (async () => {
       // Resolve the student row from the authenticated identity (authUser),

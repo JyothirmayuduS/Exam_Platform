@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import Login from "@/features/auth/pages/Login";
@@ -66,10 +66,23 @@ describe("kiosk login (student-only)", () => {
     expect(screen.queryByText("Authenticate")).not.toBeInTheDocument();
   });
 
-  it("signed-out kiosk shows a student-only form — no role switcher", () => {
+  it("signed-out kiosk waits for the exam launch — no credential form by default", () => {
     state.kiosk = true;
     state.loading = false;
     renderLogin();
+    expect(screen.getByText("Waiting for your exam…")).toBeInTheDocument();
+    // The identity arrives with the vignan-exam:// handoff, so the form is
+    // NOT the default face of the app.
+    expect(screen.queryByText("Registration Number")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Teacher" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Proctor" })).not.toBeInTheDocument();
+  });
+
+  it("manual sign-in fallback reveals a student-only form", () => {
+    state.kiosk = true;
+    state.loading = false;
+    renderLogin();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in on this computer instead" }));
     expect(screen.getByText("Registration Number")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Teacher" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Proctor" })).not.toBeInTheDocument();

@@ -38,6 +38,9 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The kiosk's identity comes from the exam deep link (or a persisted
+  // session). The sign-in form is a hidden fallback behind the waiting screen.
+  const [manualSignIn, setManualSignIn] = useState(false);
 
   useEffect(() => {
     if (queryRole && ["student", "teacher", "proctor"].includes(queryRole)) {
@@ -67,6 +70,46 @@ export default function Login() {
         <div className="text-center">
           <div className="mx-auto h-8 w-8 animate-spin rounded-none border-4 border-ink border-t-transparent" />
           <p className="mt-4 font-mono text-[11px] uppercase tracking-widest text-ink-soft">Opening Vignan Exam Browser…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Kiosk cold start with no session and no exam handoff yet: NEVER show a
+  // credential form. The student's identity arrives with the exam launch —
+  // clicking "Enter exam" on the web dashboard fires a vignan-exam:// link
+  // that this window picks up automatically (applyDeeplink swaps the route
+  // the moment it lands). Manual sign-in stays reachable as a fallback.
+  if (inKiosk && !manualSignIn) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper px-6">
+        <div className="w-full max-w-md text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center border-2 border-ink font-serif text-2xl font-bold text-ink">V</div>
+          <h1 className="mt-6 font-serif text-2xl font-semibold text-ink">Waiting for your exam…</h1>
+          <p className="mt-3 text-[13.5px] leading-relaxed text-ink-soft">
+            Open this exam from your student dashboard in the web browser and click
+            <span className="font-medium text-ink"> Enter exam</span> — this window
+            opens it automatically, already signed in.
+          </p>
+          <p className="mt-3 font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+            Keep this window open · it will continue on its own
+          </p>
+          <button
+            type="button"
+            onClick={() => setManualSignIn(true)}
+            className="mt-8 font-mono text-[10px] uppercase tracking-wider text-ink-soft underline hover:text-ink"
+          >
+            Sign in on this computer instead
+          </button>
+          <div className="mt-10">
+            <button
+              type="button"
+              onClick={() => void invoke("exit_app")}
+              className="border border-line px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-forest"
+            >
+              Exit Vignan Exam Browser
+            </button>
+          </div>
         </div>
       </div>
     );
