@@ -1,33 +1,45 @@
-# Installer staging folder
+# Verified installer staging
 
-Drop the built lockdown installers here **before** running `npm run build` so
-they ship inside the web app (at `/downloads/…`) and the student download gate
-can find them:
+Build branch: `build/lockdown-installers-20261001`.
+All native jobs passed in [Actions run 36846656016](https://github.com/JyothirmayuduS/Exam_Platform/actions/runs/36846656016),
+source commit `e0d99f1bb53617ffc5a4b0d872bcd84525855d36`.
 
-| OS      | Filename               |
-| ------- | ---------------------- |
-| Windows | `VignanExam_setup.exe` |
-| macOS   | `VignanExam.dmg`       |
-| Linux   | `VignanExam.AppImage`  |
+| Platform | Local installer |
+| --- | --- |
+| Windows x64 | `VignanExam_setup.exe`, `VignanExam.msi` |
+| Linux x64 | `VignanExam.AppImage`, `VignanExam.deb` |
+| Apple Silicon macOS | `VignanExam.dmg` |
 
-## How the gate verifies installers
+The local placeholder downloads have been replaced with real outputs. SHA-256
+hashes were checked against each Actions manifest before staging. `SHA256SUMS`
+and `build-manifest.json` preserve their provenance. Installer binaries are not
+committed/published by this change; download the corresponding Actions artifacts
+when preparing another checkout. Artifacts are retained for 30 days.
 
-`src/pages/StudentExam.tsx` does not show a **Download** button until
-`src/lib/platform.ts` confirms the link resolves to real installer bytes:
+Checks: Windows PE/x64 payload, exact Tauri bundle marker integrity and NSIS/MSI
+protocol metadata; Linux extracted ELF payloads, desktop URL forwarding and deb
+dependencies; macOS DMG checksum, app signature integrity and URL scheme.
+**These are package checks, not full installed-device exam tests.**
 
-- `.exe` → must start with the `MZ` DOS header
-- `.dmg` → must carry the UDIF `koly` trailer (final 512 bytes, when the server
-  honours `Range`); otherwise at least be binary and non-HTML
-- `.AppImage` → must start with the `\x7fELF` magic
+Windows is unsigned; macOS uses ad-hoc signing and is **not Apple-notarized**.
+Intel macOS and Windows/Linux ARM builds are not included. Real Chrome-to-macOS
+cold/warm process handoff was tested locally; full authentication/media/exam
+checks, first-time approval, and Windows/Linux OS handoff still need test devices.
+See `src-tauri/DEEP_LINK_SMOKE.md` and `scripts/lockdown/README.md`.
 
-If a file is missing, or the server answers with an HTML page (a 404/SPA
-fallback), the gate shows **“Installer not published yet”** instead of offering
-a download. This prevents the browser from saving HTML as `VignanExam.dmg`,
-which macOS then rejects with *“the disk image is corrupted.”*
+## Website deployment
 
-## Alternative: host the installers elsewhere
+Copy the approved builds here before `npm run build`, or set
+`VITE_LOCKDOWN_DOWNLOAD_WIN`, `_MAC`, `_LINUX` to approved HTTPS asset URLs.
+The current website does not gain new installers until separately deployed.
+The AppImage is over GitHub's ordinary 100 MB per-file limit: host it as a release
+asset or in approved object storage, not a normal Git commit. No release was
+published as part of this build.
 
-Point the per-OS env vars at your hosted assets
-(`VITE_LOCKDOWN_DOWNLOAD_MAC`, `_WIN`, `_LINUX`), or set
-`VITE_LOCKDOWN_DOWNLOAD_URL` to a single release page (the gate will open it in
-a new tab). See `.env.example`.
+## Download verification
+
+`src/lib/platform.ts` rejects HTML/404 responses and obvious placeholder headers.
+Windows requires a plausible PE header; Linux a valid ELF header; macOS checks
+`koly` at the beginning of the final 512-byte UDIF trailer, using an explicit
+byte range when the object size is known. These checks do not establish trust
+or replace platform signing/notarization.

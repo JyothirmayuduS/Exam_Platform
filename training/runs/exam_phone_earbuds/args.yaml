@@ -1,6 +1,6 @@
 task: detect
 mode: train
-model: /Users/s.jyothirmayudu/Downloads/exam-platform/src/proctoring/model/yolo11m.pt
+model: /Users/s.jyothirmayudu/Downloads/exam-platform/src/features/proctoring/domain/model/yolo11m.pt
 data: /Users/s.jyothirmayudu/Downloads/exam-platform/training/datasets/exam_proctor/data.yaml
 epochs: 15
 time: null

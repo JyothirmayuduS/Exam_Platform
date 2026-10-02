@@ -1,4 +1,11 @@
 {
+  "redirects": [
+    { "source": "/downloads/VignanExam_setup.exe", "destination": "https://sfvuyicimnwf2egf.public.blob.vercel-storage.com/lockdown/VignanExam_setup.exe", "permanent": false },
+    { "source": "/downloads/VignanExam.msi", "destination": "https://sfvuyicimnwf2egf.public.blob.vercel-storage.com/lockdown/VignanExam.msi", "permanent": false },
+    { "source": "/downloads/VignanExam.AppImage", "destination": "https://sfvuyicimnwf2egf.public.blob.vercel-storage.com/lockdown/VignanExam.AppImage", "permanent": false },
+    { "source": "/downloads/VignanExam.deb", "destination": "https://sfvuyicimnwf2egf.public.blob.vercel-storage.com/lockdown/VignanExam.deb", "permanent": false },
+    { "source": "/downloads/VignanExam.dmg", "destination": "https://sfvuyicimnwf2egf.public.blob.vercel-storage.com/lockdown/VignanExam.dmg", "permanent": false }
+  ],
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]

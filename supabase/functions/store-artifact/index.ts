@@ -16,7 +16,7 @@
 //   op "put" (default): { examId, studentId, kind, name, contentType }
 //       → { url: presigned PUT (5 min), key: `${examId}/${studentId}/${kind}/${name}` }
 //   op "get":  { key }                      → { url: presigned GET (default 1h) }
-//   op "list": { prefix }                   → { objects: [{key,name,size,lastModified}] }
+//   op "list": { prefix, continuationToken? } → { objects, nextContinuationToken }
 //   op "folders": { prefix }                → { folders: ["<exam>/"|"<exam>/<roll>/…"] }
 //       Lists ONLY the immediate sub-folders under a prefix (R2 CommonPrefixes
 //       with delimiter "/") — used by the evidence archive to browse the
@@ -98,14 +98,16 @@ Deno.serve(async (req: Request) => {
   // Resolve the caller's student row so every later path can be
   // ownership-checked (RLS guards tables, not R2 keys).
   let callerStudentId: string | null = null;
+  let callerStudentRoll: string | null = null;
   let callerIsStaff = false;
   try {
     const { data: stu } = await supabase
       .from("students")
-      .select("id")
+      .select("id, roll")
       .eq("auth_id", user.id)
       .maybeSingle();
     callerStudentId = stu?.id ?? null;
+    callerStudentRoll = stu?.roll ?? null;
   } catch { /* ignore — treated as non-student below */ }
   try {
     const { data: t } = await supabase
@@ -116,6 +118,11 @@ Deno.serve(async (req: Request) => {
     callerIsStaff = !!t;
   } catch { /* ignore */ }
 
+  // Capture clients write roll-number folders; older clients used UUIDs.
+  // Authorize both from the authenticated DB row, never from user metadata.
+  const ownsSegment = (segment: string | undefined) => !!segment &&
+    (segment === callerStudentId || segment === callerStudentRoll);
+  const canReadPath = (path: string) => callerIsStaff || ownsSegment(path.split("/")[1]);
   const op = String(body.op ?? "put").trim();
 
   const aws = new AwsClient({
@@ -131,8 +138,6 @@ Deno.serve(async (req: Request) => {
     const requestedStudentId = safeSegment(String(body.studentId ?? ""));
     const kind = String(body.kind ?? "").trim();
     const name = safeName(String(body.name ?? ""));
-    const contentType = String(body.contentType ?? "application/octet-stream");
-
     if (!examId) return json({ error: "invalid examId" }, 400);
     if (!requestedStudentId) return json({ error: "invalid studentId" }, 400);
     if (!KINDS.has(kind)) return json({ error: "invalid kind" }, 400);
@@ -140,7 +145,7 @@ Deno.serve(async (req: Request) => {
 
     // Ownership gate: a student may only write into their own folder;
     // staff can write anywhere.
-    if (!callerIsStaff && callerStudentId !== requestedStudentId) {
+    if (!callerIsStaff && !ownsSegment(requestedStudentId)) {
       return json({ error: "forbidden" }, 403);
     }
     const studentId = requestedStudentId;
@@ -163,12 +168,7 @@ Deno.serve(async (req: Request) => {
     const key = safeSegment(String(body.key ?? ""));
     if (!key) return json({ error: "invalid key" }, 400);
     // Ownership gate: student may only GET under their own folder.
-    if (!callerIsStaff && callerStudentId) {
-      const parts = key.split("/");
-      if (parts.length >= 2 && parts[1] !== callerStudentId) {
-        return json({ error: "forbidden" }, 403);
-      }
-    }
+    if (!canReadPath(key)) return json({ error: "forbidden" }, 403);
     const expires = Math.min(Math.max(Number(body.expiresSec ?? 3600) || 3600, 60), 86400);
     try {
       const signed = await aws.sign(
@@ -184,20 +184,15 @@ Deno.serve(async (req: Request) => {
 
   // ── op "list": list objects under a prefix (server-side, XML → JSON) ──────
   if (op === "list") {
-    let prefix = safeSegment(String(body.prefix ?? ""));
+    const prefix = safeSegment(String(body.prefix ?? ""));
     if (prefix == null || prefix === "") return json({ error: "invalid prefix" }, 400);
     // Ownership gate: students may only list under their own folder.
-    if (!callerIsStaff && callerStudentId) {
-      const parts = prefix.split("/");
-      if (parts.length >= 2 && parts[1] !== callerStudentId) {
-        return json({ error: "forbidden" }, 403);
-      }
-      // Root-level prefix — restrict to caller's roll folder.
-      if (parts.length < 2) {
-        return json({ error: "forbidden" }, 403);
-      }
-    }
-    const qs = `list-type=2&prefix=${encodeURIComponent(prefix)}`;
+    if (!canReadPath(prefix)) return json({ error: "forbidden" }, 403);
+    // Always list a complete folder boundary (R1 must not also match R10).
+    const folderPrefix = prefix.replace(/\/+$/, "") + "/";
+    const continuationToken = typeof body.continuationToken === "string" ? body.continuationToken : "";
+    if (continuationToken.length > 8192) return json({ error: "invalid continuation token" }, 400);
+    const qs = `list-type=2&max-keys=1000&prefix=${encodeURIComponent(folderPrefix)}${continuationToken ? `&continuation-token=${encodeURIComponent(continuationToken)}` : ""}`;
     try {
       const signed = await aws.sign(
         new Request(`${endpoint}/${bucket}?${qs}`, { method: "GET" }),
@@ -225,7 +220,12 @@ Deno.serve(async (req: Request) => {
           lastModified: pick("LastModified"),
         });
       }
-      return json({ objects });
+      const truncated = /<IsTruncated>\s*true\s*<\/IsTruncated>/.test(xml);
+      const rawToken = xml.match(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/)?.[1];
+      const nextContinuationToken = rawToken?.replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+        .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&") ?? null;
+      if (truncated && !nextContinuationToken) return json({ error: "R2 pagination token missing" }, 502);
+      return json({ objects, nextContinuationToken: truncated ? nextContinuationToken : null });
     } catch (err) {
       console.error("[store-artifact] list error:", err);
       return json({ error: "failed to list" }, 500);
@@ -240,12 +240,7 @@ Deno.serve(async (req: Request) => {
     const rawPrefix = String(body.prefix ?? "").trim();
     if (rawPrefix.length > 128) return json({ error: "prefix too long" }, 400);
     // Students may only see folders under their own roll.
-    if (!callerIsStaff && callerStudentId) {
-      const parts = rawPrefix.split("/").filter(Boolean);
-      if (parts.length > 1) {
-        return json({ error: "forbidden" }, 403);
-      }
-    }
+    if (!canReadPath(rawPrefix)) return json({ error: "forbidden" }, 403);
     // Every non-empty segment must pass the same path-safety rules as put/list.
     if (rawPrefix !== "") {
       const segs = rawPrefix.split("/").filter(Boolean);
@@ -287,12 +282,7 @@ Deno.serve(async (req: Request) => {
     const key = safeSegment(String(body.key ?? ""));
     if (!key) return json({ error: "invalid key" }, 400);
     // Ownership gate: student may only read bytes under their own folder.
-    if (!callerIsStaff && callerStudentId) {
-      const parts = key.split("/");
-      if (parts.length >= 2 && parts[1] !== callerStudentId) {
-        return json({ error: "forbidden" }, 403);
-      }
-    }
+    if (!canReadPath(key)) return json({ error: "forbidden" }, 403);
     try {
       const signed = await aws.sign(
         new Request(`${endpoint}/${bucket}/${key}`, { method: "GET" }),

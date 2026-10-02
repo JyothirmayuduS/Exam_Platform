@@ -62,6 +62,7 @@ function resolveRel(fromFile, spec) {
 function rewrite(code, fromFile) {
   const re = /(from\s*|import\s*|import\(\s*)(["'])([^"']+)\2/g;
   return code.replace(re, (m, kw, q, spec) => {
+    if (spec.startsWith('@/')) return `${kw}${q}/src/${spec.slice(2)}${q}`;
     if (spec.startsWith('./') || spec.startsWith('../')) return `${kw}${q}${resolveRel(fromFile, spec)}${q}`;
     if (spec.endsWith('.css')) return `${kw}${q}/__noop.js${q}`;
     return m; // bare specifier -> import map / CDN

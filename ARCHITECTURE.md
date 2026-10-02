@@ -1,100 +1,178 @@
-# Architecture
+# Vignan Exam Platform — Codebase Map
 
-Vignan Exam Platform — a Vite + React + TypeScript SPA over Supabase (Postgres,
-Auth, Realtime, Edge Functions), Cloudflare R2 artifact storage, and LiveKit for
-live proctoring. This document maps where each concern lives so new work lands
-in the right place.
+This repository is a Vite + React + TypeScript SPA backed by Supabase, LiveKit,
+R2-compatible artifact storage, and a Tauri lockdown desktop app. The source is
+organized by **product feature first**, then by the type of code owned by that
+feature.
 
-## High-level flow
+## Start here
 
+```text
+src/
+├── App.tsx                 # Route composition only
+├── main.tsx                # Browser/Tauri bootstrap only
+├── index.css               # Global theme styles
+├── features/               # Product areas; feature code stays together
+│   ├── auth/               # Login, auth provider, route/profile guards
+│   ├── student/            # Student console and live exam experience
+│   ├── teacher/            # Teacher, examiner, evaluation and evidence tools
+│   ├── proctoring/         # Live monitoring UI and detection engine
+│   └── mobile/             # Phone upload and secondary-monitor flows
+├── shared/                 # Reusable code with no single product owner
+│   ├── components/         # UI kit, layout, error and system components
+│   ├── data/               # Supabase client and API/query modules
+│   ├── pages/              # Landing and not-found pages
+│   ├── platform/           # Tauri/deep-link/platform adapters
+│   ├── services/           # Storage, paper, report and export services
+│   └── types/              # Ambient/vendor types
+├── assets/                 # Build-time images and icons
+└── test/                   # Vitest setup
 ```
-Student / Teacher / Proctor
-        │  React pages (src/pages) + feature components (src/components)
-        ▼
-Data layer (src/lib)          Realtime (src/hooks)
-  api/<domain>.ts  ──────►    useLiveAttempts, useTeacherExams…
-  supabase.ts / env.ts        (react-query + Supabase channels)
+
+A new engineer should normally find a file by asking:
+
+1. **Which user or workflow owns it?** Open `src/features/<area>`.
+2. **Is it used by multiple features?** Look in `src/shared`.
+3. **Is it database access?** Look in `src/shared/data/api`.
+4. **Is it pure proctoring math?** Look in `src/features/proctoring/domain`.
+5. **Is it a route?** Find the feature page, then register it in `src/App.tsx`.
+
+## Feature boundaries
+
+### `src/features/auth`
+
+Authentication and identity resolution:
+
+- `auth.tsx` — Supabase/demo auth provider and sign-out behavior.
+- `pages/` — Login and password recovery screens.
+- `components/ProtectedRoute.tsx` — role and session route guard.
+- `hooks/useCurrentProfile.ts` — current student/teacher profile lookup.
+
+### `src/features/student`
+
+Everything a candidate sees or uses:
+
+- `pages/` — dashboard, enrolled exams, exam details, practice, results, help,
+  and the live `StudentExam` session.
+- `components/exam/` — exam flow screens, question panels, answer entry,
+  device access, identity verification, QR answer upload and submission UI.
+- `components/` — student-only exam countdown and tools.
+- `hooks/` — answer state, timer, autosave, keyboard shortcuts and offline sync.
+
+### `src/features/teacher`
+
+Faculty and examiner workflows:
+
+- `pages/` — dashboard, test builder, question bank, roster, submissions,
+  evaluation, examiner delegation and evidence browser.
+- `components/teacher/` — teacher-specific modals and selectors.
+- `hooks/` — teacher exam-scope and live-attempt query hooks.
+- `services/` — evaluator/proctor email helpers and manual-evaluation helpers.
+
+### `src/features/proctoring`
+
+Live invigilation and integrity analysis:
+
+- `pages/` — teacher live proctoring and the dedicated proctor grid.
+- `components/` — camera publishing, AI controller, recording review, voice,
+  chat and integrity panels.
+- `hooks/` — student-side violation/proctoring lifecycle hook.
+- `services/` — LiveKit publishing/viewing/voice, recording, and server-side
+  watchdog adapters.
+- `domain/` — DOM-free, unit-tested detection types, labels, geometry, risk,
+  tracking, fusion and violation rules. This is the safest place for pure
+  proctoring logic.
+- `domain/model/` — local model/training metadata used by the detector.
+
+### `src/features/mobile`
+
+Phone-only workflows and their API adapters:
+
+- `pages/` — QR answer upload and secondary monitor screens.
+- `services/` — mobile upload retry handling, monitor sessions and related tests.
+
+## Shared layers
+
+### `src/shared/data`
+
+The application data boundary. Pages and feature components should use these
+modules instead of creating ad-hoc Supabase clients or queries.
+
+- `supabase.ts`, `env.ts`, `org.ts` — shared runtime configuration.
+- `examApi.ts` — compatibility barrel for the domain API modules.
+- `api/` — one module per data domain: exams, questions, students, attempts,
+  live roster, proctoring, chat, assignments, grading, teacher settings and
+  audit. `types.ts` contains shared row types; `helpers.ts` contains internal
+  normalizers.
+
+Add a new database operation to the matching `shared/data/api/<domain>.ts`
+module. Keep `examApi.ts` as a barrel.
+
+### `src/shared/services`
+
+Cross-feature application services:
+
+- `examStorage.ts`, `r2Function.ts`, `snapshotOutbox.ts` — artifact storage and
+  reliable evidence upload.
+- `paperBuilder.ts` — deterministic per-student paper snapshots.
+- `sessionReport.ts`, `rosterModel.ts`, `zipExport.ts` — reports, view models
+  and exports used by teacher/proctor screens.
+- `subjectiveUpload.ts`, `watermark.ts` — answer-image processing and exam
+  watermark rendering.
+
+### `src/shared/platform`
+
+Browser/native boundary code:
+
+- `platform.ts` — OS and Tauri detection plus installer probing.
+- `lockdownBridge.ts` — deep-link launch, session handoff and browser-side
+  student-console reopening.
+- The colocated tests cover cold start, warm start and protocol fallback paths.
+
+### `src/shared/components`
+
+Reusable UI that does not belong to one role: layout, buttons, error handling,
+offline state, system checks, image cropping, lockdown notices and the coding
+editor.
+
+## Runtime flow
+
+```text
+Browser / Tauri entry (src/main.tsx)
         │
-        ├── Supabase (Postgres + Auth + RLS + Edge Functions)
-        ├── Cloudflare R2 / Supabase Storage  (recordings, snapshots, PDFs)
-        └── LiveKit  (camera/screen streams, proctor voice)
+        ▼
+Route composition (src/App.tsx)
+        │
+        ├── Feature pages and feature-owned components/hooks
+        ├── Shared components and services
+        └── Shared data/API modules
+                │
+                ├── Supabase Auth/Postgres/Realtime
+                ├── LiveKit camera, screen and voice rooms
+                ├── R2/Supabase Storage for recordings and reports
+                └── Tauri native lockdown/deep-link commands
 ```
 
-## Data-access layer (`src/lib/`)
+## Import and ownership rules
 
-`src/lib/examApi.ts` is a **barrel only** — it re-exports every domain module in
-`src/lib/api/` so existing imports (`from "../lib/examApi"`) keep working. Add new
-queries to the matching domain module, not to the barrel.
+- Use the `@/` alias for imports from `src/`; do not build long chains of
+  `../../..` paths.
+- Route registration belongs in `src/App.tsx`; route UI belongs in the owning
+  feature's `pages/` directory.
+- Feature code may depend on `shared`; shared code must not import a feature.
+- API/database calls belong in `shared/data/api`; do not put Supabase queries in
+  page components.
+- Pure proctoring calculations belong in `features/proctoring/domain` and must
+  remain DOM-free and unit-testable.
+- Keep tests beside the module they protect.
+- Keep `main.tsx` and `App.tsx` intentionally small: bootstrap and composition,
+  not business logic.
 
-| Module | Owns |
-| --- | --- |
-| `api/exams.ts` | exam CRUD/publish/email, student + teacher exam listing, realtime exam subscription, settings merge (`updateExam`) |
-| `api/questions.ts` | question bank CRUD, exam pool joins, per-student paper delivery (`loadPaperForStudent`, `loadExamBundle`) |
-| `api/students.ts` | global student directory, roster/enrolment, bulk import, login provisioning, roll→id lookups |
-| `api/attempts.ts` | attempt lifecycle (start → consent → autosave → submit), proctor-session upsert, score writes |
-| `api/live.ts` | live roster (`listLiveAttempts` incl. enrolled-but-idle placeholders), violation attachment, realtime subscription, selector stats |
-| `api/proctoring.ts` | violation_events writes + proctor actions (pause, extend, force-submit) |
-| `api/chat.ts` | proctor messages / broadcasts + realtime subscription |
-| `api/assignments.ts` | proctor assignments, faculty directory, "exams assigned to me" |
-| `api/grading.ts` | grading comments, delegate/delegation rows, examiner dashboard + evaluator allocation |
-| `api/teacher.ts` | signed-in teacher settings blob + profile fields (`auth_id`-scoped) |
-| `api/types.ts` | shared row types (no logic) |
-| `api/helpers.ts` | internal normalizers/severity mapping (never imported by pages) |
+## Checks after structural changes
 
-Other `src/lib` files by concern:
-
-- `supabase.ts` / `env.ts` — one shared client; feature-flag off when unconfigured.
-- `paperBuilder.ts` — deterministic per-student paper snapshots (imports `DBQuestion` type from `examApi`).
-- `examStorage.ts` / `recorder.ts` — Cloudflare R2 artifact storage (primary) + Supabase Storage backup; MediaRecorder egress. Supabase holds only metadata.
-- `subjectiveUpload.ts` / `platform.ts` / `serverProctor.ts` — mobile QR upload, platform detection (Tauri/web), server-side AI watchdog frames.
-- `rosterModel.ts` — the shared **UI** roster shape used by Submissions and Evaluate (mapped from `LiveAttempt` rows by `hooks/useLiveAttempts.ts`). View model, not demo data.
-- `proctor*.ts` (`proctor.ts`, `proctorViewer.ts`, `proctorVoice.ts`) — LiveKit publish/view/voice.
-
-## State ownership
-
-- **Live roster** — `hooks/useLiveAttempts.ts` (react-query key `["liveAttempts", examId]`,
-  realtime invalidation) is the single source for Submissions / Evaluate rosters.
-- **Teacher exam scope** — `hooks/useTeacherExams.ts` resolves the active exam
-  (URL → last selection → newest exam with activity → newest non-draft); teacher
-  pages must not hardcode an exam id.
-- **Auth/profile** — `lib/auth.tsx` provider + `hooks/useCurrentProfile.ts`;
-  role comes from `teachers.role` / `students` rows joined by `auth_id`.
-
-## Database & backend
-
-- Migrations: `supabase/migrations/*.sql` (imperative; one per feature). Latest go-live
-  migrations provision real Auth users and enforce role-scoped RLS.
-- Edge Functions: `supabase/functions/<name>/index.ts` — email flows
-  (`send-*-email`), `store-artifact` (R2), `provision-student-accounts`,
-  `proctor-ai-server` (server-side frame analysis → `violation_events`),
-  `livekit-token`, `mobile-upload`, `report-error`, exports.
-
-## Data flow for proctoring
-
-1. Student begins → `startAttempt` (real row), consent persisted on the attempt.
-2. Student publishes camera/screen to LiveKit (room = exam id) and runs local
-   heuristics + server watchdog (`serverProctor` → `proctor-ai-server`).
-3. Violations land in `violation_events` with `offset_seconds` + `source`.
-4. Proctor console lists attempts + violations via `api/live.ts`, streams feeds
-   via `proctorViewer`, acts via `api/proctoring.ts` / `api/chat.ts`.
-5. Recording + violation snapshots + PDF egress to R2 (`examStorage`); reviewer
-   (`RecordingReview`) replays with red markers on the seek bar.
-
-## Conventions for new code
-
-- **Data access** → the matching `src/lib/api/<domain>.ts` module. Barrel stays thin.
-- **Live data** → a hook in `src/hooks` built on react-query + realtime subscription.
-- **No mock data**: every hardcoded id/roll/credential was removed or made a
-  real query; new demo-ish branches need an explicit `VITE_*` flag.
-- **Storage**: write R2 first, fall back to Supabase Storage; never store blobs
-  as Postgres rows.
-- **UI**: shared kit in `src/components/ui.tsx` (react-icons Feather); buttons
-  read as buttons; no emoji glyphs; keep the editorial cream/ink/forest theme.
-
-## Known structure debts (do not reintroduce)
-
-- Pages like `StudentExam.tsx` / `TeacherProctoring.tsx` are large feature
-  surfaces — split components out as they grow, not monoliths of inline JSX.
-- `ProctorGrid` (proctor console) and `TeacherProctoring` (teacher live view)
-  overlap by design (different roles/entry points), but shared tile/log logic
-  should be extracted rather than copied.
+```bash
+npx tsc -b
+npx vitest run
+npm run build
+cargo check --manifest-path src-tauri/Cargo.toml --locked --bins
+```

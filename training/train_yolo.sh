@@ -4,7 +4,7 @@
 set -euo pipefail
 VENV="/Users/s.jyothirmayudu/live_proctor/venv/bin/python"
 DATA="/Users/s.jyothirmayudu/Downloads/exam-platform/training/datasets/exam_proctor/data.yaml"
-MODEL="/Users/s.jyothirmayudu/Downloads/exam-platform/src/proctoring/model/yolo11m.pt"
+MODEL="/Users/s.jyothirmayudu/Downloads/exam-platform/src/features/proctoring/domain/model/yolo11m.pt"
 OUT="/Users/s.jyothirmayudu/Downloads/exam-platform/training/runs/"
 
 echo "=== YOLO11 MPS fine-tune (batch=4 imgsz=640 epochs=15) ==="

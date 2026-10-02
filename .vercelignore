@@ -9,6 +9,16 @@ supabase/.temp
 .env
 dist
 
+# Installers are hosted in the public Vercel Blob store; excluding them keeps
+# the web deployment below Vercel source-upload limits.
+public/downloads/VignanExam_setup.exe
+public/downloads/VignanExam.msi
+public/downloads/VignanExam.AppImage
+public/downloads/VignanExam.deb
+public/downloads/VignanExam.dmg
+public/downloads/SHA256SUMS
+public/downloads/build-manifest.json
+
 # Model weights (150 MB+) exceed Vercel's 100 MB per-file upload limit and are
 # not referenced by the build (detection uses public/ai/models/*).
 *.pt

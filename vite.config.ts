@@ -2,6 +2,10 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import os from 'os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
@@ -19,6 +23,11 @@ function getLocalIP() {
 export default defineConfig({
   define: {
     '__LOCAL_IP__': JSON.stringify(getLocalIP()),
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(rootDir, 'src'),
+    },
   },
   plugins: [
     react(),
