@@ -14,10 +14,17 @@
 
 import { env } from "@/shared/data/env";
 
-/** True when running inside the Tauri lockdown desktop shell. */
 export function isTauri(): boolean {
   if (typeof window === "undefined") return false;
-  return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
+  return (
+    "__TAURI_INTERNALS__" in window ||
+    "__TAURI__" in window ||
+    navigator.userAgent.includes("Tauri") ||
+    window.location.protocol === "tauri:" ||
+    window.location.host.includes("tauri.localhost") ||
+    // IPC bridge check
+    "__TAURI_IPC__" in window
+  );
 }
 
 /**
