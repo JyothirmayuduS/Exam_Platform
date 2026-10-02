@@ -89,10 +89,9 @@ export default function DeviceAccessFull({
                   <>
                     <p className="font-mono text-[10px] uppercase tracking-wider text-alert mb-1">Camera / microphone blocked</p>
                     <p className="text-soft">
-                      The {cam === "denied" && mic === "denied" ? "camera and microphone were" : cam === "denied" ? "camera was" : "microphone was"} denied to the Vignan Exam Browser.
-                      Follow these steps to fix:
+                      If you accidentally clicked "Block", click <strong>"Grant access again"</strong> to reload the exam and try again. If that doesn't work, the OS blocked it:
                     </p>
-                    <ol className="list-decimal pl-4 space-y-0.5 text-soft mt-1.5">
+                    <ol className="list-decimal pl-4 space-y-0.5 text-soft mt-1.5 mb-3">
                       <li>Click <strong>"Open system settings"</strong> below</li>
                       <li>Find Vignan Exam Browser and toggle {cam === "denied" ? "Camera" : "Microphone"} to <strong>ON</strong></li>
                       <li>Return here and click <strong>"Grant access again"</strong></li>
