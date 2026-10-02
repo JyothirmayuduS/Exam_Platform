@@ -2,7 +2,7 @@ import type { RefObject } from "react";
 import { FiDownload } from "react-icons/fi";
 import Seal from "@/shared/components/Seal";
 import { openStudentSide } from "@/shared/platform/lockdownBridge";
-import { detectOS } from "@/shared/platform/platform";
+import { detectOS, isTauri } from "@/shared/platform/platform";
 
 export type CheckResult = { label: string; ok: boolean; detail: string };
 
@@ -271,15 +271,27 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
           </div>
         )}
 
-        {uploadState && (
+        {/* Upload status — hidden in the Tauri kiosk to avoid showing
+            infrastructure details ("Cloudflare", "R2") to students. The kiosk
+            auto-exits after submit; the recording upload is crash-proof.
+            In non-kiosk browser mode, show the status for transparency. */}
+        {uploadState && !isTauri() && (
           <div className={`mt-6 border px-4 py-3 text-left text-[12px] ${uploadState === "stored" ? "border-success/40 bg-success/5 text-success" : uploadState === "uploading" ? "border-amber/40 bg-amber/5 text-amber" : uploadState === "partial" ? "border-amber/40 bg-amber/5 text-amber" : "border-alert/40 bg-alert/5 text-alert"}`}>
             <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Exam recording</p>
             <p className="mt-1">
               {uploadState === "stored" && <>Your exam recording has been secured. You may close this window.</>}
-              {uploadState === "uploading" && <>{uploadDetail ?? "Securing your exam recording…"}</>}
+              {uploadState === "uploading" && <>Securing your exam evidence…</>}
               {uploadState === "partial" && <>{uploadDetail ?? "Some exam evidence is still pending. Keep the app open and inform your invigilator."}</>}
               {uploadState === "failed" && <>Your answers are submitted. Please tell the invigilator before leaving so your recording can be verified.</>}
             </p>
+          </div>
+        )}
+
+        {/* Tauri kiosk: simple auto-closing message instead of upload details */}
+        {isTauri() && (
+          <div className="mt-6 border border-success/40 bg-success/5 px-4 py-3 text-left text-[12px] text-success">
+            <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Status</p>
+            <p className="mt-1">Your exam has been submitted successfully. This window will close shortly.</p>
           </div>
         )}
 

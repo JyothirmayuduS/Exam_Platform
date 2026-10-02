@@ -918,22 +918,38 @@ function StudentExamSession() {
     },
   });
 
-  // Auto-exit only after confirmed answer/evidence success, never on a fixed
-  // timeout during a backlog. The receipt retains a manual Close button.
+  // Auto-exit the Tauri kiosk after submit. Two triggers:
+  // 1. Evidence confirmed stored → immediate exit (800 ms delay for UX).
+  // 2. Timeout (30 s) → exit regardless. Answers are already in the DB; the
+  //    recording parts were streamed live, so at most a merged-video or tail
+  //    snapshot is lost — acceptable vs. trapping the student in the app.
   const returnedToStudentSideRef = useRef(false);
   useEffect(() => {
-    if (step !== "submitted" || submitFailed || artifactStatus?.state !== "stored" || !isTauri() || returnedToStudentSideRef.current) return;
-    const t = setTimeout(() => {
+    if (step !== "submitted" || !isTauri() || returnedToStudentSideRef.current) return;
+
+    const doExit = () => {
       if (returnedToStudentSideRef.current) return;
       returnedToStudentSideRef.current = true;
-      // Open the normal authenticated student console first, then close the
-      // kiosk. The browser session that launched this exam remains available,
-      // so the next exam does not ask the candidate to sign in again.
       void openStudentSide("/student/exams").finally(() => {
         void invoke("exit_app").catch(() => { /* app already closed */ });
       });
-    }, 800);
-    return () => clearTimeout(t);
+    };
+
+    // Immediate exit once evidence is confirmed stored (unless submit itself failed).
+    let confirmTimer: ReturnType<typeof setTimeout> | undefined;
+    if (!submitFailed && artifactStatus?.state === "stored") {
+      confirmTimer = setTimeout(doExit, 800);
+    }
+
+    // Hard timeout: never keep the student locked in for more than 30 s after
+    // answers have been persisted. The recording upload is crash-proof (parts
+    // were streamed live); the student console can finish any pending tail.
+    const timeoutTimer = setTimeout(doExit, 30_000);
+
+    return () => {
+      clearTimeout(confirmTimer);
+      clearTimeout(timeoutTimer);
+    };
   }, [step, submitFailed, artifactStatus?.state]);
 
   // ── Authoritative violation count (student↔teacher parity) ────────────────
@@ -1074,22 +1090,20 @@ function StudentExamSession() {
 
   const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
 
-  // Kiosk recovery: press the OS for the native permission dialog again
-  // (macOS re-surfaces it when the answer is still undecided), then re-run the
-  // normal request. A hard OS-level deny is left to the Settings button.
+  // Kiosk recovery: after the student opens System Settings and toggles the
+  // privacy switch for camera/mic, this function re-runs getUserMedia. The
+  // previous version checked mediaPermissionStatus() first and gave up on a
+  // "denied" result, but macOS and Windows update the status ONLY after the
+  // next getUserMedia call — so the check always returned the stale "denied"
+  // and the student could never recover without restarting the app.
+  //
+  // Now we ALWAYS call requestDevices(), which fires a fresh getUserMedia.
+  // If the OS still blocks it, setCam/setMic will land on "denied" as before
+  // and the student sees the "Open system settings" guidance again.
   async function reRequestPermissions() {
     setRequesting(true);
-    const [camStatus, micStatus] = await Promise.all([
-      mediaPermissionStatus("camera"),
-      mediaPermissionStatus("microphone"),
-    ]);
-    if (camStatus === "denied" || micStatus === "denied") {
-      // Only System Settings / Windows Settings can flip a remembered deny.
-      if (camStatus === "denied") setCam("denied");
-      if (micStatus === "denied") setMic("denied");
-      setRequesting(false);
-      return;
-    }
+    // Small delay so the user sees the "Checking…" state (feedback)
+    await new Promise((r) => setTimeout(r, 300));
     await requestDevices();
   }
 

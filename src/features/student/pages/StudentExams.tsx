@@ -140,7 +140,9 @@ export default function StudentExams() {
                 onClick={(e) => {
                   e.preventDefault();
                   if (isTauri()) {
-                    // Already inside the lockdown browser — go straight into the exam.
+                    // Already inside the lockdown browser — the exam page
+                    // starts at the system check step and flows through
+                    // device access → registration → start → exam.
                     void navigate(`/student/exam?examId=${encodeURIComponent(r.id)}`);
                   } else {
                     // Normal browser: launch the kiosk app synchronously in the
