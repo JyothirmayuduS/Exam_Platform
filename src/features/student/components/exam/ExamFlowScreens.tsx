@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useEffect, type RefObject } from "react";
 import { FiDownload } from "react-icons/fi";
 import Seal from "@/shared/components/Seal";
 import { openStudentSide } from "@/shared/platform/lockdownBridge";
@@ -255,6 +255,13 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
     try { window.close(); } catch { /* ignore */ }
     window.setTimeout(backToDashboard, 350);
   };
+
+  useEffect(() => {
+    if (isTauri()) {
+      const id = window.setTimeout(closeExamWindow, 5000);
+      return () => window.clearTimeout(id);
+    }
+  }, []);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper px-6 text-ink pb-20 pt-12 overflow-y-auto">
