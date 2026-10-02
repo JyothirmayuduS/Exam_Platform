@@ -72,9 +72,9 @@ fn check_prohibited_apps() -> Vec<String> {
     sys.refresh_all();
     
     let prohibited = vec![
-        "anydesk", "teamviewer", "zoom", "skype", "discord", "screensharing", "rustdesk",
-        "dws", "dwservice", "zoho", "logmein", "splashtop", "chrome remote desktop", "vnc",
-        "cheatengine", "x64dbg", "ida", "wireshark", "processhacker", "ollydbg", "fiddler", "charles"
+        "anydesk", "teamviewer", "zoom.us", "zoom.exe", "skype", "discord", "rustdesk",
+        "dwservice", "zoho", "logmein", "splashtop", "chrome remote desktop", "vncserver", "vncviewer", "realvnc",
+        "cheatengine", "x64dbg", "wireshark", "processhacker", "ollydbg", "fiddler", "charles"
     ];
     
     let mut found = Vec::new();
@@ -83,10 +83,16 @@ fn check_prohibited_apps() -> Vec<String> {
         let name_os = process.name();
         let name_str = name_os.to_string_lossy();
         let name_lower = name_str.to_lowercase();
+        
+        // Exclude common false positives
+        if name_lower.contains("zoom") && name_lower.contains("window") { continue; } // window zoom daemon
+        
         for p in &prohibited {
             if name_lower.contains(p) {
+                // If it's just "zoom", make sure it's the actual app, not something else.
+                // We added "zoom.us" and "zoom.exe", but if we still need "zoom", we can just rely on the above exclusions.
                 found.push(name_str.to_string());
-                break; // Stop checking this process if we already found a match
+                break;
             }
         }
     }

@@ -148,9 +148,14 @@ export function SystemCheckScreen({ examName, checks, checkIndex, checksDone, ch
         <p className="mb-8 font-mono text-[11px] uppercase tracking-wider text-maroon">{examName}</p>
         <div className="space-y-3 border border-line bg-raised p-5">
           {checks.map((c, i) => (
-            <div key={c.label} className="flex items-center justify-between text-[13.5px]">
-              <span className={i < checkIndex ? "text-ink" : "text-soft"}>{c.label}</span>
-              <span className={`font-mono text-[11px] ${i < checkIndex ? (c.ok ? "text-success" : "text-alert") : "text-soft"}`}>{i < checkIndex ? (c.ok ? "PASS" : "FAIL") : "—"}</span>
+            <div key={c.label} className="flex flex-col gap-1">
+              <div className="flex items-center justify-between text-[13.5px]">
+                <span className={i < checkIndex ? "text-ink" : "text-soft"}>{c.label}</span>
+                <span className={`font-mono text-[11px] ${i < checkIndex ? (c.ok ? "text-success" : "text-alert") : "text-soft"}`}>{i < checkIndex ? (c.ok ? "PASS" : "FAIL") : "—"}</span>
+              </div>
+              {i < checkIndex && !c.ok && c.detail && (
+                <div className="text-[11px] text-alert opacity-90">{c.detail}</div>
+              )}
             </div>
           ))}
         </div>
