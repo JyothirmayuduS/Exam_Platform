@@ -9,6 +9,10 @@ supabase/.temp
 .env
 dist
 
+# Agent scratch space — downloaded CI artifacts live here transiently and can
+# be 150 MB+ (AppImage), which breaks the 100 MB upload limit.
+__agent__
+
 # Installers are hosted in the public Vercel Blob store; excluding them keeps
 # the web deployment below Vercel source-upload limits.
 public/downloads/VignanExam_setup.exe
