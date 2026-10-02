@@ -626,22 +626,37 @@ export default function RecordingReviewer({
               // Compute the relative offset from the first snapshot
               const firstTs = artifacts.screenshotTimelineUrls[0]?.timestamp ?? snap.timestamp;
               const offsetSec = Math.round((snap.timestamp - firstTs) / 1000);
+              
+              // Find if any violation occurred near this snapshot (+/- 1.5 seconds)
+              const nearbyViolations = markers.filter(m => Math.abs(m.seconds - offsetSec) <= 1.5);
+              const hasCritical = nearbyViolations.some(m => m.severity === "critical" || m.severity === "high");
+              const hasWarning = nearbyViolations.length > 0;
+              const hasAudio = nearbyViolations.some(m => /voice|speak|audio|talk|sound/i.test(m.label));
+              
+              const borderClass = hasCritical ? "border-alert" : hasWarning ? "border-amber" : "border-line group-hover:border-forest";
+
               return (
                 <button
                   key={snap.url}
-                  title={`${clock(offsetSec)} into exam`}
+                  title={`${clock(offsetSec)} into exam${hasWarning ? ' (Warning)' : ''}`}
                   onClick={() => seekTo(offsetSec)}
-                  className="group relative flex-shrink-0 border border-line hover:border-forest transition-colors"
+                  className={`group relative flex-shrink-0 border-2 transition-colors ${borderClass}`}
                 >
                   <img
                     src={snap.url}
                     alt={`frame ${i + 1}`}
                     loading="lazy"
-                    className="h-14 w-20 object-cover"
+                    className={`h-14 w-20 object-cover ${hasWarning ? "opacity-90" : ""}`}
                   />
-                  <span className="absolute bottom-0 left-0 right-0 bg-ink/60 px-1 py-0.5 text-center font-mono text-[8px] text-paper">
+                  <span className={`absolute bottom-0 left-0 right-0 px-1 py-0.5 text-center font-mono text-[8px] text-paper ${hasCritical ? "bg-alert/80" : hasWarning ? "bg-amber/80" : "bg-ink/60"}`}>
                     {clock(offsetSec)}
                   </span>
+                  {hasAudio && (
+                    <span className="absolute top-0 right-0 bg-amber px-1 py-0.5 text-[8px]">🔊</span>
+                  )}
+                  {hasWarning && !hasAudio && (
+                    <span className="absolute top-0 right-0 bg-alert px-1 py-0.5 text-[8px] text-paper">⚠️</span>
+                  )}
                 </button>
               );
             })}
