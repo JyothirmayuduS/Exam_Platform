@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
 import { supabaseConfigured } from "@/shared/data/env";
 import { listEnrolledExamsForAuthUser, subscribeToStudentExams, type ExamRecord } from "@/shared/data/examApi";
-import { isTauri } from "@/shared/platform/platform";
+import { detectOS, downloadUrl, isTauri, osLabel } from "@/shared/platform/platform";
+import { launchExamInLockdown } from "@/shared/platform/lockdownBridge";
+import { GatekeeperHelp } from "@/features/student/components/exam/ExamFlowScreens";
+import { useAuth } from "@/features/auth/auth";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
 
 export const STUDENT_NAV = [
@@ -31,7 +34,25 @@ function toRow(e: ExamRecord): Row {
 export default function StudentExams() {
   const navigate = useNavigate();
   const { profile } = useCurrentProfile();
+  const { session: authSession } = useAuth();
   const [enterModal, setEnterModal] = useState<string | null>(null);
+  const launchCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => launchCleanupRef.current?.(), []);
+
+  /**
+   * Hand the exam AND the signed-in session to the Vignan Exam Browser via
+   * vignan-exam://. The kiosk restores this session before its first render,
+   * so it opens directly on the system-check screen — no login, no role
+   * switch, no console detour inside the app.
+   */
+  function launchExam(examId: string) {
+    launchCleanupRef.current?.();
+    const roll = profile && "roll" in profile ? profile.roll : "";
+    const handoff = authSession?.access_token && authSession?.refresh_token
+      ? { access_token: authSession.access_token, refresh_token: authSession.refresh_token }
+      : null;
+    launchCleanupRef.current = launchExamInLockdown(examId, roll, () => setEnterModal(examId), handoff);
+  }
 
   const [rows, setRows] = useState<Row[]>([]);
   const [live, setLive] = useState(false);
@@ -122,14 +143,10 @@ export default function StudentExams() {
                     // Already inside the lockdown browser — go straight into the exam.
                     void navigate(`/student/exam?examId=${encodeURIComponent(r.id)}`);
                   } else {
-                    // Normal browser: instantly trigger the deep link to open the app.
-                    // The roll comes from the signed-in profile only — never fabricated.
-                    const profileRoll = profile && "roll" in profile ? profile.roll : "";
-                    window.location.href = `vignan-exam://open?exam=${encodeURIComponent(r.id)}${profileRoll ? `&roll=${encodeURIComponent(profileRoll)}` : ""}`;
-                    // If it doesn't open (not installed), show the gate/modal fallback after a delay
-                    setTimeout(() => {
-                      setEnterModal(r.name);
-                    }, 2500);
+                    // Normal browser: launch the kiosk app synchronously in the
+                    // click gesture. launchExamInLockdown watches visibility and
+                    // only shows the fallback when the app truly did not open.
+                    launchExam(r.id);
                   }
                 }}
                 className="border border-maroon bg-maroon px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-maroon/90"
@@ -151,40 +168,56 @@ export default function StudentExams() {
         )}
       </div>
 
-      {/* Modal: shown when student clicks Enter exam in a normal browser */}
-      {enterModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md border border-line bg-paper p-6 shadow-2xl">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Lockdown required</p>
-            <h2 className="mt-2 font-serif text-xl font-semibold">Open the Vignan Lockdown Browser</h2>
-            <p className="mt-1 font-mono text-[11px] uppercase tracking-wider text-maroon">{enterModal}</p>
-            <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-              This exam must be opened inside the <strong className="text-ink">Vignan Lockdown Browser</strong>{" "}
-              desktop app — not in a regular web browser.
-            </p>
-            <div className="mt-4 border border-line bg-paper-raised p-4 text-[12.5px] text-ink-soft">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink">Steps</p>
-              <p className="mt-2">1. Close or minimise this browser window.</p>
-              <p className="mt-1">2. Open <strong className="text-ink">Vignan Lockdown Browser</strong> from your desktop.</p>
-              <p className="mt-1">3. Click <strong className="text-ink">Enter exam</strong> inside the app.</p>
-            </div>
-            <div className="mt-5 flex gap-3">
-              <a
-                href={`/student/exam?examId=${encodeURIComponent(rows.find(x => x.name === enterModal)?.id || "")}`}
-                className="flex-1 border border-maroon bg-maroon py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon/90"
-              >
-                Install Lockdown Browser /
-              </a>
-              <button
-                onClick={() => setEnterModal(null)}
-                className="border border-line px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink-soft hover:text-ink"
-              >
-                Cancel
-              </button>
+      {/* Fallback: shown ONLY when the vignan-exam:// launch was not picked up
+          by the OS (app not installed, or macOS Gatekeeper blocked it). Never
+          routes to /student/exam — a normal browser must never reach the exam
+          (it would bounce through ProtectedRoute into the login page). */}
+      {enterModal && (() => {
+        const os = detectOS();
+        const href = downloadUrl(os) || "";
+        const row = rows.find(x => x.id === enterModal);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 px-4 backdrop-blur-sm">
+            <div className="w-full max-w-md border border-line bg-paper p-6 shadow-2xl">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Lockdown required</p>
+              <h2 className="mt-2 font-serif text-xl font-semibold">Vignan Exam Browser didn&apos;t open</h2>
+              <p className="mt-1 font-mono text-[11px] uppercase tracking-wider text-maroon">{row?.name ?? ""}</p>
+              <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
+                The exam opens only inside the <strong className="text-ink">Vignan Exam Browser</strong> desktop app.
+                If it is installed but macOS blocked it with &ldquo;Apple could not verify&rdquo;, unblock it once below —
+                then <strong className="text-ink">Try again</strong> opens your exam directly at the system check.
+              </p>
+              <GatekeeperHelp />
+              <div className="mt-5 flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    setEnterModal(null);
+                    launchExam(enterModal);
+                  }}
+                  className="w-full border border-maroon bg-maroon py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon/90"
+                >
+                  Try again /
+                </button>
+                {href && (
+                  <a
+                    href={href}
+                    download
+                    className="w-full border border-line py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-raised"
+                  >
+                    Download installer ({osLabel(os)}) /
+                  </a>
+                )}
+                <button
+                  onClick={() => setEnterModal(null)}
+                  className="border border-line px-4 py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink-soft hover:text-ink"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+  })()}
     </RoleLayout>
   );
 }

@@ -14,16 +14,25 @@ export default function Login() {
   // The desktop app has its own login session. Keep the exam reference from
   // ProtectedRoute across sign-in rather than sending a cold launch home.
   const from = location.state?.from;
-  const studentDestination = from?.pathname === "/student/exam"
+  const hasExamReturn = from?.pathname === "/student/exam";
+  const studentDestination = hasExamReturn
     ? `/student/exam${typeof from.search === "string" && from.search.startsWith("?") ? from.search : ""}`
     : "/student";
-  const { signInDemo } = useAuth();
+  // In the kiosk a plain sign-in lands on "My exams" — the student's next
+  // click is always "Enter exam", so skip the overview console entirely.
+  const { signInDemo, user, loading: authLoading } = useAuth();
   const [searchParams] = useSearchParams();
   const queryRole = searchParams.get("role") as LoginMode | null;
   // Inside the Vignan Exam Browser the student signs in once per computer —
   // the session is stored by the kiosk webview and restored on every launch.
   const inKiosk = isTauri();
 
+  // The kiosk is student-only and must never show a signed-in user this page.
+  // A deep-link launch restores the session in main.tsx and routes straight to
+  // the exam; this covers a cold kiosk start with a persisted session — it
+  // goes straight to the student side instead of flashing the login form.
+  // The pathname guard keeps a late redirect from fighting an arriving
+  // vignan-exam:// deep link that has already changed the route.
   const [mode, setMode] = useState<LoginMode>("student");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -35,6 +44,33 @@ export default function Login() {
       setMode(queryRole);
     }
   }, [queryRole]);
+
+  // The kiosk is student-only and must never show a signed-in user this page.
+  // A deep-link launch restores the session in main.tsx and routes straight to
+  // the exam; this covers a cold kiosk start with a persisted session — it
+  // goes straight to the student side instead of flashing the login form.
+  // The pathname guard keeps a late redirect from fighting an arriving
+  // vignan-exam:// deep link that has already changed the route.
+  useEffect(() => {
+    if (!inKiosk || authLoading || !user) return;
+    if (!location.pathname.startsWith("/login")) return;
+    navigate(inKiosk && !hasExamReturn ? "/student/exams" : studentDestination, { replace: true });
+  }, [inKiosk, authLoading, user, navigate, studentDestination, hasExamReturn, location.pathname]);
+
+  // While the kiosk resolves the persisted session there is nothing to show —
+  // render a brief native-style splash instead of the login form, so the
+  // Authenticate page never flashes before the redirect above. (Placed after
+  // every hook so the splash → form transition keeps hook order stable.)
+  if (inKiosk && (authLoading || user)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-paper">
+        <div className="text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-none border-4 border-ink border-t-transparent" />
+          <p className="mt-4 font-mono text-[11px] uppercase tracking-widest text-ink-soft">Opening Vignan Exam Browser…</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleModeChange = (newMode: LoginMode) => {
     setMode(newMode);
@@ -83,6 +119,14 @@ export default function Login() {
     if (!data.user) {
       setError("An unexpected error occurred during sign in.");
       setLoading(false);
+      return;
+    }
+
+    // The kiosk is a student-only surface: after sign-in it always continues
+    // to the exam/deep-link return path (or "My exams" for a cold start) —
+    // never to a teacher/proctor console or a role switcher.
+    if (inKiosk) {
+      navigate(hasExamReturn ? studentDestination : "/student/exams", { replace: true });
       return;
     }
 
@@ -140,9 +184,15 @@ export default function Login() {
           </div>
 
           <h2 className="font-serif text-3xl font-semibold text-ink">Authenticate</h2>
-          <p className="mt-2 text-sm text-ink-soft">Select your role and sign in to your console.</p>
+          <p className="mt-2 text-sm text-ink-soft">
+            {inKiosk
+              ? "Sign in once with your registration number — your exam opens straight into the system check."
+              : "Select your role and sign in to your console."}
+          </p>
 
-          {/* 3 Role Tabs */}
+          {/* 3 Role Tabs — the kiosk is student-only, so it never shows a
+              role switcher (teachers/proctors use their own machines). */}
+          {!inKiosk && (
           <div className="mt-6 flex rounded-sm border border-line bg-paper-raised p-1">
             <button
               type="button"
@@ -172,6 +222,7 @@ export default function Login() {
               Proctor
             </button>
           </div>
+          )}
 
           <form onSubmit={handleLogin} className="mt-7 space-y-5">
             <div>
@@ -217,7 +268,7 @@ export default function Login() {
               {loading ? (
                 <span className="h-4 w-4 animate-spin rounded-none border-2 border-paper border-t-transparent inline-block" />
               ) : (
-                `Access ${mode.charAt(0).toUpperCase() + mode.slice(1)} Console`
+                inKiosk ? "Sign in" : `Access ${mode.charAt(0).toUpperCase() + mode.slice(1)} Console`
               )}
             </button>
           </form>
