@@ -105,6 +105,40 @@ verified outputs from this run. Binaries were not committed/published; use the
 Actions artifacts and `public/downloads/build-manifest.json` for provenance. Downloaded artifact
 ZIPs may lose Unix executable permissions: `chmod +x VignanExam.AppImage` before use.
 
+## Publish installers to the public Blob store
+
+CI only builds; publishing is a manual step because binaries never enter git and
+the store token must stay out of CI. `vercel.json` redirects `/downloads/*` to
+`https://<store>.public.blob.vercel-storage.com/lockdown/<file>`, so the blob
+pathnames must stay exactly `lockdown/VignanExam_{setup.exe,msi,dmg,AppImage,deb}`.
+
+1. Get the run ID of a green `Build Lockdown Browser` run
+   (`gh run list --workflow=build-lockdown.yml --limit 3`).
+2. Download the three artifacts:
+
+   ```sh
+   gh run download <run-id> -R JyothirmayuduS/Exam_Platform -D /tmp/lockdown-<run-id>
+   ```
+
+3. Upload (the script verifies `SHA256SUMS` first, refuses mismatches, and
+   overwrites the previous version in place):
+
+   ```sh
+   npm install --no-save @vercel/blob
+   export $(grep -E "^BLOB_READ_WRITE_TOKEN=" .env.local | xargs)
+   node scripts/lockdown/upload-blob.mjs /tmp/lockdown-<run-id>
+   ```
+
+4. Verify the public URLs serve the new bytes:
+
+   ```sh
+   curl -sIL https://exam-platform-gray-nine.vercel.app/downloads/VignanExam.dmg | grep -i content-length
+   ```
+
+   The length must equal the artifact size (also in `manifest.json`). The
+   `VITE_LOCKDOWN_DOWNLOAD_*` env vars, if configured, point at these same
+   Blob URLs — no web redeploy is needed; redirects are part of `vercel.json`.
+
 ## Local static checks
 
 No backend secrets, `.env` loading or kiosk launch is needed:
