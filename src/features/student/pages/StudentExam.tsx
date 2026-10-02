@@ -1021,23 +1021,18 @@ function StudentExamSession() {
       setMic(stream.getAudioTracks().length ? "granted" : "denied");
       if (previewRef.current) previewRef.current.srcObject = stream;
     } catch {
-      // Distinguish "OS-level deny" from "dialog dismissed" so the kiosk can
-      // offer the right recovery (System Settings vs. simply asking again).
+      // Distinguish "OS-level deny" from "dialog dismissed".
+      // Note: If the user clicked "Block" on the WKWebView prompt, the OS status
+      // will still be "prompt", but getUserMedia will instantly reject.
+      // We must set it to "denied" so the user sees the error UI and can recover.
       if (isTauri()) {
-        const [camStatus, micStatus] = await Promise.all([
+        void Promise.all([
           mediaPermissionStatus("camera"),
           mediaPermissionStatus("microphone"),
-        ]);
-        // "prompt" keeps the row in its waiting state — the native dialog was
-        // dismissed (or is about to appear), so Grant can simply be pressed again.
-        const stateFor = (s: Awaited<ReturnType<typeof mediaPermissionStatus>>) =>
-          s === "prompt" ? "idle" : "denied";
-        setCam(stateFor(camStatus));
-        setMic(stateFor(micStatus));
-      } else {
-        setCam("denied");
-        setMic("denied");
+        ]).then(([c, m]) => console.log("OS Media Status:", { camera: c, microphone: m }));
       }
+      setCam("denied");
+      setMic("denied");
     }
     // Screen share — request the entire monitor (not just a tab or window).
     try {
@@ -1104,6 +1099,12 @@ function StudentExamSession() {
     setRequesting(true);
     // Small delay so the user sees the "Checking…" state (feedback)
     await new Promise((r) => setTimeout(r, 300));
+    if (isTauri()) {
+      // If the user clicked "Block" in the WKWebView prompt, the only way
+      // to clear the cache and get the prompt again is to reload the window.
+      window.location.reload();
+      return;
+    }
     await requestDevices();
   }
 
