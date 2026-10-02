@@ -197,12 +197,12 @@ export function useScreenShareTest() {
       // On macOS the exam window uses NSWindowSharingNone to block OS screenshots;
       // that flag also prevents WKWebView from showing the getDisplayMedia picker.
       // Temporarily lift it, start the stream, then immediately re-lock.
-      if (isTauri()) void invoke("set_window_sharing", { allow: true }).catch(() => {});
+      if (isTauri()) await invoke("set_window_sharing", { allow: true }).catch(() => {});
       let stream: MediaStream;
       try {
         stream = await md.getDisplayMedia({ video: true, audio: false });
       } finally {
-        if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
+        if (isTauri()) await invoke("set_window_sharing", { allow: false }).catch(() => {});
       }
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
