@@ -183,6 +183,8 @@ export async function runDeviceDetection(): Promise<DeviceRisk[]> {
 
 // ── Screen Share Preview ──────────────────────────────────────────────────────
 
+import { screenCapturePermissionStatus } from "@/shared/platform/lockdownBridge";
+
 export function useScreenShareTest() {
   const [state, setState] = useState<"idle" | "active" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -192,6 +194,13 @@ export function useScreenShareTest() {
   const start = async () => {
     setError(null);
     try {
+      if (isTauri()) {
+        const status = await screenCapturePermissionStatus();
+        if (status === "denied") {
+          throw new Error("Screen share permission denied. Please allow it in System Settings.");
+        }
+      }
+
       const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
       if (!md.getDisplayMedia) throw new Error("Screen share not supported in this browser. Use Chrome, Firefox, or Edge.");
       // On macOS the exam window uses NSWindowSharingNone to block OS screenshots;
@@ -204,14 +213,21 @@ export function useScreenShareTest() {
       } finally {
         if (isTauri()) await invoke("set_window_sharing", { allow: false }).catch(() => {});
       }
+      
+      const tracks = stream.getVideoTracks();
+      if (tracks.length === 0 || tracks[0].readyState !== "live") {
+         stream.getTracks().forEach(t => t.stop());
+         throw new Error("Failed to get a live screen feed.");
+      }
+      
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
-      stream.getVideoTracks()[0]?.addEventListener("ended", stop);
+      tracks[0]?.addEventListener("ended", stop);
       setState("active");
       return stream;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed";
-      setError(msg.includes("denied") || msg.includes("Permission") ? "Screen share permission denied. Click 'Share' when the browser asks." : msg);
+      setError(msg.includes("denied") || msg.includes("Permission") ? "Screen recording permission denied. Open System Settings → Privacy & Security → Screen & System Audio Recording, and enable the app." : msg);
       setState("error");
       throw err;
     }

@@ -24,7 +24,7 @@ type DeviceAccessFullProps = {
   /** Ask the shell to re-trigger the native camera/mic permission prompt. */
   onReRequest?: () => void;
   /** Open the OS privacy pane for the blocked device. */
-  onOpenMediaSettings?: (kind: "camera" | "microphone") => void;
+  onOpenMediaSettings?: (kind: "camera" | "microphone" | "screen") => void;
   previewRef: RefObject<HTMLVideoElement | null>;
   onRequest: () => void;
   onScreenGranted?: (stream: MediaStream) => void;
@@ -238,7 +238,17 @@ export default function DeviceAccessFull({
               <video ref={screenTest.videoRef as RefObject<HTMLVideoElement>} autoPlay playsInline muted className="w-full border border-line aspect-video bg-black object-contain" />
             )}
             {screenTest.state === "error" && (
-              <p className="text-[12px] text-alert">{screenTest.error}</p>
+              <div className="space-y-2">
+                <p className="text-[12px] text-alert">{screenTest.error}</p>
+                {inKiosk && screenTest.error?.includes("System Settings") && (
+                  <button
+                    onClick={() => onOpenMediaSettings?.("screen")}
+                    className="border border-alert bg-alert/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/20"
+                  >
+                    Open system settings
+                  </button>
+                )}
+              </div>
             )}
             {screenTest.state === "idle" && (
               <p className="text-[12px] text-soft">Verify your screen is being shared correctly before entering the exam.</p>

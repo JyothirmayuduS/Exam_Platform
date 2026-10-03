@@ -1084,7 +1084,7 @@ function StudentExamSession() {
     await requestDevices();
   }
 
-  function openKioskMediaSettings(kind: "camera" | "microphone") {
+  function openKioskMediaSettings(kind: "camera" | "microphone" | "screen") {
     void openMediaSettings(kind);
   }
 
