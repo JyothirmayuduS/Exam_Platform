@@ -209,8 +209,8 @@ export async function mediaPermissionStatus(kind: "camera" | "microphone"): Prom
   }
 }
 
-/** Open the OS privacy pane (System Settings / Windows Settings) for camera or microphone. */
-export async function openMediaSettings(kind: "camera" | "microphone"): Promise<boolean> {
+/** Open the OS privacy pane (System Settings / Windows Settings) for camera, microphone, or screen recording. */
+export async function openMediaSettings(kind: "camera" | "microphone" | "screen"): Promise<boolean> {
   if (!inKiosk()) return false;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
@@ -229,5 +229,16 @@ export async function isScreenCaptureExcluded(): Promise<boolean> {
     return await invoke<boolean>("screen_capture_excluded");
   } catch {
     return false;
+  }
+}
+
+/** Check and request the native macOS screen recording permission. */
+export async function screenCapturePermissionStatus(): Promise<"granted" | "denied" | "prompt" | null> {
+  if (!inKiosk()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<"granted" | "denied" | "prompt">("screen_capture_permission_prompt");
+  } catch {
+    return null;
   }
 }

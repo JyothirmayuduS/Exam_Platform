@@ -24,3 +24,4 @@ public/downloads/VignanExam*
 # (No code path loads them: detection uses MediaPipe tasks bundled in public/.)
 *.pt
 !public/ai/models/*.pt
+.env*

@@ -398,8 +398,10 @@ async function uploadToSupabase(path: string, blob: Blob, contentType: string): 
 async function storeArtifact(path: string, blob: Blob, contentType: string): Promise<StoredArtifact | null> {
   const r2key = await uploadToR2(path, blob);
   if (r2key) return { key: r2key, provider: "r2" };
+  // Fall back to Supabase Storage if R2 is unavailable.
   const sbKey = await uploadToSupabase(path, blob, contentType);
-  return sbKey ? { key: sbKey, provider: "supabase" } : null;
+  if (sbKey) return { key: sbKey, provider: "supabase" };
+  return null;
 }
 
 /**

@@ -299,7 +299,7 @@ export async function downloadSessionReportPdf(
   doc.setFont("courier", "normal");
   doc.setFontSize(9);
   doc.text(
-    `${examId}  ·  ${generatedAt.toLocaleString()}  ·  ${rows.length} candidates · ${submitted} submitted · ${flagged.length} flagged`,
+    `${generatedAt.toLocaleString()}  ·  ${rows.length} candidates · ${submitted} submitted · ${flagged.length} flagged`,
     M,
     46,
   );

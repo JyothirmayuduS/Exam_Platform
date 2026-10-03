@@ -181,13 +181,13 @@ Deno.serve(async (req: Request) => {
     }
     identity = roll ? `student:${roll}` : `student:${user.id}`;
 
-    // Ownership gate: a student may only join a room that references their own
-    // roll (rooms are named "<exam>-<roll>" / "voice-<exam>-<roll>"). Without
+    // Ownership gate: a student may only join a voice room that references their own
+    // roll (rooms are named "voice-<exam>-<roll>"). Without
     // this a student could request a token for another candidate's room and
     // publish video into it (students have canPublish in non-voice rooms).
     // Enforced only when we resolved the roll from a trusted source (DB/email),
     // so a legitimate first-join with an unresolved roll still works.
-    if (trustedRoll && roll) {
+    if (trustedRoll && roll && isVoiceRoom) {
       const rollToken = roll.toLowerCase();
       if (!room.toLowerCase().includes(rollToken)) {
         return json({ error: "forbidden: room does not belong to this student" }, 403);
