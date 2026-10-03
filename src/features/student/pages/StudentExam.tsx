@@ -52,7 +52,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import DeviceAccessFull from "@/features/student/components/exam/DeviceAccessFull";
 import IdentityVerificationScreen from "@/features/student/components/exam/IdentityVerificationScreen";
 
-type Question = { id: string; text: string; options: string[]; category: string; type?: "mcq" | "subjective" };
+type Question = { id: string; text: string; options: string[]; category: string; type?: "mcq" | "subjective"; subjective_mode?: "both" | "qr" | "textbox" | null; marks?: number; };
 
 // Map a DB question row / the shape the exam UI renders. The id is the DB
 // question id, so answers (keyed by id) survive paper slicing and match the
@@ -66,6 +66,8 @@ function toUIQuestion(row: DBQuestion): Question {
     options: row.options ?? [],
     category: row.unit ?? "General",
     type: raw.includes("subj") || raw.includes("cod") ? "subjective" : raw.includes("mcq") ? "mcq" : (row.options?.length ?? 0) > 0 ? "mcq" : "subjective",
+    subjective_mode: row.subjective_mode,
+    marks: row.marks || 1,
   };
 }
 
@@ -383,6 +385,7 @@ function StudentExamSession() {
   // Sections are real groupings of the student's own paper (mirrors the
   // reference layout where e.g. "Descriptive" and "MCQ" are separate).
   const sections = useMemo(() => {
+    if (!examSettings.sections) return [];
     const groups = new Map<string, { name: string; ids: string[] }>();
     for (const q of questions) {
       const isSub = q.type === "subjective" || q.options.length === 0;
@@ -1611,6 +1614,7 @@ function StudentExamSession() {
 
           <QuestionDisplay
             question={q}
+            showMarks={examSettings.showMarksInTest !== false && examSettings.showMarks !== false}
             examId={EXAM_ID}
             attemptId={attemptId}
             studentId={studentId}
@@ -1776,10 +1780,12 @@ function StudentExamSession() {
             <video ref={hiddenVideoRef} autoPlay playsInline muted className="h-full w-full" />
           </div>
 
-          <div>
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Tools</p>
-            <ExamTools />
-          </div>
+          {Boolean(examSettings.calculator) && (
+            <div>
+              <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Tools</p>
+              <ExamTools />
+            </div>
+          )}
         </aside>
       </div>
       </div>

@@ -90,6 +90,9 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
         const idx = Number(ans);
         setCorrect(Number.isFinite(idx) ? idx : 0);
       }
+      if (q.subjective_mode) {
+        setSubjectiveMode(q.subjective_mode as any);
+      }
       setLoaded(true);
     });
     return () => { active = false; };

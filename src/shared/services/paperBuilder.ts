@@ -21,6 +21,8 @@ export type PaperSettings = {
   randomSelect: boolean;
   shuffleOrder: boolean;
   shuffleOptions: boolean;
+  sections?: boolean;
+  fixedSectionOrder?: boolean;
 };
 
 // ── Deterministic PRNG (mulberry32) ──────────────────────────────────────────
@@ -104,6 +106,27 @@ export function buildPaper(
 
   let ordered = selected;
   if (settings.shuffleOrder) ordered = shuffleInPlace([...selected], rand);
+
+  if (settings.sections) {
+    const mcq: DBQuestion[] = [];
+    const subj: DBQuestion[] = [];
+    for (const q of ordered) {
+      const type = (q.type || "").toLowerCase();
+      const isSub = type.includes("subj") || type.includes("cod") || (!type.includes("mcq") && (!q.options || q.options.length === 0));
+      if (isSub) subj.push(q);
+      else mcq.push(q);
+    }
+    
+    let sectionGroups = [];
+    if (mcq.length) sectionGroups.push(mcq);
+    if (subj.length) sectionGroups.push(subj);
+    
+    if (!settings.fixedSectionOrder) {
+      sectionGroups = shuffleInPlace(sectionGroups, rand);
+    }
+    
+    ordered = sectionGroups.flat();
+  }
 
   return ordered.map((q) => {
     const slot: PaperSlot = { id: q.id };

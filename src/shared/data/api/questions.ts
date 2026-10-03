@@ -204,6 +204,8 @@ export async function loadPaperForStudent(
         randomSelect: settings.randomSelect !== false,
         shuffleOrder: settings.shuffleOrder !== false,
         shuffleOptions: settings.shuffleOptions === true,
+        sections: settings.sections === true,
+        fixedSectionOrder: settings.fixedSectionOrder === true,
       });
       if (att?.id) {
         await db.from("attempts").update({ paper }).eq("id", String(att.id));

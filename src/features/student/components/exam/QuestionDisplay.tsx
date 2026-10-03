@@ -32,10 +32,12 @@ type Question = {
   category: string;
   type?: "mcq" | "subjective";
   subjective_mode?: "both" | "qr" | "textbox" | null;
+  marks?: number;
 };
 
 type QuestionDisplayProps = {
   question: Question | undefined;
+  showMarks?: boolean;
   examId: string;
   attemptId?: string;
   studentId: string | null;
@@ -76,6 +78,7 @@ function UploadedAnswerView({ refPath, heightClass }: { refPath: string; heightC
 
 export default function QuestionDisplay({
   question,
+  showMarks,
   examId,
   attemptId,
   studentId,
@@ -95,8 +98,15 @@ export default function QuestionDisplay({
 
   return (
     <section className="border border-line bg-raised p-5 sm:p-7">
-      {/* Question text (category/unit removed — it duplicated the top label) */}
-      <h2 className="mt-2 font-serif text-[22px] leading-snug text-ink sm:text-[26px]">{question.text}</h2>
+      <div className="flex items-start justify-between gap-4">
+        {/* Question text (category/unit removed — it duplicated the top label) */}
+        <h2 className="mt-2 font-serif text-[22px] leading-snug text-ink sm:text-[26px]">{question.text}</h2>
+        {showMarks && typeof question.marks === "number" && (
+          <span className="mt-3 shrink-0 whitespace-nowrap rounded border border-line-strong bg-paper px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+            {question.marks} {question.marks === 1 ? "mark" : "marks"}
+          </span>
+        )}
+      </div>
 
       {/* MCQ options */}
       {question.options.length > 0 && (
