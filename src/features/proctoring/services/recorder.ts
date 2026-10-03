@@ -73,11 +73,10 @@ export function startVideoRecording(opts: {
   examName?: string | null;
   roll: string;
   kind: "camera" | "screen";
-  chunkDurationMs?: number;
-  /** Upload each chunk to R2 live (crash-proof parts). Default true. */
+  /** Upload each chunk to R2 live (crash-proof parts). Default false to avoid unplayable chunks. */
   liveParts?: boolean;
 }): RecorderHandle {
-  const { stream, examId, examName, roll, kind, chunkDurationMs = 10_000, liveParts = true } = opts;
+  const { stream, examId, examName, roll, kind, liveParts = false } = opts;
   const folder = storageFolderSegment(examId, examName);
 
   const mimeType =
@@ -101,7 +100,7 @@ export function startVideoRecording(opts: {
   const start = () => {
     if (started) return;
     started = true;
-    recorder.start(chunkDurationMs);
+    recorder.start();
     console.debug(`[recorder] ${kind} MediaRecorder started`);
   };
 

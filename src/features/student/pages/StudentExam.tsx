@@ -1475,7 +1475,7 @@ function StudentExamSession() {
 
   // ---------- Step: exam (kiosk mode) ----------
   return (
-    <div className="min-h-screen bg-paper text-ink">
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
       {/* Watermark — custom template from Test Options with this candidate's
           tokens substituted, or the classic "name · roll" backdrop. Rendered
           as a full-viewport SVG <pattern>: large rotated text tiled
@@ -1583,18 +1583,18 @@ function StudentExamSession() {
       <div className="mx-auto grid max-w-[1400px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[264px_minmax(0,1fr)_264px] lg:px-8">
         {/* LEFT */}
         <aside className="space-y-4 lg:sticky lg:top-[84px] lg:self-start">
-          <div className="border border-line bg-paper-raised p-4">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Progress</p>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-center">
-              <Stat n={answeredCount} label="Answered" tone="text-success" />
-              <Stat n={remainingCount} label="Remaining" tone="text-ink" />
-              <Stat n={markedCount} label="Marked" tone="text-amber" />
-              <Stat n={visitedCount} label="Visited" tone="text-ink-soft" />
+          <div className="rounded-xl border border-line/40 bg-white p-5 shadow-sm">
+            <p className="font-sans text-xs font-semibold uppercase tracking-wider text-slate-500">Progress</p>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-center">
+              <Stat n={answeredCount} label="Answered" tone="text-emerald-600" />
+              <Stat n={remainingCount} label="Remaining" tone="text-slate-700" />
+              <Stat n={markedCount} label="Marked" tone="text-amber-500" />
+              <Stat n={visitedCount} label="Visited" tone="text-slate-400" />
             </div>
-            <div className="mt-3 h-1.5 w-full bg-line">
-              <div className="h-full bg-success transition-all" style={{ width: `${(answeredCount / questions.length) * 100}%` }} />
+            <div className="mt-5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-emerald-500 transition-all duration-300" style={{ width: `${(answeredCount / questions.length) * 100}%` }} />
             </div>
-            <p className="mt-2 text-center font-mono text-[10px] text-ink-soft">{answeredCount}/{questions.length} complete</p>
+            <p className="mt-2 text-center font-sans text-xs font-medium text-slate-500">{answeredCount}/{questions.length} complete</p>
           </div>
           <QuestionPanel
             questions={questions}
@@ -1605,10 +1605,10 @@ function StudentExamSession() {
         </aside>
 
         {/* CENTER */}
-        <main>
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <p className="font-mono text-[11px] uppercase tracking-widest text-maroon">Question {current + 1} of {questions.length}</p>
+        <main className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div className="rounded-full bg-slate-100 px-3 py-1">
+              <p className="font-sans text-xs font-bold uppercase tracking-wider text-slate-500">Question {current + 1} <span className="font-normal text-slate-400">of {questions.length}</span></p>
             </div>
           </div>
 

@@ -30,36 +30,35 @@ export default function ExamSidebar({
   const [tab, setTab] = useState<Tab>("progress");
 
   return (
-    <aside className="border border-line bg-raised p-4 space-y-4">
-      {/* Time-pressure hint only — the countdown itself lives in the sticky
-          header (and turns amber/red there). No duplicated big timer card. */}
+    <aside className="rounded-xl border border-line/40 bg-white p-5 shadow-sm space-y-6">
+      {/* Time-pressure hint only */}
       {secondsLeft <= 300 && (
-        <div className={`flex items-center gap-2 border px-3 py-2 text-[12px] ${
-          secondsLeft <= 60 ? "border-alert bg-alert/10 text-alert" : "border-amber bg-amber/10 text-amber"
+        <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 text-sm ${
+          secondsLeft <= 60 ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-700"
         }`}>
-          <FiAlertTriangle aria-hidden className="shrink-0" />
-          <span className="font-medium">{secondsLeft <= 60 ? "Less than 1 minute left!" : "5 minutes remaining"}</span>
+          <FiAlertTriangle aria-hidden className="shrink-0 h-5 w-5" />
+          <span className="font-semibold">{secondsLeft <= 60 ? "Less than 1 minute left!" : "5 minutes remaining"}</span>
         </div>
       )}
 
       {/* Progress bar */}
       <div>
-        <div className="flex justify-between font-mono text-[9px] uppercase tracking-widest text-soft mb-1">
+        <div className="flex justify-between font-sans text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
           <span>Progress</span>
           <span>{answered}/{total}</span>
         </div>
-        <div className="h-1.5 w-full bg-line">
-          <div className="h-full bg-success transition-all duration-500" style={{ width: `${(answered / Math.max(total, 1)) * 100}%` }} />
+        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+          <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${(answered / Math.max(total, 1)) * 100}%` }} />
         </div>
       </div>
 
       {/* Tab nav */}
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-2 border-b border-line/40 pb-2">
         {tabs.map((item) => (
           <button
             key={item}
             onClick={() => setTab(item)}
-            className={`border px-2 py-1 font-mono text-[9px] uppercase tracking-wider ${tab === item ? "border-maroon bg-maroon text-paper" : "border-line text-soft hover:text-ink"}`}
+            className={`rounded-md px-3 py-1.5 font-sans text-xs font-semibold uppercase tracking-wider transition-colors ${tab === item ? "bg-slate-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100"}`}
           >
             {item}
           </button>
@@ -67,19 +66,19 @@ export default function ExamSidebar({
       </div>
 
       {tab === "progress" && (
-        <div className="space-y-2 text-[12px]">
-          <div className="flex justify-between"><span className="text-soft">Answered</span><span className="font-semibold text-success">{answered}</span></div>
-          <div className="flex justify-between"><span className="text-soft">Unanswered</span><span className="font-semibold">{total - answered}</span></div>
-          <div className="flex justify-between"><span className="text-soft">Marked</span><span className="font-semibold text-amber">{marked}</span></div>
+        <div className="space-y-3 text-sm">
+          <div className="flex justify-between"><span className="text-slate-500">Answered</span><span className="font-semibold text-emerald-600">{answered}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">Unanswered</span><span className="font-semibold text-slate-700">{total - answered}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">Marked for Review</span><span className="font-semibold text-amber-500">{marked}</span></div>
         </div>
       )}
       {tab === "messages" && (
-        <div className="space-y-1 text-[12px] text-soft">
-          {messages.length === 0 ? <p>No proctor messages</p> : messages.map((m, i) => <p key={i}>• {m}</p>)}
+        <div className="space-y-2 text-sm text-slate-600">
+          {messages.length === 0 ? <p className="italic text-slate-400">No proctor messages</p> : messages.map((m, i) => <p key={i} className="rounded bg-slate-50 p-2">💬 {m}</p>)}
         </div>
       )}
-      {tab === "instructions" && <p className="text-[12px] text-soft">{instructions}</p>}
-      {tab === "notes" && <p className="text-[12px] text-soft">{note}</p>}
+      {tab === "instructions" && <p className="text-sm leading-relaxed text-slate-600">{instructions}</p>}
+      {tab === "notes" && <p className="text-sm leading-relaxed text-slate-600">{note}</p>}
     </aside>
   );
 }

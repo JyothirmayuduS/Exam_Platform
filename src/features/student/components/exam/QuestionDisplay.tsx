@@ -97,12 +97,12 @@ export default function QuestionDisplay({
   const isSubjective = question.type === "subjective" || question.options.length === 0;
 
   return (
-    <section className="border border-line bg-raised p-5 sm:p-7">
+    <section className="rounded-2xl border border-line/40 bg-white p-6 shadow-sm sm:p-8">
       <div className="flex items-start justify-between gap-4">
-        {/* Question text (category/unit removed — it duplicated the top label) */}
-        <h2 className="mt-2 font-serif text-[22px] leading-snug text-ink sm:text-[26px]">{question.text}</h2>
+        {/* Question text */}
+        <h2 className="mt-2 font-serif text-2xl leading-relaxed text-slate-800 sm:text-3xl">{question.text}</h2>
         {showMarks && typeof question.marks === "number" && (
-          <span className="mt-3 shrink-0 whitespace-nowrap rounded border border-line-strong bg-paper px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+          <span className="mt-3 shrink-0 whitespace-nowrap rounded-full border border-line/50 bg-slate-50 px-3 py-1 font-sans text-xs font-semibold uppercase tracking-wider text-slate-500">
             {question.marks} {question.marks === 1 ? "mark" : "marks"}
           </span>
         )}
@@ -110,25 +110,25 @@ export default function QuestionDisplay({
 
       {/* MCQ options */}
       {question.options.length > 0 && (
-        <div className="mt-7 space-y-3">
+        <div className="mt-8 space-y-3">
           {question.options.map((opt, i) => {
             const selected = answer === i;
             return (
               <button
                 key={i}
                 onClick={() => onSelectOption(i)}
-                className={`flex w-full items-center gap-3 border px-4 py-3 text-left text-[13.5px] transition-colors ${
+                className={`flex w-full items-center gap-4 rounded-xl border p-4 text-left text-sm transition-all duration-200 ${
                   selected
-                    ? "border-maroon bg-maroon/[0.06] text-ink"
-                    : "border-line text-ink hover:border-line hover:bg-paper"
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-900 shadow-sm ring-1 ring-emerald-500"
+                    : "border-line/60 text-slate-700 hover:border-slate-300 hover:bg-slate-50"
                 }`}
                 aria-label={`Option ${String.fromCharCode(65 + i)}`}
               >
                 <span
-                  className={`flex h-5 w-5 shrink-0 items-center justify-center border font-mono text-[10px] transition-colors ${
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-sans text-xs font-bold transition-colors ${
                     selected
-                      ? "border-maroon bg-maroon text-paper"
-                      : "border-line text-soft"
+                      ? "bg-emerald-500 text-white"
+                      : "bg-slate-100 text-slate-500"
                   }`}
                 >
                   {String.fromCharCode(65 + i)}
@@ -140,8 +140,8 @@ export default function QuestionDisplay({
 
           {/* Keyboard hint for T/F */}
           {question.options.length === 2 && (
-            <p className="font-mono text-[9px] text-soft mt-1">
-              Tip: Press <kbd className="border border-line px-1 py-0.5 font-mono text-[9px]">Space</kbd> to toggle T/F
+            <p className="mt-2 text-center font-sans text-xs text-slate-400">
+              Tip: Press <kbd className="rounded border border-line/40 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] shadow-sm">Space</kbd> to toggle T/F
             </p>
           )}
         </div>
@@ -151,12 +151,12 @@ export default function QuestionDisplay({
       {isSubjective && (
         <div className="mt-6 space-y-4">
           {typeof answer === "string" && answer.startsWith("[Uploaded answer:") ? (
-            <div className="border border-line bg-raised p-4">
-              <div className="flex justify-between items-center mb-3">
-                <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-bold">✓ Handwritten Answer Uploaded</p>
+            <div className="rounded-xl border border-emerald-500/30 bg-emerald-50/50 p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <p className="font-sans text-xs font-bold uppercase tracking-wider text-emerald-700">✓ Handwritten Answer Uploaded</p>
                 <button 
                   onClick={() => onSelectOption("" as unknown as number)}
-                  className="border border-alert text-alert px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10"
+                  className="rounded-lg border border-red-200 bg-white px-3 py-1.5 font-sans text-xs font-medium text-red-600 transition-colors hover:bg-red-50 hover:text-red-700"
                 >
                   Remove & Retake
                 </button>
@@ -170,11 +170,11 @@ export default function QuestionDisplay({
             <>
               {(!question.subjective_mode || question.subjective_mode === "both" || question.subjective_mode === "textbox") && (
                 <div>
-                  <label className="block font-mono text-[10px] uppercase tracking-wider text-soft mb-1.5">
+                  <label className="mb-2 block font-sans text-xs font-semibold uppercase tracking-wider text-slate-500">
                     {question.subjective_mode === "both" ? "Option 1: Type your answer" : "Type your answer"}
                   </label>
                   <textarea
-                    className="h-32 w-full border border-line bg-paper p-3 text-[14px] outline-none focus:border-forest"
+                    className="h-40 w-full rounded-xl border border-line/60 bg-white p-4 text-sm text-slate-700 outline-none transition-all focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                     placeholder="Type your response here..."
                     value={typeof answer === "string" ? answer : ""}
                     onChange={(e) => onSelectOption(e.target.value as unknown as number)}
@@ -185,9 +185,16 @@ export default function QuestionDisplay({
               {(!question.subjective_mode || question.subjective_mode === "both" || question.subjective_mode === "qr") && (
                 <div>
                   {question.subjective_mode === "both" && (
-                    <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-medium mt-3 mb-1">
-                      Option 2: Scan QR &amp; upload handwritten answer from phone
-                    </p>
+                    <div className="relative py-6">
+                      <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                        <div className="w-full border-t border-line/40"></div>
+                      </div>
+                      <div className="relative flex justify-center">
+                        <span className="bg-white px-4 font-sans text-xs font-semibold uppercase tracking-wider text-slate-400">
+                          Option 2: Scan QR &amp; upload handwritten answer from phone
+                        </span>
+                      </div>
+                    </div>
                   )}
                   <SubjectiveQRBlock
                     key={`qr_${question.id}_${attemptId ?? "init"}`}
@@ -212,24 +219,24 @@ export default function QuestionDisplay({
       )}
 
       {/* Revisit later / clear response */}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-        <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] select-none">
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-4 border-t border-line/30 pt-6">
+        <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-600 select-none hover:text-slate-900">
           <input
             type="checkbox"
             checked={isReviewed}
             onChange={onToggleReview}
-            className="h-4 w-4 accent-amber"
+            className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
           />
-          Revisit later
+          Mark to revisit later
         </label>
         {onClear && (
           <button
             onClick={onClear}
             disabled={answer === undefined}
-            className={`flex items-center gap-1.5 border px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition ${
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 font-sans text-xs font-semibold uppercase tracking-wider transition-colors ${
               answer === undefined
-                ? "cursor-not-allowed border-line text-soft/40"
-                : "border-line text-soft hover:border-alert hover:text-alert"
+                ? "cursor-not-allowed bg-slate-50 text-slate-300"
+                : "bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700"
             }`}
           >
             ⌫ Clear response

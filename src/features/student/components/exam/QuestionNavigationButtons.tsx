@@ -28,16 +28,16 @@ export default function QuestionNavigationButtons({
 }: QuestionNavigationButtonsProps) {
   const isLast = currentIndex === total - 1;
   return (
-    <div className="mt-6 flex flex-wrap items-center gap-2">
-      <button onClick={onPrev} disabled={currentIndex === 0} className="border border-line px-3 py-2 font-mono text-[11px] uppercase tracking-wider disabled:opacity-60">Previous</button>
-      <button onClick={onNext} disabled={isLast} className="border border-line px-3 py-2 font-mono text-[11px] uppercase tracking-wider disabled:opacity-60">Next</button>
+    <div className="mt-6 flex flex-wrap items-center gap-3">
+      <button onClick={onPrev} disabled={currentIndex === 0} className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-sans text-xs font-semibold uppercase tracking-wider text-slate-600 transition-colors hover:bg-slate-50 focus:ring-2 focus:ring-slate-200 disabled:opacity-50">Previous</button>
+      <button onClick={onNext} disabled={isLast} className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-sans text-xs font-semibold uppercase tracking-wider text-slate-600 transition-colors hover:bg-slate-50 focus:ring-2 focus:ring-slate-200 disabled:opacity-50">Next</button>
 
-      <label className="ml-2 flex items-center gap-2 text-[12px]">
-        <span className="font-mono text-[10px] uppercase tracking-wider">Jump to</span>
+      <label className="ml-2 flex items-center gap-2 text-sm text-slate-600">
+        <span className="font-sans text-xs font-semibold uppercase tracking-wider">Jump</span>
         <select
           value={currentIndex}
           onChange={(e) => onJump(Number(e.target.value))}
-          className="border border-line px-2 py-1.5"
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
           aria-label="Jump to question"
         >
           {Array.from({ length: total }, (_, i) => (
@@ -49,7 +49,7 @@ export default function QuestionNavigationButtons({
       <button
         onClick={onGoLastVisited}
         disabled={!lastVisited}
-        className="border border-line px-3 py-2 font-mono text-[11px] uppercase tracking-wider disabled:opacity-60"
+        className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-sans text-xs font-semibold uppercase tracking-wider text-slate-600 transition-colors hover:bg-slate-50 focus:ring-2 focus:ring-slate-200 disabled:opacity-50"
       >
         Last visited
       </button>
@@ -59,16 +59,16 @@ export default function QuestionNavigationButtons({
         // hunt for the submit button after answering the last question.
         <button
           onClick={onSubmit}
-          className="ml-auto border border-maroon bg-maroon px-5 py-2 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon-dark"
+          className="ml-auto rounded-lg border border-emerald-600 bg-emerald-600 px-6 py-2.5 font-sans text-xs font-bold uppercase tracking-wider text-white shadow-sm transition-colors hover:bg-emerald-700 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
         >
           Submit exam
         </button>
       ) : (
         <>
-          <button onClick={onToggleReview} className="border border-amber bg-amber/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-amber">
+          <button onClick={onToggleReview} className="rounded-lg border border-amber-500/50 bg-amber-50 px-4 py-2 font-sans text-xs font-semibold uppercase tracking-wider text-amber-600 transition-colors hover:bg-amber-100">
             {isReviewed ? "Unmark review" : "Review"}
           </button>
-          <button onClick={onSaveNow} className="ml-auto border border-ink px-3 py-2 font-mono text-[11px] uppercase tracking-wider">Save</button>
+          <button onClick={onSaveNow} className="ml-auto rounded-lg border border-slate-800 bg-slate-800 px-4 py-2 font-sans text-xs font-semibold uppercase tracking-wider text-white shadow-sm transition-colors hover:bg-slate-900 focus:ring-2 focus:ring-slate-700 focus:ring-offset-1">Save</button>
         </>
       )}
     </div>
