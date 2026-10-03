@@ -261,6 +261,39 @@ fn media_permission_prompt(kind: String) -> String {
     }
 }
 
+/// Request screen capture permission natively.
+/// Returns "granted", "denied", or "prompt".
+#[tauri::command]
+fn screen_capture_permission_prompt() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+            fn CGRequestScreenCaptureAccess() -> bool;
+        }
+        unsafe {
+            if CGPreflightScreenCaptureAccess() {
+                "granted".to_string()
+            } else {
+                // If it is not preflighted, request it.
+                // Note: CGRequestScreenCaptureAccess blocks briefly if the prompt is shown.
+                // However, the macOS prompt continues asynchronously.
+                let granted = CGRequestScreenCaptureAccess();
+                if granted {
+                    "granted".to_string()
+                } else {
+                    "denied".to_string()
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "granted".to_string()
+    }
+}
+
 /// Open the OS privacy pane for camera/microphone so a previously-denied
 /// student can flip the switch, then return to the kiosk and re-grant.
 #[tauri::command]
@@ -269,6 +302,8 @@ fn open_media_settings(kind: String) -> Result<(), String> {
     {
         let pane = if kind == "microphone" {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        } else if kind == "screen" {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         } else {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
         };
@@ -420,6 +455,7 @@ fn main() {
             open_student_side,
             vignan_launch_url,
             media_permission_prompt,
+            screen_capture_permission_prompt,
             open_media_settings,
             screen_capture_excluded,
             lockdown_log_probe,

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "title": "read refactor guidance and map current source structure",
+      "status": "done"
+    },
+    {
+      "title": "define and apply a clear feature-based folder structure",
+      "status": "in-progress"
+    },
+    {
+      "title": "update imports and project references safely",
+      "status": "pending"
+    },
+    {
+      "title": "run typecheck, tests, build, and review the refactor",
+      "status": "pending"
+    }
+  ],
+  "updated_at": "2026-10-01T14:34:17.041Z",
+  "session_id": "01a0f735-b3b5-76ad-8f6f-c9d074d88193"
+}
