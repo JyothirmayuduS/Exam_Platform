@@ -1,0 +1,210 @@
+/* Paper builder — 3-column studio (bank | composition | summary) */
+.exam-studio {
+  --studio-rail: 300px;
+  --studio-inspector: 272px;
+  --studio-gap: 1px;
+  --studio-bg: var(--color-paper, #f7f5f0);
+  --studio-line: var(--color-line, #e4e0d8);
+  --studio-forest: var(--color-forest, #284b34);
+  min-height: calc(100vh - 7rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.exam-studio-top {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--studio-line);
+  background: var(--studio-bg);
+  padding: 1rem 1.25rem 1.25rem;
+}
+
+.exam-studio-top-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.exam-studio-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.exam-studio-title-row input {
+  min-width: 12rem;
+  flex: 1;
+}
+
+.exam-studio-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: var(--studio-rail) minmax(0, 1fr) var(--studio-inspector);
+  gap: var(--studio-gap);
+  background: var(--studio-line);
+  min-height: 0;
+}
+
+@media (max-width: 1200px) {
+  .exam-studio-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr;
+  }
+  .exam-studio-bank {
+    max-height: 22rem;
+  }
+}
+
+.exam-studio-bank,
+.exam-studio-paper,
+.exam-studio-inspector {
+  background: var(--studio-bg);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.exam-studio-bank {
+  border-right: 1px solid var(--studio-line);
+}
+
+.exam-studio-inspector {
+  border-left: 1px solid var(--studio-line);
+}
+
+.exam-studio-panel-head {
+  flex-shrink: 0;
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid var(--studio-line);
+  background: color-mix(in srgb, var(--studio-bg) 92%, var(--studio-forest) 8%);
+}
+
+.exam-studio-panel-head h2 {
+  font-family: var(--font-serif, Georgia, serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--studio-forest);
+  margin: 0;
+}
+
+.exam-studio-panel-head p {
+  margin: 0.25rem 0 0;
+  font-size: 11px;
+  color: var(--color-soft, #6b6560);
+  line-height: 1.4;
+}
+
+.exam-studio-bank-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.exam-studio-bank-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--studio-line);
+  background: var(--studio-bg);
+  padding: 0.65rem 0.75rem;
+  margin-bottom: 0.5rem;
+  transition: border-color 0.15s, background 0.15s;
+  cursor: pointer;
+}
+
+.exam-studio-bank-item:hover {
+  border-color: var(--studio-forest);
+  background: color-mix(in srgb, var(--studio-bg) 88%, var(--studio-forest) 12%);
+}
+
+.exam-studio-bank-item:last-child {
+  margin-bottom: 0;
+}
+
+.exam-studio-paper-scroll {
+  flex: 1;
+  overflow: auto;
+}
+
+.exam-studio-inspector-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+.exam-studio-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--studio-line);
+  border: 1px solid var(--studio-line);
+  margin-bottom: 1rem;
+}
+
+.exam-studio-stat {
+  background: var(--studio-bg);
+  padding: 0.75rem 0.65rem;
+  text-align: center;
+}
+
+.exam-studio-stat strong {
+  display: block;
+  font-family: var(--font-serif, Georgia, serif);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--studio-forest);
+}
+
+.exam-studio-stat span {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-soft, #6b6560);
+}
+
+.exam-studio-inspector-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--studio-line);
+}
+
+.exam-studio-section-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.exam-studio-section-pill {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.25rem 0.45rem;
+  background: color-mix(in srgb, var(--studio-forest) 12%, transparent);
+  color: var(--studio-forest);
+}
+
+.exam-studio-empty-paper {
+  padding: 3rem 1.5rem;
+  text-align: center;
+}
+
+.exam-studio-search-wrap {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--studio-line);
+}
+
+.exam-studio-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0 1rem 0.75rem;
+}
