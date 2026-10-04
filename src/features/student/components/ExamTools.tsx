@@ -24,7 +24,7 @@ function ToolButton({ label, active, onClick }: { label: string; active: boolean
   return (
     <button
       onClick={onClick}
-      className={`border px-2 py-2 font-mono text-[9px] uppercase tracking-wider transition-colors ${active ? "border-maroon bg-maroon text-paper" : "border-line-strong bg-paper text-ink-soft hover:text-ink"}`}
+      className={`border px-2 py-2 font-mono text-[9px] uppercase tracking-wider transition-colors ${active ? "border-forest bg-forest text-paper" : "border-line-strong bg-paper text-ink-soft hover:text-ink"}`}
     >
       {label}
     </button>
@@ -63,14 +63,14 @@ function Calculator({ onClose }: { onClose: () => void }) {
         <CalcKey label=")" onClick={() => append(")")} />
         <CalcKey label="⌫" onClick={back} />
         {keys.map((k) => <CalcKey key={k} label={k} onClick={() => append(k)} tone={"/*-+%".includes(k) ? "op" : "num"} />)}
-        <button onClick={evaluate} className="col-span-4 mt-1 border border-maroon bg-maroon py-2 font-mono text-[13px] text-paper hover:bg-maroon/90">=</button>
+        <button onClick={evaluate} className="col-span-4 mt-1 border border-forest bg-forest py-2 font-mono text-[13px] text-paper hover:bg-forest/90">=</button>
       </div>
     </Panel>
   );
 }
 
 function CalcKey({ label, onClick, tone = "num" }: { label: string; onClick: () => void; tone?: "num" | "op" | "alert" }) {
-  const cls = tone === "alert" ? "border-alert/50 text-alert" : tone === "op" ? "border-line-strong bg-paper-raised text-maroon" : "border-line-strong text-ink";
+  const cls = tone === "alert" ? "border-alert/50 text-alert" : tone === "op" ? "border-line-strong bg-paper-raised text-forest" : "border-line-strong text-ink";
   return <button onClick={onClick} className={`border py-2 font-mono text-[13px] hover:bg-paper-raised ${cls}`}>{label}</button>;
 }
 

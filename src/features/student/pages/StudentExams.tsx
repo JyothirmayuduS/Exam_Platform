@@ -16,6 +16,9 @@ export const STUDENT_NAV = [
   { label: "Help & support", to: "/student/help" },
 ];
 
+/** Shared student console accent — forest, matching the faculty system. */
+export const STUDENT_TONE = "#284B34";
+
 type Row = { id: string; name: string; meta: string; when: string; status: "published" | "scheduled" | "completed" };
 
 function toRow(e: ExamRecord): Row {
@@ -117,85 +120,81 @@ export default function StudentExams() {
   }, []);
 
   const badge: Record<Row["status"], string> = {
-    published: "border-success/50 bg-success/10 text-success",
-    scheduled: "border-amber/50 bg-amber/10 text-amber",
-    completed: "border-line text-ink-soft",
+    published: "border-forest/40 bg-forest/5 text-forest",
+    scheduled: "border-amber/40 bg-amber/5 text-amber",
+    completed: "border-line bg-paper-raised text-ink-soft",
   };
 
   return (
-    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV} status={live ? "● Live · synced" : "Profile verified"}>
-      <div className="flex items-end justify-between">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Assessments</p>
-          <h1 className="mt-2 font-serif text-3xl font-semibold">My exams</h1>
-        </div>
-        <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">{rows.length} total</span>
-      </div>
-
-      <div className="mt-8 space-y-2">
-        {rows.map((r) => (
-          <div key={r.id} className="flex flex-col gap-4 border border-line bg-paper p-5 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="flex items-center gap-3">
-                <p className="font-serif text-[16px] font-medium">{r.name}</p>
-                <span className={`border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider ${badge[r.status]}`}>{r.status}</span>
-              </div>
-              <p className="mt-1 text-[12px] text-ink-soft">{r.meta}</p>
-              <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">{r.when}</p>
-            </div>
-            {r.status === "published" ? (
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  if (isTauri()) {
-                    // Already inside the lockdown browser — the exam page
-                    // starts at the system check step and flows through
-                    // device access → registration → start → exam.
-                    void navigate(`/student/exam?examId=${encodeURIComponent(r.id)}`);
-                  } else {
-                    // Normal browser: launch the kiosk app synchronously in the
-                    // click gesture. launchExamInLockdown watches visibility and
-                    // only shows the fallback when the app truly did not open.
-                    launchExam(r.id);
-                  }
-                }}
-                className="border border-maroon bg-maroon px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-maroon/90"
-              >
-                Enter exam /
-              </button>
-            ) : r.status === "completed" ? (
-              <Link to="/student/results" className="border border-line-strong px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">View result /</Link>
-            ) : (
-              <span className="border border-line px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-ink-soft">Scheduled</span>
-            )}
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone={STUDENT_TONE} items={STUDENT_NAV} status={live ? "Synced" : "Profile verified"}>
+      <section className="border border-line bg-paper">
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-line px-5 py-5">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Assessments</p>
+            <h1 className="mt-2 font-serif text-3xl font-semibold">My exams</h1>
+            <p className="mt-2 text-[13px] text-ink-soft">Enter open papers in the Vignan Exam Browser. Scheduled papers appear here when released.</p>
           </div>
-        ))}
-        {loading && rows.length === 0 && (
-          <div className="animate-pulse space-y-2">{[0, 1, 2].map((i) => <div key={i} className="h-[104px] border border-line bg-paper-raised" />)}</div>
-        )}
-        {!loading && rows.length === 0 && (
-          <div className="border border-dashed border-line-strong p-10 text-center text-[13px] text-ink-soft">No exams assigned yet. Published exams appear here the moment your teacher releases them.</div>
-        )}
-      </div>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">{rows.length} total</span>
+        </div>
 
-      {/* Fallback: shown ONLY when the vignan-exam:// launch was not picked up
-          by the OS (app not installed, or macOS Gatekeeper blocked it). Never
-          routes to /student/exam — a normal browser must never reach the exam
-          (it would bounce through ProtectedRoute into the login page). */}
+        <div className="divide-y divide-line">
+          {rows.map((r) => (
+            <div key={r.id} className="flex flex-col gap-4 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-serif text-lg font-semibold">{r.name}</p>
+                  <span className={`border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider ${badge[r.status]}`}>{r.status}</span>
+                </div>
+                <p className="mt-1 text-[13px] text-ink-soft">{r.meta}</p>
+                <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">{r.when}</p>
+              </div>
+              {r.status === "published" ? (
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (isTauri()) {
+                      void navigate(`/student/exam?examId=${encodeURIComponent(r.id)}`);
+                    } else {
+                      launchExam(r.id);
+                    }
+                  }}
+                  className="border border-forest bg-forest px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest/90"
+                >
+                  Enter exam
+                </button>
+              ) : r.status === "completed" ? (
+                <Link to="/student/results" className="border border-line bg-paper-raised px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">
+                  View result
+                </Link>
+              ) : (
+                <span className="border border-line px-4 py-2.5 text-center font-mono text-[10px] uppercase tracking-wider text-ink-soft">Scheduled</span>
+              )}
+            </div>
+          ))}
+          {loading && rows.length === 0 && (
+            <div className="space-y-0">{[0, 1, 2].map((i) => <div key={i} className="h-24 border-b border-line bg-paper-raised/50" />)}</div>
+          )}
+          {!loading && rows.length === 0 && (
+            <div className="px-5 py-12 text-center text-[13px] text-ink-soft">
+              No exams assigned yet. Published exams appear here when your teacher releases them.
+            </div>
+          )}
+        </div>
+      </section>
+
       {enterModal && (() => {
         const os = detectOS();
         const href = downloadUrl(os) || "";
-        const row = rows.find(x => x.id === enterModal);
+        const row = rows.find((x) => x.id === enterModal);
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 px-4 backdrop-blur-sm">
-            <div className="w-full max-w-md border border-line bg-paper p-6 shadow-2xl">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 px-4">
+            <div className="w-full max-w-md border border-line bg-paper p-6">
               <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Lockdown required</p>
               <h2 className="mt-2 font-serif text-xl font-semibold">Vignan Exam Browser didn&apos;t open</h2>
-              <p className="mt-1 font-mono text-[11px] uppercase tracking-wider text-maroon">{row?.name ?? ""}</p>
+              <p className="mt-1 font-mono text-[11px] uppercase tracking-wider text-forest">{row?.name ?? ""}</p>
               <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-                The exam opens only inside the <strong className="text-ink">Vignan Exam Browser</strong> desktop app.
-                If it is installed but macOS blocked it with &ldquo;Apple could not verify&rdquo;, unblock it once below —
-                then <strong className="text-ink">Try again</strong> opens your exam directly at the system check.
+                This exam opens only inside the <strong className="text-ink">Vignan Exam Browser</strong> desktop app.
+                If macOS blocked it, unblock once below, then try again.
               </p>
               <GatekeeperHelp />
               <div className="mt-5 flex flex-col gap-2">
@@ -204,17 +203,17 @@ export default function StudentExams() {
                     setEnterModal(null);
                     launchExam(enterModal);
                   }}
-                  className="w-full border border-maroon bg-maroon py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon/90"
+                  className="w-full border border-forest bg-forest py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-forest/90"
                 >
-                  Try again /
+                  Try again
                 </button>
                 {href && (
                   <a
                     href={href}
                     download
-                    className="w-full border border-line py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-raised"
+                    className="w-full border border-line py-2.5 text-center font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-paper-raised"
                   >
-                    Download installer ({osLabel(os)}) /
+                    Download installer ({osLabel(os)})
                   </a>
                 )}
                 <button
@@ -227,7 +226,7 @@ export default function StudentExams() {
             </div>
           </div>
         );
-  })()}
+      })()}
     </RoleLayout>
   );
 }

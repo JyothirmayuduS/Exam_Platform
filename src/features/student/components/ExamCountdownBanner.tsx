@@ -32,13 +32,13 @@ export default function ExamCountdownBanner({ exams }: ExamCountdownBannerProps)
   const minutes = Math.ceil(upcoming.startsIn / 60000);
 
   return (
-    <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border border-maroon/30 bg-maroon/5 p-4">
-      <p className="font-mono text-[11px] uppercase tracking-wider text-maroon">
+    <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border border-forest/30 bg-forest/5 p-4">
+      <p className="font-mono text-[11px] uppercase tracking-wider text-forest">
         Exam starts in {minutes} minute{minutes === 1 ? "" : "s"}: {upcoming.name}
       </p>
       <Link
         to={`/student/exams/${upcoming.id}/practice`}
-        className="border border-maroon px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-maroon hover:bg-maroon hover:text-paper"
+        className="border border-forest px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-forest hover:text-paper"
       >
         Open practice mode /
       </Link>

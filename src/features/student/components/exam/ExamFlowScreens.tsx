@@ -30,12 +30,12 @@ export function DownloadGateScreen({
       <div className="w-full max-w-lg">
         <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-soft">Vignan University · Secure exam platform</p>
         <h1 className="mb-1 font-serif text-2xl font-semibold">Install Vignan Exam Browser</h1>
-        <p className="mb-1 font-mono text-[11px] uppercase tracking-wider text-maroon">{examName}</p>
+        <p className="mb-1 font-mono text-[11px] uppercase tracking-wider text-forest">{examName}</p>
         <div className="border border-line bg-raised p-5">
           <p className="font-mono text-[10px] uppercase tracking-wider text-soft">Detected OS: {os}</p>
           {installer === "checking" && <div className="mt-4 border border-line py-3 text-center font-mono text-[12px] uppercase tracking-widest text-soft">Locating installer…</div>}
-          {installer === "ready" && <a href={href} download={downloadFilename} className="mt-4 flex w-full items-center justify-center gap-2 border border-maroon bg-maroon py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper"><FiDownload aria-hidden /> Download</a>}
-          {installer === "release" && <a href={href} target="_blank" rel="noreferrer" className="mt-4 block w-full border border-maroon bg-maroon py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper">Open download page /</a>}
+          {installer === "ready" && <a href={href} download={downloadFilename} className="mt-4 flex w-full items-center justify-center gap-2 border border-forest bg-forest py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper"><FiDownload aria-hidden /> Download</a>}
+          {installer === "release" && <a href={href} target="_blank" rel="noreferrer" className="mt-4 block w-full border border-forest bg-forest py-3 text-center font-mono text-[12px] uppercase tracking-widest text-paper">Open download page /</a>}
           {installer === "missing" && <p className="mt-4 text-[12px] text-soft">Installer unavailable for this OS.</p>}
         </div>
         <div className="mt-4 flex flex-col gap-3">
@@ -96,12 +96,12 @@ export function InstalledScreen({
     <div className="flex min-h-screen items-center justify-center bg-paper px-6">
       <div className="w-full max-w-md text-center">
         <h1 className="mt-5 font-serif text-2xl font-semibold">Vignan Exam Browser installed!</h1>
-        <p className="mt-2 font-mono text-[11px] uppercase tracking-wider text-maroon">{examName}</p>
+        <p className="mt-2 font-mono text-[11px] uppercase tracking-wider text-forest">{examName}</p>
         {!deepLinkTried ? (
-          <button onClick={onEnter} className="mt-6 w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-maroon/90">Enter exam /</button>
+          <button onClick={onEnter} className="mt-6 w-full border border-forest bg-forest py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-forest/90">Enter exam /</button>
         ) : deepLinkFailed ? (
           <div className="mt-4 space-y-3">
-            <button onClick={onTryAgain} className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-maroon/90">Try again /</button>
+            <button onClick={onTryAgain} className="w-full border border-forest bg-forest py-3 font-mono text-[12px] uppercase tracking-widest text-paper hover:bg-forest/90">Try again /</button>
             {onPreview && (
               <button
                 onClick={onPreview}
@@ -145,7 +145,7 @@ export function SystemCheckScreen({ examName, checks, checkIndex, checksDone, ch
       <div className="w-full max-w-md">
         <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-soft">Pre-exam · Step 1 of 3</p>
         <h1 className="mb-1 font-serif text-2xl font-semibold">System readiness check</h1>
-        <p className="mb-8 font-mono text-[11px] uppercase tracking-wider text-maroon">{examName}</p>
+        <p className="mb-8 font-mono text-[11px] uppercase tracking-wider text-forest">{examName}</p>
         <div className="space-y-3 border border-line bg-raised p-5">
           {checks.map((c, i) => (
             <div key={c.label} className="flex flex-col gap-1">
@@ -162,7 +162,7 @@ export function SystemCheckScreen({ examName, checks, checkIndex, checksDone, ch
         {checksDone && checksPassed && <button onClick={onContinue} className="mt-6 w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper">Continue</button>}
         {checksDone && !checksPassed && (
           <div className="mt-6 flex flex-col gap-3">
-            <button onClick={onRecheck} className="w-full border border-maroon bg-maroon py-3 font-mono text-[12px] uppercase tracking-widest text-paper">Re-check Environment</button>
+            <button onClick={onRecheck} className="w-full border border-forest bg-forest py-3 font-mono text-[12px] uppercase tracking-widest text-paper">Re-check Environment</button>
             {onExit && <button onClick={onExit} className="w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink hover:bg-raised">Exit to Desktop</button>}
           </div>
         )}
@@ -211,7 +211,7 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
         <p className="mb-1 font-mono text-[11px] uppercase tracking-widest text-soft">Pre-exam · Step 3 of 3</p>
         <h1 className="mb-4 font-serif text-2xl font-semibold">{examName}</h1>
         <p className="text-[13px] text-soft">Duration: {durationMin} min · Questions: {questionsLength}</p>
-        <label className="mt-5 flex items-start gap-3 text-[13px]"><input type="checkbox" checked={agreed} onChange={(e) => onAgree(e.target.checked)} className="mt-0.5 h-4 w-4 accent-maroon" /><span>I have read the rules and consent to monitoring for this exam.</span></label>
+        <label className="mt-5 flex items-start gap-3 text-[13px]"><input type="checkbox" checked={agreed} onChange={(e) => onAgree(e.target.checked)} className="mt-0.5 h-4 w-4 accent-forest" /><span>I have read the rules and consent to monitoring for this exam.</span></label>
         <button disabled={!agreed} onClick={onStart} className="mt-6 w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper disabled:opacity-60">Start exam</button>
       </div>
     </div>

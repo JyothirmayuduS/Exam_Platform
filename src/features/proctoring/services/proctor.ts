@@ -9,7 +9,7 @@
 // Everything degrades: with no LiveKit/Supabase config the caller falls back to
 // a local-only camera preview so the exam UI still works in the prototype.
 
-import { Room, RoomEvent, createLocalTracks } from "livekit-client";
+import { Room, RoomEvent, Track, createLocalTracks } from "livekit-client";
 import { env, livekitConfigured, resolveLivekitUrl } from "@/shared/data/env";
 import { getSupabase } from "@/shared/data/supabase";
 
@@ -80,11 +80,13 @@ export async function startProctorPublishing(opts: {
   // made proctors see 0 feeds while the student UI showed "PROCTOR LIVE".
   const attemptPublish = async (
     track: MediaStreamTrack | undefined,
-    source: string,
+    source: Track.Source,
     name: string,
   ): Promise<boolean> => {
     if (!track) return true;
     try {
+      // Keep audio unmuted on the wire so proctors can listen.
+      if (track.kind === "audio") track.enabled = true;
       await room.localParticipant.publishTrack(track, { source, name });
       return true;
     } catch (err) {
@@ -105,13 +107,16 @@ export async function startProctorPublishing(opts: {
       if (camTrack) {
         const clone = camTrack.clone();
         ownedTracks.push(clone);
-        const ok = await attemptPublish(clone, "camera", "camera");
+        const ok = await attemptPublish(clone, Track.Source.Camera, "camera");
         if (!ok) throw new Error("camera track publish failed");
       }
       if (micTrack) {
         const clone = micTrack.clone();
         ownedTracks.push(clone);
-        await attemptPublish(clone, "microphone", "microphone");
+        const ok = await attemptPublish(clone, Track.Source.Microphone, "microphone");
+        if (!ok) console.warn("[proctor] microphone publish failed — proctor cannot listen to this candidate");
+      } else {
+        console.warn("[proctor] no microphone track on localStream — proctor audio will be silent");
       }
     } else {
       // No caller stream — acquire camera + mic here (capped so the phone CPU
@@ -122,14 +127,16 @@ export async function startProctorPublishing(opts: {
       });
       ownedTracks = tracks.map((t) => t.mediaStreamTrack);
       for (const track of tracks) {
-        const ok = await attemptPublish(track.mediaStreamTrack, String(track.kind), track.kind);
+        const source = track.kind === "audio" ? Track.Source.Microphone : Track.Source.Camera;
+        const ok = await attemptPublish(track.mediaStreamTrack, source, track.kind === "audio" ? "microphone" : "camera");
         if (track.kind === "video" && !ok) throw new Error("camera track publish failed");
+        if (track.kind === "audio" && !ok) console.warn("[proctor] microphone publish failed");
       }
     }
     // Publish the already-granted screen-share track (if any) as a screen source
     // so the proctor grid can show each candidate's screen next to their camera.
     // A screen failure is logged but never takes down the camera feed.
-    await attemptPublish(opts.screenStream?.getVideoTracks()[0], "screen_share", "screen");
+    await attemptPublish(opts.screenStream?.getVideoTracks()[0], Track.Source.ScreenShare, "screen");
     opts.onState?.("connected");
 
     // The published local stream: caller's stream when reused (preview keeps

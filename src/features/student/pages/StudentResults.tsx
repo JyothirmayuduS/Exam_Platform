@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
-import { STUDENT_NAV } from "@/features/student/pages/StudentExams";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
 import { useAuth } from "@/features/auth/auth";
 import { getSupabase } from "@/shared/data/supabase";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
@@ -26,9 +26,9 @@ function grade(pct: number) {
 export default function StudentResults() {
   const { user } = useAuth();
   const { profile } = useCurrentProfile();
-  
+
   const { data: results = [], isLoading } = useQuery({
-    queryKey: ['studentResults', user?.id],
+    queryKey: ["studentResults", user?.id],
     queryFn: async () => {
       const db = getSupabase();
       if (!db || !user?.id) return [];
@@ -38,7 +38,7 @@ export default function StudentResults() {
         .select("id")
         .eq("auth_id", user.id)
         .maybeSingle();
-        
+
       if (!student) return [];
 
       const { data, error } = await db
@@ -52,45 +52,45 @@ export default function StudentResults() {
       return data.map((a: any) => ({
         name: a.exam?.name || "Unknown Exam",
         code: a.exam?.id || "N/A",
-        date: a.submitted_at ? new Date(a.submitted_at).toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' }) : "N/A",
+        date: a.submitted_at
+          ? new Date(a.submitted_at).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" })
+          : "N/A",
         score: a.score ?? 0,
         outOf: a.exam?.total_marks ?? 100,
-        // If score is null it means not fully evaluated (e.g. subjective pending)
-        status: a.score === null ? "under-review" : "published"
+        status: a.score === null ? "under-review" : "published",
       })) as Result[];
     },
     enabled: !!user?.id,
   });
 
   const published = results.filter((r) => r.status === "published");
-  const avg = published.length ? Math.round(published.reduce((s, r) => s + (r.score / r.outOf) * 100, 0) / published.length) : 0;
+  const avg = published.length
+    ? Math.round(published.reduce((s, r) => s + (r.score / r.outOf) * 100, 0) / published.length)
+    : 0;
 
   return (
-    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV}>
-      <div>
-        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Performance</p>
-        <h1 className="mt-2 font-serif text-3xl font-semibold">Results</h1>
-      </div>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone={STUDENT_TONE} items={STUDENT_NAV}>
+      <section className="border border-line bg-paper">
+        <div className="border-b border-line px-5 py-5">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Performance</p>
+          <h1 className="mt-2 font-serif text-3xl font-semibold">Results</h1>
+          <p className="mt-2 text-[13px] text-ink-soft">Published scores and papers still under evaluation.</p>
+        </div>
+        <div className="grid gap-0 sm:grid-cols-3">
+          {[
+            [String(published.length), "Published"],
+            [avg ? `${avg}%` : "—", "Average score"],
+            [String(results.length - published.length), "Awaiting review"],
+          ].map(([value, label], i) => (
+            <div key={label} className={`px-5 py-4 ${i > 0 ? "border-t border-line sm:border-t-0 sm:border-l" : ""}`}>
+              <p className="font-serif text-3xl font-semibold">{value}</p>
+              <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-ink-soft">{label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
-      <div className="mt-8 grid gap-4 sm:grid-cols-3">
-        <div className="border border-line bg-paper-raised p-5">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Published</p>
-          <p className="mt-2 font-serif text-3xl">{published.length}</p>
-          <p className="mt-1 text-[12px] text-ink-soft">graded assessments</p>
-        </div>
-        <div className="border border-line bg-paper-raised p-5">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Average score</p>
-          <p className="mt-2 font-serif text-3xl text-success">{avg}%</p>
-          <p className="mt-1 text-[12px] text-ink-soft">across published results</p>
-        </div>
-        <div className="border border-line bg-paper-raised p-5">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Awaiting</p>
-          <p className="mt-2 font-serif text-3xl text-amber">{results.length - published.length}</p>
-          <p className="mt-1 text-[12px] text-ink-soft">under evaluation</p>
-        </div>
-      </div>
-
-      <div className="mt-8 overflow-x-auto border border-line">
+      <section className="mt-4 overflow-x-auto border border-line bg-paper">
         <table className="w-full min-w-[640px] text-left text-[13px]">
           <thead>
             <tr className="border-b border-line bg-paper-raised font-mono text-[10px] uppercase tracking-wider text-ink-soft">
@@ -103,28 +103,26 @@ export default function StudentResults() {
           <tbody>
             {isLoading && (
               <tr>
-                <td colSpan={4} className="p-8 text-center text-[13px] text-ink-soft">
-                  <div className="animate-pulse flex space-x-4 justify-center">
-                    <div className="h-4 bg-line rounded w-3/4"></div>
-                  </div>
-                </td>
+                <td colSpan={4} className="px-5 py-10 text-center text-ink-soft">Loading results…</td>
               </tr>
             )}
             {!isLoading && results.length === 0 && (
               <tr>
-                <td colSpan={4} className="p-10 text-center text-[13px] text-ink-soft border-t border-line border-dashed">
-                  No submitted exams found. Once you complete an exam, the results will appear here.
+                <td colSpan={4} className="px-5 py-12 text-center text-ink-soft">
+                  No submitted exams yet. Completed papers appear here after you finish.
                 </td>
               </tr>
             )}
             {results.map((r) => {
               const pct = Math.round((r.score / r.outOf) * 100);
               return (
-                <tr key={r.code} className="border-b border-line last:border-0 hover:bg-paper">
+                <tr key={r.code} className="border-b border-line last:border-0">
                   <td className="px-5 py-4">
-                    <p className="font-serif text-[15px] font-medium text-ink hover:underline">
+                    <p className="font-serif text-[15px] font-medium">
                       {r.status === "published" ? (
-                        <Link to={`/student/results/${r.code}`}>{r.name}</Link>
+                        <Link to={`/student/results/${r.code}`} className="hover:text-forest">
+                          {r.name}
+                        </Link>
                       ) : (
                         r.name
                       )}
@@ -134,16 +132,26 @@ export default function StudentResults() {
                   <td className="px-5 py-4 text-ink-soft">{r.date}</td>
                   <td className="px-5 py-4">
                     {r.status === "published" ? (
-                      <span className="font-serif text-[16px]">{r.score}<span className="text-ink-soft">/{r.outOf}</span></span>
+                      <span className="font-serif text-[16px]">
+                        {r.score}
+                        <span className="text-ink-soft">/{r.outOf}</span>
+                      </span>
                     ) : (
                       <span className="font-mono text-[10px] uppercase tracking-wider text-amber">Under review</span>
                     )}
                   </td>
                   <td className="px-5 py-4">
                     {r.status === "published" ? (
-                      <div className="flex items-center justify-between">
-                        <span className="border border-success/50 bg-success/10 px-2 py-1 font-mono text-[11px] text-success">{grade(pct)}</span>
-                        <Link to={`/student/results/${r.code}`} className="font-mono text-[9px] uppercase tracking-wider text-ink hover:underline">View Details /</Link>
+                      <div className="flex items-center gap-3">
+                        <span className="border border-forest/40 bg-forest/5 px-2 py-1 font-mono text-[11px] text-forest">
+                          {grade(pct)}
+                        </span>
+                        <Link
+                          to={`/student/results/${r.code}`}
+                          className="font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:text-forest"
+                        >
+                          Details
+                        </Link>
                       </div>
                     ) : (
                       <span className="text-ink-soft">—</span>
@@ -154,7 +162,7 @@ export default function StudentResults() {
             })}
           </tbody>
         </table>
-      </div>
+      </section>
     </RoleLayout>
   );
 }

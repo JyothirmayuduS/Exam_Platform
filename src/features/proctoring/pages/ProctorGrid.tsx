@@ -702,7 +702,17 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
   log: { time: string; text: string }[];
 }) {
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const listenAudioRef = useRef<HTMLAudioElement | null>(null);
   const [audioOn, setAudioOn] = useState(false);
+  useEffect(() => {
+    const el = listenAudioRef.current;
+    const track = feed?.audioTrack;
+    if (!el || !track) return;
+    try { track.attach(el); } catch { /* ignore */ }
+    el.muted = !audioOn;
+    if (audioOn) void el.play().catch(() => setAudioOn(false));
+    return () => { try { track.detach(el); } catch { /* ignore */ } };
+  }, [feed?.audioTrack, audioOn]);
   if (!selected) return <aside className="border border-line p-6 font-mono text-[11px] text-soft">No candidate selected.</aside>;
   return (
     <aside className="space-y-4">
@@ -732,17 +742,18 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
             <button
               onClick={() => {
                 const track = feed?.audioTrack;
-                if (!track?.mediaStreamTrack) return;
+                if (!track) return;
                 const next = !audioOn;
-                track.mediaStreamTrack.enabled = next;
+                if (track.mediaStreamTrack) track.mediaStreamTrack.enabled = true;
                 setAudioOn(next);
               }}
               disabled={!feed?.audioTrack}
               className="inline-flex items-center gap-1.5 bg-ink/80 text-paper px-2 py-1 font-mono text-[9px] hover:bg-ink transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {audioOn ? <><FiVolume2 aria-hidden /> Audio on</> : <><FiVolumeX aria-hidden /> Unmute Audio</>}
+              {audioOn ? <><FiVolume2 aria-hidden /> Listening</> : <><FiVolumeX aria-hidden /> Listen</>}
             </button>
           </div>
+          <audio ref={listenAudioRef} playsInline className="hidden" />
         </div>
         <div className="border-t border-line px-4 py-3 text-[12px] text-soft">{selected.reason ?? "No active proctoring flags. All checks passing."}</div>
       </div>

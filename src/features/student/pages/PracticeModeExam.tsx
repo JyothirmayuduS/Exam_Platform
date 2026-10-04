@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
 import { loadExamBundle, type DBQuestion } from "@/shared/data/examApi";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
 import SubjectiveQRBlock from "@/features/student/components/exam/SubjectiveQRBlock";
 
 type AnswerMap = Record<string, string>;
@@ -83,7 +84,7 @@ export default function PracticeModeExam() {
   }, [answers, questions]);
 
   return (
-    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={NAV}>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone={STUDENT_TONE} items={NAV}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">No grading · no timer · no proctoring</p>
@@ -193,7 +194,7 @@ export default function PracticeModeExam() {
       <div className="mt-6 flex flex-wrap items-center gap-3">
         <button
           onClick={() => setSubmitted(true)}
-          className="border border-maroon bg-maroon px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-paper"
+          className="border border-forest bg-forest px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-paper"
         >
           Show answers
         </button>

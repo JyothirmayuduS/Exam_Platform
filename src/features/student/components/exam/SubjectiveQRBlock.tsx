@@ -374,25 +374,25 @@ export default function SubjectiveQRBlock({
           <div className="flex-1 space-y-4">
             <ol className="space-y-3 font-serif text-[15px] text-ink">
               <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-maroon font-bold mt-0.5">01</span>
+                <span className="font-mono text-[10px] text-forest font-bold mt-0.5">01</span>
                 <span>Open your phone's camera and scan this QR code.</span>
               </li>
               <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-maroon font-bold mt-0.5">02</span>
+                <span className="font-mono text-[10px] text-forest font-bold mt-0.5">02</span>
                 <span>The link is securely tied to your exam session.</span>
               </li>
               <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-maroon font-bold mt-0.5">03</span>
+                <span className="font-mono text-[10px] text-forest font-bold mt-0.5">03</span>
                 <span>Take a clear photo of your handwritten paper and tap Submit.</span>
               </li>
               <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-maroon font-bold mt-0.5">04</span>
+                <span className="font-mono text-[10px] text-forest font-bold mt-0.5">04</span>
                 <span>The scanned PDF will appear here automatically.</span>
               </li>
             </ol>
             
             {status === "PROCESSING" && (
-              <div className="flex items-center gap-2 mt-4 px-3 py-2 bg-maroon/10 border border-maroon/20 text-maroon">
+              <div className="flex items-center gap-2 mt-4 px-3 py-2 bg-forest/10 border border-forest/20 text-forest">
                 <span className="animate-spin text-lg">⏳</span>
                 <span className="font-mono text-[10px] font-bold uppercase tracking-widest">Processing PDF & Watermarking...</span>
               </div>

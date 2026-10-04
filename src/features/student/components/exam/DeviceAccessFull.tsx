@@ -123,7 +123,7 @@ export default function DeviceAccessFull({
                       <button
                         onClick={onReRequest ?? onRequest}
                         disabled={requesting}
-                        className="border border-maroon bg-maroon px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-maroon/90 disabled:opacity-60"
+                        className="border border-forest bg-forest px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest/90 disabled:opacity-60"
                       >
                         {requesting ? "Checking…" : "Grant access again"}
                       </button>

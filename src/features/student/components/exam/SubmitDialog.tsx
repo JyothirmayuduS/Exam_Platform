@@ -23,7 +23,7 @@ export default function SubmitDialog({ open, answered, total, marked, onCancel, 
         )}
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onCancel} className="border border-line px-3 py-2 font-mono text-[11px] uppercase tracking-wider">Cancel</button>
-          <button onClick={onConfirm} className="border border-maroon bg-maroon px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper">Submit</button>
+          <button onClick={onConfirm} className="border border-forest bg-forest px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper">Submit</button>
         </div>
       </div>
     </div>

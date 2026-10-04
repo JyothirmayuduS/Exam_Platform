@@ -1273,7 +1273,7 @@ function StudentExamSession() {
           <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{blockingError}</p>
           <a
             href="/student/exams"
-            className="mt-6 inline-block border border-maroon bg-maroon px-5 py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-maroon/90"
+            className="mt-6 inline-block border border-forest bg-forest px-5 py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-forest/90"
           >
             ← Back to my exams
           </a>

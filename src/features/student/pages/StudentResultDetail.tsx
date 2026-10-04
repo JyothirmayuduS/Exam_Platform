@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
-import { STUDENT_NAV } from "@/features/student/pages/StudentExams";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
 import { useAuth } from "@/features/auth/auth";
 import { getSupabase } from "@/shared/data/supabase";
 import { useQuery } from "@tanstack/react-query";
@@ -168,7 +168,7 @@ export default function StudentResultDetail() {
 
   if (isLoading) {
     return (
-      <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV}>
+      <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone={STUDENT_TONE} items={STUDENT_NAV}>
         <div className="p-10 text-center text-ink-soft">Loading results...</div>
       </RoleLayout>
     );
@@ -176,7 +176,7 @@ export default function StudentResultDetail() {
 
   if (!data) {
     return (
-      <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV}>
+      <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone={STUDENT_TONE} items={STUDENT_NAV}>
         <div className="p-10 text-center text-alert">Failed to load exam result.</div>
       </RoleLayout>
     );
@@ -192,7 +192,7 @@ export default function StudentResultDetail() {
   const isPassed = EXAM_DETAIL.score >= EXAM_DETAIL.passMark;
 
   return (
-    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={STUDENT_NAV}>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone={STUDENT_TONE} items={STUDENT_NAV}>
       <div className="mb-6 flex items-center justify-between">
         <div>
           <Link to="/student/results" className="text-[12px] text-ink-soft hover:text-ink font-mono uppercase tracking-wider mb-2 inline-block">← Back to Results</Link>
@@ -284,7 +284,7 @@ export default function StudentResultDetail() {
                       <p><strong className="font-mono text-[9px] uppercase tracking-wider text-ink-soft block mb-1">Explanation</strong> {q.explanation}</p>
                     )}
                     {q.teacherComment && (
-                      <p className="text-maroon"><strong className="font-mono text-[9px] uppercase tracking-wider text-maroon/70 block mb-1">Teacher Note</strong> {q.teacherComment}</p>
+                      <p className="text-forest"><strong className="font-mono text-[9px] uppercase tracking-wider text-forest/70 block mb-1">Teacher Note</strong> {q.teacherComment}</p>
                     )}
                   </div>
                 )}

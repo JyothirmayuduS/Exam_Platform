@@ -7,6 +7,7 @@ import ExamCountdownBanner from "@/features/student/components/ExamCountdownBann
 import { listEnrolledExamsForAuthUser, type ExamRecord } from "@/shared/data/examApi";
 import { useAuth } from "@/features/auth/auth";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
 
 type ViewStatus = "upcoming" | "live" | "completed";
 
@@ -19,13 +20,6 @@ type Row = {
   scheduledAt: string | null;
   status: ViewStatus;
 };
-
-const nav = [
-  { label: "Overview", to: "/student", end: true },
-  { label: "My exams", to: "/student/exams" },
-  { label: "Results", to: "/student/results" },
-  { label: "Help & support", to: "/student/help" },
-];
 
 function getStatus(exam: ExamRecord): ViewStatus {
   if (!exam.scheduled_at) return exam.status === "published" ? "live" : "upcoming";
@@ -49,6 +43,12 @@ function toRow(exam: ExamRecord): Row {
   };
 }
 
+const statusTone: Record<ViewStatus, string> = {
+  live: "border-forest/40 bg-forest/5 text-forest",
+  upcoming: "border-amber/40 bg-amber/5 text-amber",
+  completed: "border-line bg-paper-raised text-ink-soft",
+};
+
 export default function StudentHome() {
   const { user } = useAuth();
   const { profile } = useCurrentProfile();
@@ -56,7 +56,7 @@ export default function StudentHome() {
   const [filter, setFilter] = useState<"all" | ViewStatus>("all");
 
   const { data: rows = [], isLoading: loading } = useQuery({
-    queryKey: ['enrolledExams', user?.id],
+    queryKey: ["enrolledExams", user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
       const exams = await listEnrolledExamsForAuthUser(user.id);
@@ -79,17 +79,37 @@ export default function StudentHome() {
     });
   }, [filter, query, rows]);
 
+  const liveCount = rows.filter((r) => r.status === "live").length;
+  const upcomingCount = rows.filter((r) => r.status === "upcoming").length;
+
   return (
-    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={nav}>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Student dashboard</p>
-          <h1 className="mt-2 font-serif text-3xl font-semibold">My enrolled exams</h1>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone={STUDENT_TONE} items={STUDENT_NAV}>
+      <section className="border border-line bg-paper">
+        <div className="flex flex-wrap items-end justify-between gap-4 border-b border-line px-5 py-5">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Student workspace</p>
+            <h1 className="mt-2 font-serif text-3xl font-semibold">Overview</h1>
+            <p className="mt-2 max-w-xl text-[13px] text-ink-soft">
+              Your enrolled papers, readiness checks, and join links — in one place.
+            </p>
+          </div>
+          <Link to="/student/exams" className="border border-forest bg-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest/90">
+            Open my exams
+          </Link>
         </div>
-        <Link to="/student/exams" className="font-mono text-[10px] uppercase tracking-wider text-soft hover:text-ink">
-          View full exams page
-        </Link>
-      </div>
+        <div className="grid gap-0 sm:grid-cols-3">
+          {[
+            [String(rows.length), "Enrolled"],
+            [String(liveCount), "Open now"],
+            [String(upcomingCount), "Upcoming"],
+          ].map(([value, label], i) => (
+            <div key={label} className={`px-5 py-4 ${i > 0 ? "border-t border-line sm:border-t-0 sm:border-l" : ""}`}>
+              <p className="font-serif text-3xl font-semibold">{value}</p>
+              <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-ink-soft">{label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <ExamCountdownBanner
         exams={rows
@@ -97,86 +117,79 @@ export default function StudentHome() {
           .map((row) => ({ id: row.id, name: row.name, startAt: row.scheduledAt }))}
       />
 
-      <section className="mt-6 flex flex-wrap gap-2">
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search exams"
-          className="min-w-[220px] border border-line bg-raised px-3 py-2 text-[13px] outline-none focus:border-ink"
-        />
-        {(["all", "upcoming", "live", "completed"] as const).map((value) => (
-          <button
-            key={value}
-            onClick={() => setFilter(value)}
-            className={`border px-3 py-2 font-mono text-[10px] uppercase tracking-wider transition-colors ${
-              filter === value ? "border-maroon bg-maroon text-paper" : "border-line bg-raised text-soft hover:border-ink hover:text-ink"
-            }`}
-          >
-            {value}
-          </button>
-        ))}
-      </section>
+      <section className="mt-4 border border-line bg-paper">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by name or batch"
+            className="min-w-[220px] flex-1 border border-line bg-paper-raised px-3 py-2 text-[13px] outline-none focus:border-forest"
+          />
+          {(["all", "upcoming", "live", "completed"] as const).map((value) => (
+            <button
+              key={value}
+              onClick={() => setFilter(value)}
+              className={`border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${
+                filter === value ? "border-forest bg-forest text-paper" : "border-line bg-paper-raised text-ink-soft hover:border-forest hover:text-forest"
+              }`}
+            >
+              {value}
+            </button>
+          ))}
+        </div>
 
-      <section className="mt-5 space-y-3">
-        {filtered.map((row) => (
-          <div key={row.id} className="border border-line bg-paper p-5 transition-colors hover:bg-raised md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="font-serif text-[17px] font-medium">{row.name}</p>
-              <p className="mt-1 text-[12px] text-soft">
-                {row.batch} · {row.duration} minutes · {row.totalMarks} marks
-              </p>
-              <p className="mt-1 font-mono text-[10px] text-soft">Exam ID: {row.id}</p>
-              <ExamCountdown startAt={row.scheduledAt} durationMinutes={row.duration} className="mt-2 block" />
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2 md:mt-0">
-              <Link
-                to={`/student/exams/${row.id}`}
-                className="border border-line bg-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-ink hover:text-ink"
-              >
-                Details
-              </Link>
-              <Link
-                to={`/student/exams/${row.id}/practice`}
-                className="border border-line bg-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-ink hover:text-ink"
-              >
-                Practice
-              </Link>
-              <Link
-                to={`/student/exams/${row.id}/system-check`}
-                className="border border-line bg-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-soft hover:border-ink hover:text-ink"
-              >
-                System check
-              </Link>
-              {row.status === "live" ? (
-                <Link
-                  to={`/student/exam?examId=${encodeURIComponent(row.id)}`}
-                  className="border border-maroon bg-maroon px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-paper"
-                >
-                  Join exam
+        <div className="divide-y divide-line">
+          {filtered.map((row) => (
+            <article key={row.id} className="flex flex-col gap-4 px-5 py-5 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="font-serif text-lg font-semibold">{row.name}</h2>
+                  <span className={`border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider ${statusTone[row.status]}`}>
+                    {row.status}
+                  </span>
+                </div>
+                <p className="mt-1 text-[13px] text-ink-soft">
+                  {row.batch} · {row.duration} min · {row.totalMarks} marks
+                </p>
+                <ExamCountdown startAt={row.scheduledAt} durationMinutes={row.duration} className="mt-2 block" />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link to={`/student/exams/${row.id}`} className="border border-line bg-paper-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">
+                  Details
                 </Link>
-              ) : (
-                <span className="border border-line bg-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-soft">
-                  {row.status}
-                </span>
-              )}
+                <Link to={`/student/exams/${row.id}/practice`} className="border border-line bg-paper-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">
+                  Practice
+                </Link>
+                <Link to={`/student/exams/${row.id}/system-check`} className="border border-line bg-paper-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">
+                  System check
+                </Link>
+                {row.status === "live" ? (
+                  <Link
+                    to={`/student/exam?examId=${encodeURIComponent(row.id)}`}
+                    className="border border-forest bg-forest px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-paper"
+                  >
+                    Join exam
+                  </Link>
+                ) : (
+                  <span className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                    {row.status === "upcoming" ? "Not open yet" : "Closed"}
+                  </span>
+                )}
+              </div>
+            </article>
+          ))}
+
+          {!loading && filtered.length === 0 && (
+            <div className="px-5 py-12 text-center text-[13px] text-ink-soft">No matching exams found.</div>
+          )}
+          {loading && (
+            <div className="space-y-0">
+              {[0, 1].map((i) => (
+                <div key={i} className="h-24 border-b border-line bg-paper-raised/60" />
+              ))}
             </div>
-          </div>
-        ))}
-
-        {!loading && filtered.length === 0 && (
-          <div className="border border-dashed border-line p-10 text-center text-[13px] text-soft">
-            No matching exams found.
-          </div>
-        )}
-
-        {loading && (
-          <div className="space-y-2">
-            {[0, 1].map((i) => (
-              <div key={i} className="h-24 border border-line bg-raised" />
-            ))}
-          </div>
-        )}
+          )}
+        </div>
       </section>
     </RoleLayout>
   );

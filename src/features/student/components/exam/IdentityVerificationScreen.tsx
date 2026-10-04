@@ -65,7 +65,7 @@ export default function IdentityVerificationScreen({
           <p className="mt-1 text-[13px] text-soft">
             This exam requires one camera capture of your face and photo ID together. Make sure both are clear and readable.
           </p>
-          <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-maroon">{examName}</p>
+          <p className="mt-2 font-mono text-[10px] uppercase tracking-wider text-forest">{examName}</p>
         </div>
 
         <div className="grid gap-5 md:grid-cols-[1fr_220px]">

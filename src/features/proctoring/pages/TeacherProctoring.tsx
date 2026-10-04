@@ -1002,113 +1002,106 @@ function VideoWall({ visible, selected, onSelect, feedFor, mobileFeedFor, source
 }
 function AudioPlayer({ track }: { track: any }) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const [isMuted, setIsMuted] = useState(true);
-  const [volume, setVolume] = useState(0.7);
-  const [audioReady, setAudioReady] = useState(false);
-  const [needsUserGesture, setNeedsUserGesture] = useState(true);
+  const [listening, setListening] = useState(false);
+  const [volume, setVolume] = useState(0.85);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const el = audioRef.current;
-    if (!el || !track) return;
-
-    // Attach the track so the audio element receives the media stream
-    track.attach(el);
-    el.volume = volume;
-    el.muted = isMuted;
-    setAudioReady(true);
-
-    // Try to play (may fail due to autoplay policy)
-    const tryPlay = async () => {
-      try {
-        await el.play();
-        setNeedsUserGesture(false);
-      } catch (err) {
-        // Autoplay blocked - user needs to click to enable
-        setNeedsUserGesture(true);
-        setIsMuted(true);
-      }
-    };
-    void tryPlay();
-
+    if (!el) return;
+    if (!track) {
+      el.srcObject = null;
+      setListening(false);
+      return;
+    }
+    try {
+      track.attach(el);
+      el.volume = volume;
+      el.muted = !listening;
+    } catch (err) {
+      console.warn("[AudioPlayer] attach failed:", err);
+    }
     return () => {
       try { track.detach(el); } catch { /* ignore */ }
     };
   }, [track]);
 
-  // Update volume when slider changes
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = volume;
-  }, [volume]);
+    const el = audioRef.current;
+    if (!el) return;
+    el.volume = volume;
+    el.muted = !listening;
+  }, [volume, listening]);
 
-  // Update muted state
-  useEffect(() => {
-    if (audioRef.current) audioRef.current.muted = isMuted;
-  }, [isMuted]);
-
-  const handleEnableAudio = async () => {
-    if (!audioRef.current) return;
-    setIsMuted(false);
-    audioRef.current.muted = false;
+  const startListening = async () => {
+    const el = audioRef.current;
+    if (!el || !track) return;
+    setError(null);
     try {
-      await audioRef.current.play();
-      setNeedsUserGesture(false);
+      if (track.mediaStreamTrack) track.mediaStreamTrack.enabled = true;
+      track.attach(el);
+      el.muted = false;
+      el.volume = volume;
+      await el.play();
+      setListening(true);
     } catch (err) {
-      console.warn("Audio play failed:", err);
+      console.warn("[AudioPlayer] play failed:", err);
+      setListening(false);
+      setError("Click again to allow audio in this browser tab.");
     }
   };
 
-  const handleToggleMute = () => {
-    setIsMuted(!isMuted);
+  const stopListening = () => {
+    const el = audioRef.current;
+    if (el) {
+      el.muted = true;
+      el.pause();
+    }
+    setListening(false);
   };
-
-  if (!track) return null;
 
   return (
     <div className="mt-3 border border-line bg-paper-raised p-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`h-2 w-2 rounded-none ${audioReady && !isMuted ? "bg-success animate-pulse" : "bg-ink-soft"}`} />
-          <span className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">
-            {isMuted ? "Muted (teacher-side only)" : "Live Audio"}
-          </span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">Candidate microphone</p>
+          <p className="mt-0.5 text-[11px] text-ink-soft">
+            {!track ? "Waiting for student mic…" : listening ? "Listening live" : "Mic available — tap Listen"}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          {needsUserGesture && (
-            <button
-              onClick={handleEnableAudio}
-              className="border border-forest bg-forest/10 px-2 py-1 font-mono text-[9px] uppercase text-forest hover:bg-forest/20"
-            >
-              <FiVolume2 aria-hidden /> Enable Audio
-            </button>
-          )}
-          <button
-            onClick={handleToggleMute}
-            disabled={needsUserGesture}
-            className={`px-2 py-1 font-mono text-[9px] uppercase ${isMuted ? "text-alert hover:bg-alert/10" : "text-success hover:bg-success/10"} ${needsUserGesture ? "opacity-50" : ""}`}
-            title={isMuted ? "Unmute (teacher only)" : "Mute (teacher only)"}
-          >
-            {isMuted ? <><FiVolumeX aria-hidden /> Muted</> : <><FiVolume2 aria-hidden /> Unmuted</>}
-          </button>
+        <button
+          type="button"
+          disabled={!track}
+          onClick={() => { if (listening) stopListening(); else void startListening(); }}
+          className={`inline-flex shrink-0 items-center gap-1.5 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider disabled:opacity-40 ${
+            listening
+              ? "border-forest bg-forest text-paper"
+              : "border-forest bg-forest/5 text-forest hover:bg-forest hover:text-paper"
+          }`}
+        >
+          {listening ? <><FiVolumeX aria-hidden /> Mute</> : <><FiVolume2 aria-hidden /> Listen</>}
+        </button>
+      </div>
+      {listening && (
+        <div className="mt-2 flex items-center gap-2">
+          <span className="font-mono text-[9px] text-ink-soft">VOL</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={volume}
+            onChange={(e) => setVolume(parseFloat(e.target.value))}
+            className="flex-1 accent-forest"
+          />
+          <span className="w-8 font-mono text-[9px] text-ink-soft">{Math.round(volume * 100)}%</span>
         </div>
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <span className="font-mono text-[9px] text-ink-soft">VOL</span>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={volume}
-          onChange={(e) => setVolume(parseFloat(e.target.value))}
-          className="flex-1 accent-forest"
-          disabled={needsUserGesture}
-        />
-        <span className="font-mono text-[9px] text-ink-soft w-8">{Math.round(volume * 100)}%</span>
-      </div>
-      <p className="mt-1.5 font-mono text-[8px] text-ink-soft/70">
-        Mute only silences audio in this proctor view. Student's mic stays active.
+      )}
+      {error && <p className="mt-2 font-mono text-[9px] text-amber">{error}</p>}
+      <p className="mt-1.5 font-mono text-[8px] text-ink-soft">
+        Mute only affects your speakers. The student mic stays live for recording.
       </p>
-      <audio ref={audioRef} autoPlay playsInline className="hidden" />
+      <audio ref={audioRef} playsInline className="hidden" />
     </div>
   );
 }

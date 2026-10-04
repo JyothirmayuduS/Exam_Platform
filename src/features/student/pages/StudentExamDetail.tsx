@@ -5,13 +5,7 @@ import ExamCountdown from "@/features/student/components/ExamCountdown";
 import SystemCheckPage from "@/shared/components/SystemCheckPage";
 import { loadExamForStudent, type ExamRecord } from "@/shared/data/examApi";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
-
-const NAV = [
-  { label: "Overview", to: "/student", end: true },
-  { label: "My exams", to: "/student/exams" },
-  { label: "Results", to: "/student/results" },
-  { label: "Help & support", to: "/student/help" },
-];
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
 
 function canStartExam(exam: ExamRecord | null): boolean {
   if (!exam) return false;
@@ -43,54 +37,64 @@ export default function StudentExamDetail() {
   const startVisible = useMemo(() => canStartExam(exam), [exam]);
 
   return (
-    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#7A1F2B" items={NAV}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exam details</p>
-          <h1 className="mt-2 font-serif text-3xl font-semibold">{exam?.name ?? "Loading..."}</h1>
+    <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone={STUDENT_TONE} items={STUDENT_NAV}>
+      <section className="border border-line bg-paper">
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-line px-5 py-5">
+          <div>
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exam details</p>
+            <h1 className="mt-2 font-serif text-3xl font-semibold">{exam?.name ?? "Loading…"}</h1>
+            <p className="mt-2 text-[13px] text-ink-soft">{exam?.batch ?? "—"} · {exam?.duration_minutes ?? 0} min · {exam?.total_marks ?? 0} marks</p>
+          </div>
+          <ExamCountdown startAt={exam?.scheduled_at ?? null} durationMinutes={exam?.duration_minutes ?? 0} />
         </div>
-        <ExamCountdown startAt={exam?.scheduled_at ?? null} durationMinutes={exam?.duration_minutes ?? 0} />
-      </div>
-
-      <section className="mt-6 grid gap-4 md:grid-cols-2">
-        <div className="border border-line bg-paper p-5">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Overview</p>
-          <p className="mt-3 text-[13px] text-ink-soft">{exam?.description ?? "No description available."}</p>
-          <ul className="mt-4 space-y-2 text-[13px] text-ink-soft">
-            <li>Name: {exam?.name ?? "-"}</li>
-            <li>Date & time: {exam?.scheduled_at ? new Date(exam.scheduled_at).toLocaleString() : "Available now"}</li>
-            <li>Duration: {exam?.duration_minutes ?? 0} minutes</li>
-            <li>Total marks: {exam?.total_marks ?? 0}</li>
-            <li>Questions: {questionCount}</li>
-            <li>Batch: {exam?.batch ?? "-"}</li>
-          </ul>
-        </div>
-
-        <div className="border border-line bg-paper p-5">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Instructions & rules</p>
-          <p className="mt-3 whitespace-pre-wrap text-[13px] text-ink-soft">
-            {exam?.instructions ?? "Follow invigilation rules. Keep camera and microphone enabled throughout the exam."}
-          </p>
-          <p className="mt-5 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Syllabus / topics covered</p>
-          <p className="mt-2 text-[13px] text-ink-soft">
-            {(exam?.settings?.topics as string | undefined) ?? "Topics are available from your teacher announcement."}
-          </p>
-          {exam?.resources_url && (
-            <a href={exam.resources_url} className="mt-4 inline-block border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">
-              Download resources (PDF) /
-            </a>
-          )}
+        <div className="grid gap-0 md:grid-cols-2">
+          <div className="border-b border-line px-5 py-5 md:border-b-0 md:border-r">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Overview</p>
+            <p className="mt-3 text-[13px] text-ink-soft">{exam?.description ?? "No description available."}</p>
+            <dl className="mt-4 space-y-2 text-[13px]">
+              <div className="flex justify-between gap-4 border-b border-line py-2">
+                <dt className="text-ink-soft">Schedule</dt>
+                <dd>{exam?.scheduled_at ? new Date(exam.scheduled_at).toLocaleString() : "Available now"}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-line py-2">
+                <dt className="text-ink-soft">Questions</dt>
+                <dd>{questionCount}</dd>
+              </div>
+              <div className="flex justify-between gap-4 py-2">
+                <dt className="text-ink-soft">Batch</dt>
+                <dd>{exam?.batch ?? "—"}</dd>
+              </div>
+            </dl>
+          </div>
+          <div className="px-5 py-5">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Instructions</p>
+            <p className="mt-3 whitespace-pre-wrap text-[13px] text-ink-soft">
+              {exam?.instructions ?? "Follow invigilation rules. Keep camera and microphone enabled throughout the exam."}
+            </p>
+            <p className="mt-5 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Topics</p>
+            <p className="mt-2 text-[13px] text-ink-soft">
+              {(exam?.settings?.topics as string | undefined) ?? "Topics are shared by your teacher."}
+            </p>
+            {exam?.resources_url && (
+              <a
+                href={exam.resources_url}
+                className="mt-4 inline-block border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest"
+              >
+                Download resources
+              </a>
+            )}
+          </div>
         </div>
       </section>
 
-      <section className="mt-6 border border-line bg-paper p-5">
+      <section className="mt-4 border border-line bg-paper px-5 py-5">
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">FAQ</p>
         <div className="mt-3 space-y-2">
           {(exam?.faq ?? [
-            { question: "Can I rejoin if internet disconnects?", answer: "Yes, rejoin immediately using the same exam link." },
-            { question: "Can I use practice mode before exam?", answer: "Yes, practice mode is available at all times." },
+            { question: "Can I rejoin if internet disconnects?", answer: "Yes — rejoin immediately using the same exam link." },
+            { question: "Can I use practice mode before exam?", answer: "Yes. Practice mode is available at all times." },
           ]).map((item) => (
-            <details key={item.question} className="border border-line p-3">
+            <details key={item.question} className="border border-line bg-paper-raised p-3">
               <summary className="cursor-pointer font-medium">{item.question}</summary>
               <p className="mt-2 text-[13px] text-ink-soft">{item.answer}</p>
             </details>
@@ -98,18 +102,23 @@ export default function StudentExamDetail() {
         </div>
       </section>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
         <SystemCheckPage />
         <section className="border border-line bg-paper p-5">
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Practice</p>
-          <p className="mt-3 text-[13px] text-ink-soft">Try sample questions before starting the real exam.</p>
-          <Link to={`/student/exams/${examId}/practice`} className="mt-4 inline-block border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:text-ink">
-            Open practice mode /
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Ready to begin</p>
+          <p className="mt-3 text-[13px] text-ink-soft">Practice first, then start when the window opens.</p>
+          <Link
+            to={`/student/exams/${examId}/practice`}
+            className="mt-4 inline-block border border-line bg-paper-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest"
+          >
+            Open practice mode
           </Link>
-
           {startVisible && (
-            <Link to={`/student/exam?examId=${encodeURIComponent(examId)}`} className="mt-4 block border border-maroon bg-maroon px-4 py-3 text-center font-mono text-[10px] uppercase tracking-wider text-paper">
-              Start Exam
+            <Link
+              to={`/student/exam?examId=${encodeURIComponent(examId)}`}
+              className="mt-3 block border border-forest bg-forest px-4 py-3 text-center font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest/90"
+            >
+              Start exam
             </Link>
           )}
         </section>
