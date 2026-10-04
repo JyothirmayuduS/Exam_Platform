@@ -103,8 +103,8 @@ export default function TeacherExams({
   const drafts = cards.filter((c) => c.state === "Draft").length;
 
   return (
-    <div className="sheet">
-      <header className="sheet-top">
+    <div className="desk">
+      <header className="desk-hello">
         <div>
           <h1>My tests</h1>
           <p>{live} live, {scheduled} scheduled, {drafts} still in draft.</p>
@@ -112,7 +112,7 @@ export default function TeacherExams({
         <Button primary icon={<PlusIcon />} onClick={() => setShowCreate(true)}>Create new test</Button>
       </header>
 
-      <nav className="sheet-filters" aria-label="Filter tests">
+      <nav className="desk-filters" aria-label="Filter tests">
         {[
           ["All exams", cards.length],
           ["Live", live],
@@ -126,47 +126,47 @@ export default function TeacherExams({
       </nav>
 
       {filtered.length === 0 ? (
-        <div className="sheet-block">
-          <p className="sheet-empty">Nothing in this list.</p>
-          <Button primary onClick={() => setShowCreate(true)}>Create a test</Button>
+        <div>
+          <p className="desk-empty">Nothing in this view. Create a test and it will appear as a card.</p>
+          <div className="desk-actions">
+            <Button primary onClick={() => setShowCreate(true)}>Create a test</Button>
+          </div>
         </div>
       ) : (
-        <ul className="sheet-list">
+        <div className="desk-cards">
           {filtered.map((exam) => (
-            <li key={exam.id} className="sheet-row" style={{ cursor: "default" }}>
-              <span className="sheet-row-main">
-                <strong>{exam.name}</strong>
-                <em>
-                  {exam.batch}
-                  {" · "}
-                  {exam.questionCount ? `${exam.questionCount} questions` : "No questions yet"}
-                  {" · "}
-                  {exam.duration ? `${exam.duration} min` : "No duration"}
-                  {" · "}
-                  {exam.takers} sitting
-                </em>
-              </span>
-              <span className={`sheet-status ${exam.tone}`}>{exam.state}</span>
-              <Button
-                size="sm"
-                onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
-                iconRight={<ArrowRightIcon />}
-              >
-                {exam.state === "Draft" ? "Continue" : "Open"}
-              </Button>
-              <button
-                type="button"
-                onClick={() => setDeleting(exam)}
-                aria-label={`Delete ${exam.name}`}
-                title="Delete this test"
-                className="q-links"
-                style={{ width: 36, height: 36, justifyContent: "center", color: "inherit" }}
-              >
-                <FiTrash2 aria-hidden />
-              </button>
-            </li>
+            <article key={exam.id} className="desk-card" data-state={exam.state}>
+              <div className="desk-card-top">
+                <h3>{exam.name}</h3>
+                <span className={`desk-status ${exam.tone}`}>{exam.state}</span>
+              </div>
+              <p>{exam.batch}</p>
+              <p>
+                {exam.questionCount ? `${exam.questionCount} questions` : "No questions yet"}
+                {" · "}
+                {exam.duration ? `${exam.duration} min` : "Duration not set"}
+                {" · "}
+                {exam.takers} sitting
+              </p>
+              <div className="desk-card-actions">
+                <Button
+                  onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
+                  iconRight={<ArrowRightIcon />}
+                >
+                  {exam.state === "Draft" ? "Continue setup" : "Open test"}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setDeleting(exam)}
+                  aria-label={`Delete ${exam.name}`}
+                  className="desk-icon"
+                >
+                  <FiTrash2 aria-hidden />
+                </button>
+              </div>
+            </article>
           ))}
-        </ul>
+        </div>
       )}
       {showCreate && (
         <CreateTestModal

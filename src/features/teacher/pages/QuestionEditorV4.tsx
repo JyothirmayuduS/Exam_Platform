@@ -245,15 +245,15 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
   const isSubj = type === "Subjective";
 
   return (
-    <div className="sheet">
-      <header className="sheet-top">
+    <div className="desk">
+      <header className="desk-hello">
         <div>
           <h1>{editId ? "Edit question" : "Create a question"}</h1>
-          <p>{examId ? `This question is saved on ${examId}.` : "This question is saved in the general bank."}</p>
+          <p>{examId ? `Saved onto ${examId}.` : "Saved into the general bank."}</p>
         </div>
-        <div className="q-links">
-          <button type="button" onClick={() => setBulkOpen((o) => !o)}><FiUpload /> Bulk upload CSV</button>
-          <button type="button" onClick={() => navigate(exitPath)}><FiArrowLeft /> Back</button>
+        <div className="desk-tools">
+          <button type="button" onClick={() => setBulkOpen((o) => !o)}><FiUpload aria-hidden /> Bulk upload CSV</button>
+          <button type="button" onClick={() => navigate(exitPath)}><FiArrowLeft aria-hidden /> Back</button>
         </div>
       </header>
 
@@ -325,92 +325,95 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
         </section>
       )}
 
-      <form className="q-form" onSubmit={(e) => { e.preventDefault(); void saveOne(); }}>
-        <label className="q-field">
-          Format
-          <select value={type} onChange={(e) => setType(e.target.value)}>
-            {TYPES.map((item) => <option key={item}>{item}</option>)}
-          </select>
-        </label>
+      <form className="desk-form" onSubmit={(e) => { e.preventDefault(); void saveOne(); }}>
+        <div className="desk-types" role="radiogroup" aria-label="Question format">
+          {TYPES.map((item) => (
+            <button key={item} type="button" role="radio" aria-checked={type === item} className={`desk-type ${type === item ? "is-on" : ""}`} onClick={() => setType(item)}>
+              {item}
+            </button>
+          ))}
+        </div>
 
-        <label className="q-field">
-          Question
-          <textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={4} placeholder="Write the complete question…" />
-        </label>
-
-        {(isMcq || isMsq) && (
-          <fieldset className="q-field">
-            <legend>{isMsq ? "Options — mark every correct one" : "Options — mark the correct one"}</legend>
-            {options.map((opt, i) => {
-              const picked = isMsq ? correctSet.includes(i) : correct === i;
-              return (
-                <div key={i} className={`q-option-line ${picked ? "is-on" : ""}`}>
-                  <span>{String.fromCharCode(65 + i)}</span>
-                  <input value={opt} onChange={(e) => setOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))} placeholder={`Option ${String.fromCharCode(65 + i)}`} />
-                  <button
-                    type="button"
-                    onClick={() => (isMsq
-                      ? setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]))
-                      : setCorrect(i))}
-                  >
-                    {picked ? "Correct" : "Mark correct"}
-                  </button>
-                </div>
-              );
-            })}
-          </fieldset>
-        )}
-
-        {isTf && (
-          <div className="q-field">
-            Answer
-            {["True", "False"].map((label, i) => (
-              <button key={label} type="button" onClick={() => setCorrect(i)} className={`q-choice ${correct === i ? "is-on" : ""}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {isNum && (
-          <label className="q-field">
-            Expected answer
-            <input value={expected} onChange={(e) => setExpected(e.target.value)} placeholder="e.g. 42 or 3.14" />
+        <section className="desk-panel">
+          <label className="desk-field">
+            Question
+            <textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={4} placeholder="Write the complete question…" name="question" autoComplete="off" />
           </label>
-        )}
 
-        {isSubj && (
-          <div className="q-field">
-            How the student answers
-            {([["both", "QR and an answer box"], ["qr", "QR upload only"], ["textbox", "Answer box only"]] as const).map(([mode, label]) => (
-              <button key={mode} type="button" onClick={() => setSubjectiveMode(mode)} className={`q-choice ${subjectiveMode === mode ? "is-on" : ""}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+          {(isMcq || isMsq) && (
+            <fieldset className="desk-field">
+              <legend>{isMsq ? "Mark every correct option" : "Mark the correct option"}</legend>
+              {options.map((opt, i) => {
+                const picked = isMsq ? correctSet.includes(i) : correct === i;
+                return (
+                  <div key={i} className={`desk-option ${picked ? "is-on" : ""}`}>
+                    <span>{String.fromCharCode(65 + i)}</span>
+                    <input value={opt} onChange={(e) => setOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))} placeholder={`Option ${String.fromCharCode(65 + i)}`} aria-label={`Option ${String.fromCharCode(65 + i)}`} autoComplete="off" />
+                    <button
+                      type="button"
+                      onClick={() => (isMsq
+                        ? setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]))
+                        : setCorrect(i))}
+                    >
+                      {picked ? "Correct" : "Mark correct"}
+                    </button>
+                  </div>
+                );
+              })}
+            </fieldset>
+          )}
 
-        <label className="q-field">
-          Unit
-          <select value={unit} onChange={(e) => setUnit(e.target.value)}>
-            {UNITS.map((u) => <option key={u}>{u}</option>)}
-          </select>
-        </label>
-        <label className="q-field">
-          Difficulty
-          <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
-            {DIFFICULTIES.map((d) => <option key={d}>{d}</option>)}
-          </select>
-        </label>
-        <label className="q-field">
-          Marks
-          <input type="number" min={0} step={0.5} value={marks} onChange={(e) => setMarks(Number(e.target.value) || 0)} />
-        </label>
+          {isTf && (
+            <div className="desk-field">
+              Answer
+              {["True", "False"].map((label, i) => (
+                <button key={label} type="button" onClick={() => setCorrect(i)} className={`desk-choice ${correct === i ? "is-on" : ""}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
-        <button type="submit" disabled={saving || !title.trim()} className="q-save">
-          {saving ? "Saving…" : editId ? "Update question" : "Save to question bank"}
-        </button>
-        <p className="sheet-quiet" style={{ marginTop: 10 }}>{type} · {difficulty} · {marks} mark{marks === 1 ? "" : "s"}</p>
+          {isNum && (
+            <label className="desk-field">
+              Expected answer
+              <input value={expected} onChange={(e) => setExpected(e.target.value)} placeholder="42 or 3.14" name="expected" inputMode="decimal" autoComplete="off" />
+            </label>
+          )}
+
+          {isSubj && (
+            <div className="desk-field">
+              How the student answers
+              {([["both", "QR and an answer box"], ["qr", "QR upload only"], ["textbox", "Answer box only"]] as const).map(([mode, label]) => (
+                <button key={mode} type="button" onClick={() => setSubjectiveMode(mode)} className={`desk-choice ${subjectiveMode === mode ? "is-on" : ""}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <label className="desk-field">
+            Unit
+            <select value={unit} onChange={(e) => setUnit(e.target.value)} name="unit">
+              {UNITS.map((u) => <option key={u}>{u}</option>)}
+            </select>
+          </label>
+          <label className="desk-field">
+            Difficulty
+            <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} name="difficulty">
+              {DIFFICULTIES.map((d) => <option key={d}>{d}</option>)}
+            </select>
+          </label>
+          <label className="desk-field">
+            Marks
+            <input type="number" min={0} step={0.5} value={marks} onChange={(e) => setMarks(Number(e.target.value) || 0)} name="marks" inputMode="decimal" />
+          </label>
+
+          <button type="submit" disabled={saving || !title.trim()} className="desk-save">
+            {saving ? "Saving…" : editId ? "Update question" : "Save to question bank"}
+          </button>
+          <p className="desk-quiet" style={{ marginTop: 10 }}>{type}, {difficulty}, {marks} mark{marks === 1 ? "" : "s"}</p>
+        </section>
       </form>
     </div>
   );
