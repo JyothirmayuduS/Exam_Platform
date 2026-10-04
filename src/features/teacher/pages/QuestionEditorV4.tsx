@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { FiUpload, FiArrowLeft, FiX, FiDownload, FiCheck } from "react-icons/fi";
 import { saveQuestion, type DBQuestion } from "@/shared/data/examApi";
+import "./teacherSurfaces.css";
 
 type Props = { notify: (message: string) => void; navigate: (path: string) => void };
 
@@ -245,18 +246,18 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
   const isSubj = type === "Subjective";
 
   return (
-    <div>
-      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+    <div className="surface">
+      <header className="surface-head">
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question bank / {editId ? `Edit ${editId}` : "New question"}{examId ? ` · ${examId}` : ""}</p>
-          <h1 className="mt-2 font-serif text-3xl font-semibold">{editId ? "Edit question" : "Create a question"}</h1>
-          <p className="mt-2 text-[13px] text-ink-soft">Saved straight to the database — difficulty, unit and marks are part of the question, so they show up in the pool and the paper.</p>
+          <p className="surface-eyebrow">Question bank / {editId ? `Edit ${editId}` : "New question"}{examId ? ` · ${examId}` : ""}</p>
+          <h1 className="surface-title">{editId ? "Edit question" : "Create a question"}</h1>
+          <p className="surface-detail">Type, prompt, options, and marks save together into the question bank.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button onClick={() => setBulkOpen((o) => !o)} className="inline-flex items-center gap-2 border border-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest"><FiUpload /> Bulk upload CSV/Excel</button>
-          <button onClick={() => navigate(exitPath)} className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft"><FiArrowLeft /> Back</button>
+        <div className="surface-toolbar-actions">
+          <button type="button" onClick={() => setBulkOpen((o) => !o)} className="q-ghost"><FiUpload /> Bulk upload CSV</button>
+          <button type="button" onClick={() => navigate(exitPath)} className="q-ghost"><FiArrowLeft /> Back</button>
         </div>
-      </div>
+      </header>
 
       {bulkOpen && (
         <section className="mt-6 border border-forest bg-success/5 p-5 sm:p-6">
@@ -330,10 +331,10 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
         <div className="space-y-6">
           <section className="border border-line bg-paper p-6">
             <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">1 · Question format</p>
-            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <div className="q-types">
               {TYPES.map((item) => (
-                <button key={item} onClick={() => setType(item)} className={`border px-3 py-3 text-left text-[12px] ${type === item ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft hover:border-forest"}`}>
-                  <span className="block font-medium">{item}</span>
+                <button key={item} type="button" onClick={() => setType(item)} className={type === item ? "is-on" : ""}>
+                  {item}
                 </button>
               ))}
             </div>
@@ -352,20 +353,17 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
                 {options.map((opt, i) => {
                   const picked = isMsq ? correctSet.includes(i) : correct === i;
                   return (
-                    <div key={i} className={`mt-3 border px-3 py-2.5 ${picked ? "border-forest bg-success/5" : "border-line-strong"}`}>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Option {String.fromCharCode(65 + i)}</span>
-                        <button
-                          type="button"
-                          onClick={() => (isMsq
-                            ? setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]))
-                            : setCorrect(i))}
-                          className={`font-mono text-[9px] uppercase tracking-wider ${picked ? "text-forest" : "text-ink-soft hover:text-forest"}`}
-                        >
-                          {picked ? "✓ correct" : "mark correct"}
-                        </button>
-                      </div>
-                      <input value={opt} onChange={(e) => setOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))} placeholder={`Enter option ${String.fromCharCode(65 + i)}`} className={inputClass} />
+                    <div key={i} className={`q-option ${picked ? "is-on" : ""}`}>
+                      <span>Option {String.fromCharCode(65 + i)}</span>
+                      <input value={opt} onChange={(e) => setOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))} placeholder={`Enter option ${String.fromCharCode(65 + i)}`} />
+                      <button
+                        type="button"
+                        onClick={() => (isMsq
+                          ? setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]))
+                          : setCorrect(i))}
+                      >
+                        {picked ? "Correct" : "Mark correct"}
+                      </button>
                     </div>
                   );
                 })}

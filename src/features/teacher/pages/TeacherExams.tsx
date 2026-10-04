@@ -10,6 +10,7 @@ import { PageHeading, Button } from "@/features/teacher/pages/TeacherDashboard";
 import { PlusIcon, ArrowRightIcon } from "@/shared/components/ui";
 import { FiGrid, FiList, FiTrash2 } from "react-icons/fi";
 import CreateTestModal from "@/features/teacher/components/teacher/CreateTestModal";
+import "./teacherSurfaces.css";
 
 type ExamCard = {
   id: string;
@@ -103,73 +104,68 @@ export default function TeacherExams({
   const drafts = cards.filter((c) => c.state === "Draft").length;
 
   return (
-    <div>
-      <PageHeading
-        eyebrow="Faculty console / Exams"
-        title="My tests"
-        detail="Create exam papers, add questions, set schedules, and publish — every test card below is a live assessment."
-        action={<Button primary icon={<PlusIcon />} onClick={() => setShowCreate(true)}>Create new test</Button>}
-      />
+    <div className="surface">
+      <header className="surface-head">
+        <div>
+          <p className="surface-eyebrow">Faculty console / Exams</p>
+          <h1 className="surface-title">My tests</h1>
+          <p className="surface-detail">Every card is one assessment. Open a live test, or continue a draft in the paper builder.</p>
+        </div>
+        <Button primary icon={<PlusIcon />} onClick={() => setShowCreate(true)}>Create new test</Button>
+      </header>
 
-      <div className="mt-8 grid gap-4 sm:grid-cols-3">
-        <MiniStat label="Published" value={String(live)} detail="Currently live" tone="text-forest" onClick={() => setFilter("Live")} />
-        <MiniStat label="Scheduled" value={String(scheduled)} detail="Upcoming assessments" tone="text-amber" onClick={() => setFilter("Scheduled")} />
-        <MiniStat label="Drafts" value={String(drafts)} detail="Need your attention" tone="text-ink" onClick={() => setFilter("Draft")} />
+      <div className="surface-stats surface-stats-3">
+        <button type="button" className="surface-stat" onClick={() => setFilter("Live")}><span>Published</span><strong className="text-forest">{live}</strong><em>Currently live</em></button>
+        <button type="button" className="surface-stat" onClick={() => setFilter("Scheduled")}><span>Scheduled</span><strong className="text-amber">{scheduled}</strong><em>Upcoming assessments</em></button>
+        <button type="button" className="surface-stat" onClick={() => setFilter("Draft")}><span>Drafts</span><strong>{drafts}</strong><em>Need your attention</em></button>
       </div>
 
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-1 border border-line bg-paper-raised p-1">
+      <div className="surface-toolbar">
+        <div className="surface-tabs">
           {["All exams", "Live", "Scheduled", "Draft"].map((item) => (
-            <button key={item} onClick={() => setFilter(item)} className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider ${filter === item ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}>
-              {item}
-            </button>
+            <button key={item} type="button" onClick={() => setFilter(item)} className={filter === item ? "is-on" : ""}>{item}</button>
           ))}
         </div>
-        <div className="flex border border-line bg-paper-raised p-1">
-          <button onClick={() => setView("cards")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${view === "cards" ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}><FiGrid aria-hidden /> Cards</button>
-          <button onClick={() => setView("list")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${view === "list" ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}><FiList aria-hidden /> List</button>
+        <div className="surface-tabs">
+          <button type="button" onClick={() => setView("cards")} className={view === "cards" ? "is-on" : ""}><FiGrid aria-hidden /> Cards</button>
+          <button type="button" onClick={() => setView("list")} className={view === "list" ? "is-on" : ""}><FiList aria-hidden /> List</button>
         </div>
       </div>
 
       {view === "cards" ? (
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="test-grid">
           {filtered.map((exam) => (
-            <div key={exam.id} className="group relative flex flex-col border border-line bg-paper transition hover:-translate-y-0.5 hover:border-forest hover:shadow-md">
-              {/* dog-ear */}
-              <span className="absolute right-0 top-0 h-0 w-0 border-l-[22px] border-t-[22px] border-l-paper border-t-line" />
-              <div className="px-5 pt-5">
-                <div className="flex items-start justify-between gap-3 pr-3">
-                  <p className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">{exam.id}</p>
-                  <span className={`font-mono text-[9px] uppercase tracking-wider ${exam.tone}`}>{exam.state}</span>
-                </div>
-                <h3 className="mt-3 font-serif text-lg font-semibold leading-snug group-hover:text-forest">{exam.name}</h3>
-                <p className="mt-1 text-[11px] text-ink-soft">{exam.batch}</p>
+            <article key={exam.id} className="test-card">
+              <div className="test-card-top">
+                <p>{exam.id}</p>
+                <span className={exam.tone}>{exam.state}</span>
               </div>
-              <div className="mt-6 grid grid-cols-3 border-t border-line px-5 py-4">
-                <CardStat label="Questions" value={exam.questionCount ? String(exam.questionCount) : "—"} />
-                <CardStat label="Duration" value={exam.duration ? `${exam.duration}m` : "—"} />
-                <CardStat label="Test takers" value={String(exam.takers)} />
+              <h3>{exam.name}</h3>
+              <p className="test-card-batch">{exam.batch}</p>
+              <dl className="test-card-stats">
+                <div><dt>Questions</dt><dd>{exam.questionCount ? String(exam.questionCount) : "—"}</dd></div>
+                <div><dt>Duration</dt><dd>{exam.duration ? `${exam.duration}m` : "—"}</dd></div>
+                <div><dt>Test takers</dt><dd>{exam.takers}</dd></div>
+              </dl>
+              <div className="test-card-actions">
+                <Button
+                  onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
+                  iconRight={<ArrowRightIcon />}
+                  className="min-w-0 flex-1"
+                >
+                  {exam.state === "Draft" ? "Continue setup" : "Open test"}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setDeleting(exam)}
+                  aria-label={`Delete ${exam.name}`}
+                  title="Delete this test"
+                  className="test-card-delete"
+                >
+                  <FiTrash2 aria-hidden />
+                </button>
               </div>
-              <div className="mt-auto border-t border-line p-3">
-                <div className="flex items-center gap-2">
-                  <Button
-                    onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
-                    iconRight={<ArrowRightIcon />}
-                    className="min-w-0 flex-1"
-                  >
-                    {exam.state === "Draft" ? "Continue setup" : "Open test"}
-                  </Button>
-                  <button
-                    onClick={() => setDeleting(exam)}
-                    aria-label={`Delete ${exam.name}`}
-                    title="Delete this test"
-                    className="shrink-0 border border-line-strong p-2.5 text-ink-soft transition hover:border-alert hover:bg-alert/10 hover:text-alert"
-                  >
-                    <FiTrash2 aria-hidden />
-                  </button>
-                </div>
-              </div>
-            </div>
+            </article>
           ))}
           {filtered.length === 0 && (
             <div className="col-span-full border border-dashed border-line-strong p-12 text-center sm:col-span-2 xl:col-span-4">

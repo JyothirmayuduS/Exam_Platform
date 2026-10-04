@@ -107,9 +107,14 @@ export async function collectSnapshotTimeline(
   }
 
   const snaps = artifacts
-    .filter((a) => a.kind === "screenshots")
-    .map((a) => ({ key: a.key, epochMs: snapEpochFromKey(a.key) }))
-    .filter((s): s is { key: string; epochMs: number } => s.epochMs !== null)
+    .filter((a) => a.kind === "screenshots" || a.kind === "violations" || a.kind === "ai_evidence")
+    .map((a) => {
+      const fromName = snapEpochFromKey(a.key) ?? snapEpochFromKey(a.name);
+      const fromModified = a.lastModified ? Date.parse(a.lastModified) : NaN;
+      const epochMs = fromName ?? (Number.isFinite(fromModified) ? fromModified : null);
+      return epochMs == null ? null : { key: a.key, epochMs };
+    })
+    .filter((s): s is { key: string; epochMs: number } => s !== null)
     .sort((a, b) => a.epochMs - b.epochMs);
   if (snaps.length === 0) return null;
 
@@ -270,6 +275,59 @@ export async function drawSnapshotTimeline(doc: jsPDF, row: ReportRow, examId: s
   return timeline.length;
 }
 
+/** List every stored recording and monitor clip so the PDF names the audio, not only the frames. */
+async function drawAudioInventory(doc: jsPDF, row: ReportRow, examId: string): Promise<void> {
+  let folderExamId = examId;
+  if (row.roll && examId.endsWith(`-${row.roll}`)) {
+    folderExamId = examId.slice(0, examId.length - row.roll.length - 1);
+  }
+  let artifacts;
+  try {
+    artifacts = await listStudentArtifacts(folderExamId, row.roll);
+  } catch {
+    return;
+  }
+  const clips = (artifacts ?? []).filter((a) => a.kind === "recordings" || a.kind === "monitor");
+  const W = doc.internal.pageSize.getWidth();
+  const M = 32;
+  doc.addPage();
+  doc.setFillColor(26, 58, 42);
+  doc.rect(0, 0, W, 56, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.text(`Audio and recordings — ${row.name} (${row.roll})`, M, 26);
+  doc.setFontSize(8);
+  doc.text("Exam microphone audio is stored inside the recording files. Monitor clips are the phone-desk audio.", M, 43);
+  let y = 84;
+  doc.setTextColor(30, 30, 30);
+  doc.setFontSize(10);
+  if (clips.length === 0) {
+    doc.setTextColor(155, 28, 28);
+    doc.text("No recording or monitor audio was stored for this candidate.", M, y);
+    return;
+  }
+  for (const clip of clips) {
+    if (y > 520) { doc.addPage(); y = 60; }
+    const when = clip.lastModified ? new Date(clip.lastModified).toLocaleString() : "time unknown";
+    const kb = clip.size ? `${Math.max(1, Math.round(clip.size / 1024))} KB` : "size unknown";
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(30, 30, 30);
+    doc.text(clip.kind === "monitor" ? "Monitor audio" : "Exam recording (camera + microphone)", M, y);
+    y += 14;
+    doc.setFont("courier", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(80, 80, 80);
+    const lines = doc.splitTextToSize(`${clip.name} · ${kb} · ${when}`, W - M * 2) as string[];
+    for (const line of lines) {
+      doc.text(line, M, y);
+      y += 11;
+    }
+    y += 10;
+    doc.setFontSize(10);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PDF
 // ─────────────────────────────────────────────────────────────────────────────
@@ -384,13 +442,15 @@ export async function downloadSessionReportPdf(
   // that occurred under it and their timestamps. NOTE: drawSnapshotTimeline
   // receives the examId only for the DB/storage folder resolution — the
   // collector also tolerates the `${examId}-${roll}` filename id.
-  if (opts.includeSnapshots !== false) {
+  // Every export embeds the full per-second snapshot timeline and the audio inventory.
+  {
     let index = 0;
     for (const r of rows) {
       index += 1;
-      opts.onProgress?.(`Building PDF · ${r.name} · snapshots ${index} of ${rows.length}`);
+      opts.onProgress?.(`Building PDF · ${r.name} · every snapshot and the audio (${index} of ${rows.length})`);
       try {
         await drawSnapshotTimeline(doc, r, examId);
+        await drawAudioInventory(doc, r, examId);
       } catch (err) {
         console.warn(`[sessionReport] snapshot timeline failed for ${r.roll}:`, err);
         doc.addPage();

@@ -4,6 +4,7 @@ import { FiUpload, FiCheck } from "react-icons/fi";
 import { useLocation, useNavigate } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
 import QuestionEditorV4 from "@/features/teacher/pages/QuestionEditorV4";
+import "./teacherSurfaces.css";
 import ExaminerDashboard from "@/features/teacher/pages/ExaminerDashboard";
 import ExamStudio from "@/features/teacher/pages/ExamStudio";
 import TeacherExams from "@/features/teacher/pages/TeacherExams";
@@ -151,13 +152,77 @@ export function Button({ children, onClick, primary = false, disabled = false, i
 function Metric({ label, value, detail, tone, onClick }: { label: string; value: string; detail: string; tone: string; onClick?: () => void }) { return <div onClick={onClick} className={`border border-line bg-raised p-5 ${onClick ? "cursor-pointer hover:border-forest" : ""}`}><p className="font-mono text-[10px] uppercase tracking-widest text-soft">{label}</p><p className={`mt-2 font-serif text-3xl ${tone}`}>{value}</p><p className="mt-1 text-[12px] text-soft">{detail}</p></div>; }
 function Overview({ notify, navigate, examsList, loading, avgScore, scoredCount, stats }: { notify: (s: string) => void; navigate: (s: string) => void; examsList: any[]; loading: boolean; avgScore: string | null; scoredCount: number; stats: { live: number, submitted: number, flagged: number } }) {
   const { profile } = useCurrentProfile();
-  return <><PageHeading eyebrow="Overview" title={`Good morning, ${profile?.full_name?.split(' ')[0] ?? 'Faculty'}.`} detail="Here is what needs your attention today." action={<Button primary icon={<PlusIcon />} onClick={() => navigate("/teacher/exams/new")}>New exam</Button>} /><div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Live candidates" value={String(stats.live)} detail="Currently active" tone="text-alert" onClick={() => navigate("/teacher/submissions")}/><Metric label="Needs review" value={String(stats.submitted)} detail={`${stats.flagged} flagged`} tone="text-amber" onClick={() => navigate("/teacher/evaluate")}/><Metric label="My questions" value={String(examsList.reduce((acc, e) => acc + (parseInt(e.count) || 0), 0))} detail="Questions across exams" tone="text-forest" onClick={() => navigate("/teacher/bank")}/><Metric label="Avg. score" value={avgScore != null ? `${avgScore}%` : "—"} detail={avgScore != null ? `Across ${scoredCount} scored attempt(s)` : "No scored attempts yet"} tone="text-ink" onClick={() => navigate("/teacher/reports")}/></div><div className="mt-9 grid gap-8 xl:grid-cols-[1fr_340px]"><section><div className="flex items-center justify-between"><h2 className="font-serif text-xl font-semibold">Exam activity</h2><button onClick={() => navigate("/teacher/exams")} className="font-mono text-[10px] uppercase tracking-wider text-soft hover:text-ink">Manage exams /</button></div><div className="mt-3 space-y-2">{loading ? <div className="p-5 text-center text-[12px] text-soft">Loading...</div> : examsList.length === 0 ? <div className="p-5 text-center text-[12px] text-soft">No exams found.</div> : examsList.slice(0, 5).map((exam) => <div key={exam.id} className="border border-line bg-paper p-5"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div><p className="font-serif text-[16px] font-medium">{exam.name}</p><p className="mt-1 text-[12px] text-soft">{exam.batch}</p></div><span className={`font-mono text-[10px] uppercase tracking-wider ${exam.tone}`}>{exam.state}</span></div><div className="mt-5 flex items-center gap-4"><div className="h-1.5 flex-1 bg-line"><div className="h-full bg-forest" style={{ width: `${exam.progress}%` }}/></div><span className="min-w-[110px] text-right font-mono text-[10px] text-soft">{exam.count}</span></div></div>)}</div></section><aside><div className="flex items-center justify-between"><h2 className="font-serif text-xl font-semibold">Action queue</h2><span className="rounded-none bg-ink px-2 py-0.5 font-mono text-[9px] text-paper">{stats.flagged + stats.submitted}</span></div><div className="mt-3 divide-y divide-line border border-line">{[{ label: "Review flagged submissions", count: `${stats.flagged} pending`, to: "/teacher/submissions" }, { label: "Grade subjective answers", count: `${stats.submitted} remaining`, to: "/teacher/evaluate" }, { label: "Open performance reports", count: "Analytics", to: "/teacher/reports" }].map((item) => <button key={item.label} onClick={() => navigate(item.to)} className="flex w-full items-center justify-between gap-4 bg-raised p-4 text-left hover:bg-paper"><span className="text-[13px]">{item.label}</span><span className="whitespace-nowrap font-mono text-[10px] text-amber">{item.count} /</span></button>)}</div></aside></div></>;
+  const first = profile?.full_name?.split(" ")[0] ?? "Faculty";
+  const questionCount = examsList.reduce((acc, e) => acc + (parseInt(e.count) || 0), 0);
+  return (
+    <div className="surface">
+      <header className="surface-head">
+        <div>
+          <p className="surface-eyebrow">Overview</p>
+          <h1 className="surface-title">Good morning, {first}.</h1>
+          <p className="surface-detail">Live candidates, drafts, and the queue that still needs you.</p>
+        </div>
+        <Button primary icon={<PlusIcon />} onClick={() => navigate("/teacher/exams/new")}>New exam</Button>
+      </header>
+      <div className="surface-stats">
+        <button type="button" className="surface-stat" onClick={() => navigate("/teacher/submissions")}>
+          <span>Live candidates</span><strong className="text-alert">{stats.live}</strong><em>Currently active</em>
+        </button>
+        <button type="button" className="surface-stat" onClick={() => navigate("/teacher/evaluate")}>
+          <span>Needs review</span><strong className="text-amber">{stats.submitted}</strong><em>{stats.flagged} flagged</em>
+        </button>
+        <button type="button" className="surface-stat" onClick={() => navigate("/teacher/bank")}>
+          <span>My questions</span><strong className="text-forest">{questionCount}</strong><em>Questions across exams</em>
+        </button>
+        <button type="button" className="surface-stat" onClick={() => navigate("/teacher/reports")}>
+          <span>Avg. score</span><strong>{avgScore != null ? `${avgScore}%` : "—"}</strong><em>{avgScore != null ? `Across ${scoredCount} scored attempt(s)` : "No scored attempts yet"}</em>
+        </button>
+      </div>
+      <div className="surface-split">
+        <section className="surface-panel">
+          <div className="surface-panel-head">
+            <h2>Exam activity</h2>
+            <button type="button" onClick={() => navigate("/teacher/exams")}>Manage exams</button>
+          </div>
+          {loading ? <p className="surface-empty">Loading exams…</p> : examsList.length === 0 ? <p className="surface-empty">No exams yet.</p> : (
+            <ul className="surface-rows">
+              {examsList.slice(0, 6).map((exam) => (
+                <li key={exam.id}>
+                  <button type="button" className="surface-row" onClick={() => navigate(`/teacher/exams/${exam.id}`)}>
+                    <span className="surface-row-main">
+                      <strong>{exam.name}</strong>
+                      <em>{exam.batch}</em>
+                    </span>
+                    <span className={`surface-chip ${exam.tone}`}>{exam.state}</span>
+                    <span className="surface-bar" aria-hidden><i style={{ width: `${exam.progress}%` }} /></span>
+                    <span className="surface-meta">{exam.count}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <aside className="surface-panel">
+          <div className="surface-panel-head">
+            <h2>Action queue</h2>
+            <span className="surface-count">{stats.flagged + stats.submitted}</span>
+          </div>
+          <div className="surface-queue">
+            {[
+              ["Review flagged submissions", `${stats.flagged} pending`, "/teacher/submissions"],
+              ["Grade subjective answers", `${stats.submitted} remaining`, "/teacher/evaluate"],
+              ["Open performance reports", "Analytics", "/teacher/reports"],
+            ].map(([label, count, to]) => (
+              <button key={label} type="button" onClick={() => navigate(to)}>
+                <span>{label}</span><em>{count}</em>
+              </button>
+            ))}
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
 }
-
-
-
-
-
 
 function ExamWorkspace({ notify, navigate, examId, examsList }: { notify: (s: string) => void; navigate: (s: string) => void; examId: string; examsList: any[] }) {
   const exam = examsList.find(e => e.id === examId);
@@ -470,18 +535,25 @@ function Reports({ notify }: { notify: (s: string) => void }) {
   return (
     <>
       <JobBanner label={pdfProgress ?? (zipping ? "Packing evidence ZIP…" : null)} />
-      <PageHeading eyebrow="Reports" title="Performance reports" detail="Live stats, exports, and result publishing — straight from the database." action={
-        <div className="flex flex-wrap items-center gap-2">
-          <select value={examId} onChange={(e) => setExamId(e.target.value)} className="border border-line bg-paper px-2 py-2.5 font-mono text-[10px] uppercase tracking-wider text-soft">
-            {exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-            {exams.length === 0 && <option value="">No exams yet — create one first</option>}
-          </select>
-          <Button onClick={() => void releaseResults()}>{busy ? "Releasing…" : resultsPublished ? "✓ Results Released" : "Release Results"}</Button>
-          <Button onClick={() => void publishAnswerKey()}>{answerKeyPublished ? "✓ Answer Key Published" : "Publish Answer Key"}</Button>
-          <Button onClick={() => void exportPdf()} disabled={!!pdfProgress}>{pdfProgress ? "Exporting…" : "Export PDF"}</Button>
-          <Button onClick={exportCsv}>Export CSV</Button>
+      <div className="surface">
+      <header className="surface-head">
+        <div>
+          <p className="surface-eyebrow">Reports</p>
+          <h1 className="surface-title">Performance reports</h1>
+          <p className="surface-detail">Scores, per-second snapshots, violations, and the exam audio, exported from this exam.</p>
         </div>
-      } />
+      </header>
+      <div className="surface-toolbar">
+        <select value={examId} onChange={(e) => setExamId(e.target.value)} aria-label="Exam" className="surface-select">
+          {exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          {exams.length === 0 && <option value="">No exams yet — create one first</option>}
+        </select>
+        <span className="surface-toolbar-gap" />
+        <Button onClick={() => void releaseResults()}>{busy ? "Releasing…" : resultsPublished ? "Results released" : "Release results"}</Button>
+        <Button onClick={() => void publishAnswerKey()}>{answerKeyPublished ? "Answer key published" : "Publish answer key"}</Button>
+        <Button onClick={exportCsv}>Export CSV</Button>
+        <Button primary onClick={() => void exportPdf()} disabled={!!pdfProgress}>{pdfProgress ? "Exporting…" : "Export PDF"}</Button>
+      </div>
       {pdfProgress && <p role="status" className="sr-only">{pdfProgress}</p>}
       <div className="mt-8 flex gap-2 border-b border-line pb-3 font-mono text-[10px] uppercase tracking-wider text-soft">
         {["Overview", "Item Analysis", "Student Reports", "Trends"].map(tab => (
@@ -521,12 +593,14 @@ function Reports({ notify }: { notify: (s: string) => void }) {
 
       {activeTab === "Student Reports" && (
         <div className="mt-8 border border-line bg-paper">
-          <div className="flex items-center justify-between border-b border-line bg-raised px-5 py-3">
-            <div><h2 className="font-serif text-lg font-semibold">Individual Student Reports</h2>
-            <p className="mt-1 font-mono text-[10px] text-soft">Per-candidate PDFs plus a ZIP of every student's recordings (recording/) and screenshots (ss/).</p></div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Download Evidence ZIP"}</Button>
-              <Button onClick={() => void exportPdf(submitted)} disabled={submitted.length === 0 || !!pdfProgress}>Generate All PDFs</Button>
+          <div className="surface-panel-head">
+            <div>
+              <h2>Individual student reports</h2>
+              <p>Each PDF includes every stored per-second snapshot, the violations on that second, and the exam audio files.</p>
+            </div>
+            <div className="surface-toolbar-actions">
+              <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Download evidence ZIP"}</Button>
+              <Button primary onClick={() => void exportPdf(submitted)} disabled={submitted.length === 0 || !!pdfProgress}>Generate all PDFs</Button>
             </div>
           </div>
           <div className="divide-y divide-line">
@@ -542,6 +616,7 @@ function Reports({ notify }: { notify: (s: string) => void }) {
       )}
 
       {activeTab === "Trends" && <ExamTrends exams={exams} />}
+      </div>
     </>
   );
 }
