@@ -80,7 +80,7 @@ export async function startProctorPublishing(opts: {
   // made proctors see 0 feeds while the student UI showed "PROCTOR LIVE".
   const attemptPublish = async (
     track: MediaStreamTrack | undefined,
-    source: Track.Source,
+    source: string,
     name: string,
   ): Promise<boolean> => {
     if (!track) return true;
