@@ -27,49 +27,61 @@ export default function ExamHeader({
   autosaveStatus,
   lastSavedAt,
 }: ExamHeaderProps) {
-  // Map the timer tone class from old styles to new Tailwind colors
-  const mappedTimerToneClass = timerToneClass.includes("alert") 
-    ? "border-red-200 bg-red-50 text-red-700"
-    : timerToneClass.includes("amber")
-    ? "border-amber-200 bg-amber-50 text-amber-700"
-    : "border-slate-200 bg-white text-slate-700";
+  // Map the timer tone class to our old colors (alert/amber/success/ink)
+  const isAlert = timerToneClass.includes("alert");
+  const isWarn = timerToneClass.includes("amber");
+  
+  const timerClass = isAlert 
+    ? "border-alert bg-alert/10 text-alert" 
+    : isWarn 
+    ? "border-amber bg-amber/10 text-amber" 
+    : "border-line bg-paper text-ink";
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line/40 bg-white/95 px-4 py-3 shadow-sm backdrop-blur sm:px-6">
-      <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4">
+    <header className="sticky top-0 z-40 flex flex-wrap items-center gap-4 border-b-2 border-pri bg-[#0B2545] px-5 py-2 text-white">
+      {/* Brand */}
+      <div className="flex items-center gap-3 border-r border-white/25 pr-4">
+        <div className="grid h-8 w-8 place-items-center rounded-md bg-white font-bold text-[#0B2545]">E</div>
         <div>
-          <p className="font-serif text-lg font-semibold text-slate-800">{examName}</p>
-          <p className="font-sans text-xs font-medium uppercase tracking-wider text-slate-500">{studentName} <span className="mx-2 text-slate-300">|</span> Q {currentQuestion} of {totalQuestions}</p>
+          <div className="text-[14px] font-semibold leading-tight">ExamShield</div>
+          <div className="text-[11px] text-white/70">Vignan University</div>
         </div>
+      </div>
 
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className="hidden sm:flex items-center gap-2 px-2">
-            {autosaveStatus === "saving" && <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />}
-            {autosaveStatus === "saved" && <span className="h-2 w-2 rounded-full bg-emerald-500" />}
-            {autosaveStatus === "local" && <span className="h-2 w-2 rounded-full bg-red-500" />}
-            {autosaveStatus === "failed" && <span className="h-2 w-2 rounded-full bg-red-500" />}
-            <span className="font-sans text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              {autosaveStatus === "saving" ? "Saving…" : autosaveStatus === "saved" ? "Saved" : autosaveStatus === "local" ? "Offline" : "Unsaved"}
-            </span>
-          </div>
-          <div className={`tabular-nums rounded-lg border px-4 py-2 font-mono text-lg font-bold shadow-sm ${mappedTimerToneClass}`}>
-            {timeString}
-          </div>
-          <button
-            onClick={onToggleFullscreen}
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-sans text-xs font-semibold uppercase tracking-wider text-slate-600 shadow-sm transition-colors hover:bg-slate-50 focus:ring-2 focus:ring-slate-200"
-            aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-          >
-            {isFullscreen ? "Minimize" : "Fullscreen"}
-          </button>
-          <button
-            onClick={onExit}
-            className="rounded-lg border border-red-600 bg-red-600 px-4 py-2 font-sans text-xs font-bold uppercase tracking-wider text-white shadow-sm transition-colors hover:bg-red-700 focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
-            aria-label="Emergency exit"
-          >
-            Exit
-          </button>
+      {/* Info */}
+      <div>
+        <div className="text-[14px] font-semibold">{examName}</div>
+        <div className="text-[12px] text-white/70">{studentName} · Q {currentQuestion} of {totalQuestions}</div>
+      </div>
+
+      <div className="flex-1" />
+
+      {/* Actions & Status */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-1.5 text-[12px] text-white/80">
+          {autosaveStatus === "saving" && <span className="h-2 w-2 animate-pulse rounded-full bg-amber" />}
+          {autosaveStatus === "saved" && <span className="h-2 w-2 rounded-full bg-success" />}
+          {autosaveStatus === "local" && <span className="h-2 w-2 rounded-full bg-alert" />}
+          {autosaveStatus === "failed" && <span className="h-2 w-2 rounded-full bg-alert" />}
+          <span>{autosaveStatus === "saving" ? "Saving…" : autosaveStatus === "saved" ? "All changes saved" : autosaveStatus === "local" ? "Offline" : "Unsaved"}</span>
         </div>
+        
+        <div className={`min-w-[86px] rounded-md border px-3 py-0.5 text-center text-[20px] font-semibold tabular-nums ${timerClass}`}>
+          {timeString}
+        </div>
+        
+        <button
+          onClick={onToggleFullscreen}
+          className="rounded-md border border-line/40 bg-white/10 px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider hover:bg-white/20"
+        >
+          {isFullscreen ? "Minimize" : "Fullscreen"}
+        </button>
+        <button
+          onClick={onExit}
+          className="rounded-md bg-alert px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-white hover:bg-alert/90"
+        >
+          Exit
+        </button>
       </div>
     </header>
   );

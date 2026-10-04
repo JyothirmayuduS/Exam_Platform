@@ -1000,21 +1000,27 @@ function StudentExamSession() {
     setMic("idle");
     setScreen("idle");
 
-    // Give React time to render the "idle" state so the user sees the button change,
-    // otherwise the browser's instant rejection causes the state to flip too fast.
-    await new Promise((r) => setTimeout(r, 600));
-    
+    let screenLocalStream: MediaStream | null = null;
+    try {
+      if (isTauri()) {
+        await invoke("set_window_sharing", { allow: true }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      const md = navigator.mediaDevices as any;
+      screenLocalStream = await md.getDisplayMedia({ video: true, audio: false });
+      if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
+    } catch (e) {
+      if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
+      console.warn("Screen share request failed", e);
+    }
+
     // Camera + mic
     try {
-      // Cap the camera at 640x480: the feed is analysed (MediaPipe), recorded,
-      // and streamed live — 1080p front-cam on a phone is what made detection
-      // crawl and the UI lag. 640x480 is plenty for proctoring tiles + flags.
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 } },
         audio: true,
       });
       
-      // Virtual Webcam Detection
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(d => d.kind === "videoinput");
       const virtualKeywords = ["obs", "virtual", "snap camera", "epoccam", "camtwist"];
@@ -1030,6 +1036,7 @@ function StudentExamSession() {
         stream.getTracks().forEach(t => t.stop());
         setCam("denied");
         setMic("denied");
+        if (!screenLocalStream) setScreen("denied");
         setRequesting(false);
         return;
       }
@@ -1039,7 +1046,6 @@ function StudentExamSession() {
       setMic(stream.getAudioTracks().length ? "granted" : "denied");
       if (previewRef.current) previewRef.current.srcObject = stream;
     } catch (e: any) {
-      // Distinguish "OS-level deny" from "dialog dismissed".
       if (isTauri()) {
         void Promise.all([
           mediaPermissionStatus("camera"),
@@ -1048,6 +1054,12 @@ function StudentExamSession() {
       }
       setCam("denied");
       setMic("denied");
+    }
+
+    if (screenLocalStream) {
+      handleScreenGranted(screenLocalStream);
+    } else {
+      setScreen("denied");
     }
     
     setRequesting(false);
@@ -1475,29 +1487,12 @@ function StudentExamSession() {
 
   // ---------- Step: exam (kiosk mode) ----------
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
-      {/* Watermark — custom template from Test Options with this candidate's
-          tokens substituted, or the classic "name · roll" backdrop. Rendered
-          as a full-viewport SVG <pattern>: large rotated text tiled
-          edge-to-edge over 100% of the exam screen (the old 44 small spans
-          covered half the width at 11px and were effectively invisible). */}
+    <div className="min-h-screen bg-bg text-ink font-sans">
+      {/* Watermark */}
       <svg aria-hidden className="pointer-events-none fixed inset-0 z-0 h-full w-full" >
         <defs>
-          <pattern
-            id="exam-watermark"
-            width={Math.max(460, watermarkLine.length * 16 + 60)}
-            height="220"
-            patternUnits="userSpaceOnUse"
-            patternTransform="rotate(-20)"
-          >
-            <text
-              x="10"
-              y="110"
-              fontSize="26"
-              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-              fill="currentColor"
-              opacity="0.13"
-            >
+          <pattern id="exam-watermark" width={Math.max(460, watermarkLine.length * 16 + 60)} height="220" patternUnits="userSpaceOnUse" patternTransform="rotate(-20)">
+            <text x="10" y="110" fontSize="26" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.13">
               {watermarkLine}
             </text>
           </pattern>
@@ -1506,23 +1501,15 @@ function StudentExamSession() {
       </svg>
       {proctorPaused && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-ink/95 p-6">
-          <div className="w-full max-w-md border border-amber/60 bg-paper p-8 text-center shadow-2xl">
+          <div className="w-full max-w-md border border-amber bg-paper p-8 text-center shadow-2xl">
             <span className="mx-auto block h-3 w-3 animate-pulse rounded-none bg-amber" />
             <p className="mt-4 font-mono text-[10px] uppercase tracking-widest text-amber">Session paused</p>
             <h2 className="mt-2 font-serif text-2xl font-semibold">The invigilator has paused your exam</h2>
-            <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">
-              Your timer is frozen and your answers are safe. The exam resumes automatically the moment the
-              invigilator allows you to continue — please keep this window open.
-            </p>
-            <p className="mt-5 font-mono text-[10px] text-ink-soft/70">● Time frozen · {timeString}</p>
+            <p className="mt-3 text-[13px] leading-relaxed text-soft">Your timer is frozen and your answers are safe. Keep this window open.</p>
+            <p className="mt-5 font-mono text-[10px] text-soft/70">● Time frozen · {timeString}</p>
           </div>
         </div>
       )}
-      {/* ── Proctor popup stack ──────────────────────────────────────────
-          ONE fixed column at the top: broadcast, flag-limit warning, live
-          violation alert. They stack vertically instead of overlaying each
-          other (previously three same-position fixed banners fought over
-          top-0 and the timer banner covered everything). */}
       {(broadcast || flagThresholdWarning || activeViolation) && (
         <div className="pointer-events-none fixed inset-x-0 top-0 z-[65] flex flex-col items-center gap-2 px-4 py-3">
           {broadcast && (
@@ -1536,13 +1523,13 @@ function StudentExamSession() {
             </div>
           )}
           {flagThresholdWarning && (
-            <div className="pointer-events-auto flex w-full max-w-xl items-start gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl" role="alert">
+            <div className="pointer-events-auto flex w-full max-w-xl items-start gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl">
               <FiAlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
               <div className="flex-1">
                 <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">Proctoring warning</p>
                 <p className="mt-0.5 text-[14px] font-medium">{flagThresholdWarning}</p>
               </div>
-              <button onClick={() => setFlagThresholdWarning("")} aria-label="Dismiss warning" className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
+              <button onClick={() => setFlagThresholdWarning("")} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
             </div>
           )}
           {activeViolation && (
@@ -1580,21 +1567,21 @@ function StudentExamSession() {
         }}
       />
 
-      <div className="mx-auto grid max-w-[1400px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[264px_minmax(0,1fr)_264px] lg:px-8">
+      <div className="mx-auto grid max-w-[1440px] gap-4 px-5 py-4 lg:grid-cols-[250px_minmax(0,1fr)_290px] items-start">
         {/* LEFT */}
-        <aside className="space-y-4 lg:sticky lg:top-[84px] lg:self-start">
-          <div className="rounded-xl border border-line/40 bg-white p-5 shadow-sm">
-            <p className="font-sans text-xs font-semibold uppercase tracking-wider text-slate-500">Progress</p>
-            <div className="mt-4 grid grid-cols-2 gap-3 text-center">
-              <Stat n={answeredCount} label="Answered" tone="text-emerald-600" />
-              <Stat n={remainingCount} label="Remaining" tone="text-slate-700" />
-              <Stat n={markedCount} label="Marked" tone="text-amber-500" />
-              <Stat n={visitedCount} label="Visited" tone="text-slate-400" />
+        <aside className="space-y-4 lg:sticky lg:top-[84px]">
+          <div className="rounded-lg border border-line bg-paper p-3.5">
+            <h2 className="mb-2.5 font-sans text-[12px] font-semibold text-soft tracking-wider">Progress</h2>
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="rounded-md border border-line p-1.5"><b className="block text-[18px] text-ink">{answeredCount}</b><span className="text-[11px] text-soft">Answered</span></div>
+              <div className="rounded-md border border-line p-1.5"><b className="block text-[18px] text-ink">{remainingCount}</b><span className="text-[11px] text-soft">Remaining</span></div>
+              <div className="rounded-md border border-line p-1.5"><b className="block text-[18px] text-ink">{markedCount}</b><span className="text-[11px] text-soft">Marked</span></div>
+              <div className="rounded-md border border-line p-1.5"><b className="block text-[18px] text-ink">{visitedCount}</b><span className="text-[11px] text-soft">Visited</span></div>
             </div>
-            <div className="mt-5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
-              <div className="h-full rounded-full bg-emerald-500 transition-all duration-300" style={{ width: `${(answeredCount / questions.length) * 100}%` }} />
+            <div className="mt-2.5 mb-1 h-1.5 w-full overflow-hidden rounded-full bg-line">
+              <div className="h-full bg-forest transition-all duration-200" style={{ width: `${(answeredCount / questions.length) * 100}%` }} />
             </div>
-            <p className="mt-2 text-center font-sans text-xs font-medium text-slate-500">{answeredCount}/{questions.length} complete</p>
+            <div className="text-[11px] text-soft">{answeredCount}/{questions.length} complete</div>
           </div>
           <QuestionPanel
             questions={questions}
@@ -1605,12 +1592,7 @@ function StudentExamSession() {
         </aside>
 
         {/* CENTER */}
-        <main className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div className="rounded-full bg-slate-100 px-3 py-1">
-              <p className="font-sans text-xs font-bold uppercase tracking-wider text-slate-500">Question {current + 1} <span className="font-normal text-slate-400">of {questions.length}</span></p>
-            </div>
-          </div>
+        <main className="rounded-lg border border-line bg-paper p-3.5">
 
           <QuestionDisplay
             question={q}
@@ -1653,118 +1635,65 @@ function StudentExamSession() {
 
         {/* RIGHT */}
         <aside className="space-y-4 lg:sticky lg:top-[84px] lg:self-start">
-          <AnswerPanel
-            answerStatus={!q ? "Not Answered" : isReviewed(q.id) ? "Review" : (answers[q.id] !== undefined ? "Answered" : "Not Answered")}
-            saveStatus={autosaveStatus}
-            lastSavedAt={lastSavedAt}
-            draftedCount={counts.drafted}
-            onSubmit={() => setShowSubmitDialog(true)}
-          />
-          <ExamSidebar answered={answeredCount} total={questions.length} marked={markedCount} secondsLeft={secondsLeft} />
+          <section className="rounded-lg border border-line bg-paper p-3.5">
+            <h2 className="mb-2.5 font-sans text-[12px] font-semibold text-soft tracking-wider">Proctoring</h2>
+            
+            <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden rounded-md border border-line bg-gradient-to-br from-[#3b4756] to-[#1f2832]">
+              <div className="absolute inset-0 flex items-center justify-center">
+                <ProctorCamera
+                  room={ROOM}
+                  identity={STUDENT_ROLL}
+                  examId={EXAM_ID}
+                  examName={examName}
+                  studentId={STUDENT_ROLL}
+                  screenStream={screenStream}
+                  initialStream={cameraStream}
+                  violationActive={!!activeViolation}
+                  proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
+                />
+              </div>
+              <span className="absolute right-1.5 top-1.5 rounded-sm bg-black/60 px-2 py-0.5 text-[11px] text-white">● Recording</span>
+            </div>
 
-          {/* Phone desk monitor — optional second camera via one-time QR.
-              The phone publishes its rear camera into the exam's LiveKit room
-              as a mobile:<roll> participant; interruption signals (tab hidden,
-              focus loss, viewport shrink, feed killed) land in the monitor
-              event ledger for the proctor timeline. */}
-          <MonitorQRPanel attemptId={attemptId} onSubmitConsumed={() => setEndMonitor(true)} />
+            <div className="mt-2.5 grid gap-1.5">
+              <div className="flex justify-between rounded-md bg-[#E4F1E9] px-2.5 py-1.5 font-medium text-success">
+                <span>Camera</span><span>Connected</span>
+              </div>
+              <div className={`flex justify-between rounded-md px-2.5 py-1.5 font-medium ${aiStatus?.faceCount === 0 ? "bg-amber/20 text-amber" : "bg-[#E4F1E9] text-success"}`}>
+                <span>Face</span><span>{aiStatus?.faceCount === 0 ? "Not visible" : "Visible"}</span>
+              </div>
+              <div className={`flex justify-between rounded-md px-2.5 py-1.5 font-medium ${aiStatus?.voiceSpeaking ? "bg-alert/20 text-alert" : "bg-[#E4F1E9] text-success"}`}>
+                <span>Audio</span><span>{aiStatus?.voiceSpeaking ? "Speaking" : "Quiet"}</span>
+              </div>
+            </div>
 
-          <div>
-            {/* Proctoring runs fully (recording, live feed, proctor messages)
-                but the candidate must NOT watch the live tile — students see
-                only the alert/warning popups. The camera stays mounted and
-                hidden; violations still surface as top popups. */}
-            <p className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-              <span>Proctoring</span>
-              <span className="flex items-center gap-1.5 font-mono text-[9px] text-alert">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-none bg-alert" aria-hidden />
-                REC
-              </span>
-            </p>
+            {(aiStatus?.faceCount === 0 || aiStatus?.voiceSpeaking) && (
+              <div className="mt-2.5 rounded-md bg-raised p-2.5 text-[13px]">
+                <b>Move into frame.</b> Face the camera and keep it uncovered. Your invigilator has been notified.
+              </div>
+            )}
+
+            <h2 className="mt-3.5 mb-2.5 font-sans text-[12px] font-semibold text-soft tracking-wider">Session log</h2>
+            <ul className="m-0 list-none p-0 text-[12px]">
+              {violations.length === 0 ? (
+                <li className="border-t border-line py-1.5 text-soft">No violations</li>
+              ) : (
+                violations.slice(-5).map((v, i) => (
+                  <li key={i} className="flex justify-between gap-2 border-t border-line py-1.5">
+                    <span>{v.kind}</span>
+                    <span className="text-soft">{v.at}</span>
+                  </li>
+                ))
+              )}
+            </ul>
+            
             <div className="mt-4">
-              <ProctorCamera
-                room={ROOM}
-                identity={STUDENT_ROLL}
-                examId={EXAM_ID}
-                examName={examName}
-                studentId={STUDENT_ROLL}
-                screenStream={screenStream}
-                initialStream={cameraStream}
-                violationActive={!!activeViolation}
-                proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
-              />
+              <MonitorQRPanel attemptId={attemptId} onSubmitConsumed={() => setEndMonitor(true)} />
             </div>
-            {/* Live proctor voice — the teacher/proctor can speak to this candidate. */}
+            
+            {/* Live proctor voice */}
             <InvigilatorVoice examId={EXAM_ID} roll={STUDENT_ROLL} active={step === "exam"} />
-          </div>
-
-          {/* AI Proctor status panel */}
-          <div>
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">AI Monitor</p>
-            <div className="border border-line bg-paper-raised p-3 space-y-2">
-              {/* Loading state */}
-              {aiStatus?.loading && (
-                <div className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 animate-pulse bg-amber" />
-                  <span className="font-mono text-[9px] text-ink-soft truncate">{aiStatus.loadStep}</span>
-                </div>
-              )}
-              {/* Error state */}
-              {aiStatus?.error && (
-                <p className="font-mono text-[9px] text-alert">AI unavailable — manual review</p>
-              )}
-              {/* Active state */}
-              {aiStatus && !aiStatus.loading && !aiStatus.error && (
-                <>
-                  {/* Face count */}
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[9px] text-ink-soft">Faces</span>
-                    <span className={`font-mono text-[10px] font-medium ${
-                      aiStatus.faceCount === 1 ? "text-success" :
-                      aiStatus.faceCount === 0 ? "text-alert" : "text-alert"
-                    }`}>
-                      {aiStatus.faceCount === 0 ? "NONE" : aiStatus.faceCount === 1 ? <><span>1</span><FiCheck className="inline" aria-hidden /></> : <><span>{aiStatus.faceCount}</span><FiAlertTriangle className="inline" aria-hidden /></>}
-                    </span>
-                  </div>
-                  {/* Gaze */}
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[9px] text-ink-soft">Gaze</span>
-                    <span className={`font-mono text-[10px] font-medium ${
-                      aiStatus.gazeDirection === "center" ? "text-success" : "text-alert"
-                    }`}>
-                      {aiStatus.gazeDirection.toUpperCase()}
-                    </span>
-                  </div>
-                  {/* Voice level bar */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-mono text-[9px] text-ink-soft">Voice</span>
-                      <span className={`font-mono text-[9px] ${aiStatus.voiceSpeaking ? "text-alert" : "text-ink-soft"}`}>
-                        {aiStatus.voiceSpeaking ? <><span>SPEAKING</span><FiAlertTriangle className="inline" aria-hidden /></> : <><span>SILENT</span><FiCheck className="inline" aria-hidden /></>}
-                      </span>
-                    </div>
-                    <div className="h-1 w-full bg-line">
-                      <div
-                        className={`h-full transition-all ${ aiStatus.voiceSpeaking ? "bg-alert" : "bg-success" }`}
-                        style={{ width: `${Math.round(aiStatus.voiceLevel * 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                  {/* Phone detection */}
-                  {aiStatus.phoneDetected && (
-                    <div className="flex items-center gap-1.5 border border-alert/40 bg-alert/10 px-2 py-1">
-                      <span className="h-1.5 w-1.5 animate-pulse bg-alert" />
-                      <span className="font-mono text-[9px] text-alert">Phone detected</span>
-                    </div>
-                  )}
-                </>
-              )}
-              {/* Not yet started */}
-              {!aiStatus && (
-                <p className="font-mono text-[9px] text-ink-soft">Starting…</p>
-              )}
-            </div>
-          </div>
+          </section>
 
           {/* Hidden ProctorAI engine */}
           <ProctorAI
@@ -1774,22 +1703,20 @@ function StudentExamSession() {
             onStatus={setAiStatus}
           />
 
-          {/* Screenshot frame source — painted at a real size (iOS Safari stops
-              decoding 0x0 video), transparent so the student never sees it. */}
+          {/* Screenshot frame source */}
           <div aria-hidden className="pointer-events-none fixed bottom-1 right-1 z-[-1] h-[90px] w-[160px] opacity-0">
             <video ref={hiddenVideoRef} autoPlay playsInline muted className="h-full w-full" />
           </div>
 
           {Boolean(examSettings.calculator) && (
-            <div>
-              <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">Tools</p>
+            <div className="rounded-lg border border-line bg-paper p-3.5">
+              <h2 className="mb-2.5 font-sans text-[12px] font-semibold text-soft tracking-wider">Tools</h2>
               <ExamTools />
             </div>
           )}
         </aside>
       </div>
       </div>
-
       {showShortcuts && (
         <div className="fixed bottom-4 right-4 z-[65] w-full max-w-sm border border-line bg-paper p-4 text-[12px] shadow-xl">
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Keyboard shortcuts</p>

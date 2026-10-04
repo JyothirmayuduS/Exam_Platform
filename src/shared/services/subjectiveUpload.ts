@@ -1,8 +1,8 @@
 import { getSupabase } from "@/shared/data/supabase";
+import { r2PutBlob, r2PresignGet } from "@/shared/services/r2Function";
 
-// ── Upload a subjective answer image to Supabase Storage ──────────────────────
-// Path: exam-records/{examId}/{studentId}/subjective/q{questionId}_{timestamp}.jpg
-// Falls back to a simulated upload if Supabase isn't configured.
+// ── Upload a subjective answer image to Cloudflare R2 ───────────────────────
+// Path: {examId}/{studentId}/subjective/q{questionId}_{timestamp}.jpg
 
 export type UploadResult =
   | { ok: true; path: string; publicUrl: string }
@@ -17,8 +17,7 @@ export async function uploadSubjectiveAnswer(opts: {
 }): Promise<UploadResult> {
   const { examId, studentId, questionId, blob, onProgress } = opts;
   const ts = Date.now();
-  const path = `${examId}/${studentId}/subjective/q${questionId}_${ts}.jpg`;
-  const bucketName = import.meta.env.VITE_SUPABASE_BUCKET_NAME || "exam-records";
+  const filename = `q${questionId}_${ts}.jpg`;
 
   onProgress?.(10);
 
@@ -27,32 +26,27 @@ export async function uploadSubjectiveAnswer(opts: {
     // Simulate upload for dev mode
     await new Promise((r) => setTimeout(r, 1200));
     onProgress?.(100);
-    return { ok: true, path, publicUrl: URL.createObjectURL(blob) };
+    return { ok: true, path: filename, publicUrl: URL.createObjectURL(blob) };
   }
 
   try {
     onProgress?.(30);
 
-    // WORKAROUND: iOS Safari WebKit bug causes fetch() to hang indefinitely if the body is a Blob
-    // created directly from canvas.toBlob(). Converting it to an ArrayBuffer first breaks the reference
-    // and allows the Supabase fetch request to complete successfully!
-    const buffer = await blob.arrayBuffer();
-    const safeBlob = new Blob([buffer], { type: "image/jpeg" });
-
-    const { data, error } = await supabase.storage
-      .from(bucketName)
-      .upload(path, safeBlob, {
-        contentType: "image/jpeg",
-        upsert: true,
-      });
+    const key = await r2PutBlob({
+      examId,
+      ownerSegment: studentId,
+      kind: "screenshots", // We use the "screenshots" folder for subjective uploads as well, or we could add "subjective" to R2Kind. Let's use screenshots for now as it's an image capture.
+      name: filename,
+      blob,
+    });
 
     onProgress?.(90);
-    if (error) return { ok: false, error: error.message };
+    if (!key) return { ok: false, error: "Cloudflare R2 upload failed" };
 
     // Private bucket: return a short-lived SIGNED url (never a public URL).
-    const { data: urlData } = await supabase.storage.from(bucketName).createSignedUrl(data.path, 3600);
+    const signedUrl = await r2PresignGet(key, 3600);
     onProgress?.(100);
-    return { ok: true, path: data.path, publicUrl: urlData?.signedUrl ?? "" };
+    return { ok: true, path: key, publicUrl: signedUrl ?? "" };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Upload failed" };
   }

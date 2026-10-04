@@ -494,11 +494,10 @@ export default function TeacherProctoring() {
         {zipMsg && <span className="inline-flex items-center px-2 py-2 font-mono text-[10px] text-ink-soft">{zipMsg}</span>}
       </div>
     </div>
-    <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <Stat label="Active candidates" value={activeCount.toString()} sub="connected to session"/>
-      <Stat label="Clear" value={clearCount.toString()} sub="No active flags"/>
-      <Stat label="Needs attention" value={flaggedCount.toString()} sub="Active violations" alert={flaggedCount > 0} />
-      <Stat label="Live Feeds" value={feedCount.toString()} sub={viewerState === "connected" ? `${roomDiag.participants} in room · ${roomDiag.remoteTracks} remote track${roomDiag.remoteTracks === 1 ? "" : "s"}` : viewerState === "connecting" ? "Connecting to LiveKit..." : viewerState === "idle" ? "Not connected" : viewerState === "error" ? (viewerError ?? "Error") : viewerState === "disconnected" ? "Disconnected" : viewerState === "reconnecting" ? "Reconnecting..." : "Unknown"} alert={viewerState === "error" || viewerState === "disconnected"}/>
+    <div className="mt-4 flex flex-wrap gap-4 border-b border-line pb-4">
+      <Stat label="Candidates" value={activeCount.toString()} sub="connected" />
+      <Stat label="Flags" value={flaggedCount.toString()} sub="violations" alert={flaggedCount > 0} />
+      <Stat label="Live Feeds" value={feedCount.toString()} sub={viewerState === "connected" ? "Live" : viewerState} alert={viewerState === "error" || viewerState === "disconnected"}/>
     </div>
     <AllocationPanel students={students} proctors={proctors} me={profile?.full_name ?? ""} />
     {viewerState === "error" && viewerError && (
@@ -506,10 +505,13 @@ export default function TeacherProctoring() {
         <strong>LiveKit Error:</strong> {viewerError}
       </div>
     )}
-    <div className="mt-8 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat{chatCount > 0 ? ` (${chatCount})` : ""}</button></div><div className="flex items-center gap-3"><span className={`inline-flex items-center gap-1.5 font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}><span className={`h-1.5 w-1.5 rounded-none ${live ? "bg-success" : "bg-line-strong"}`} /> {live ? `${feedCount} feed(s) · DB live` : "Not connected"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
-    {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} mobileFeedFor={mobileFeedByRoll} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChatPanel examId={selectedExamId} senderName={profile?.full_name ?? "Teacher"} senderRole="teacher" onCountChange={setChatCount} maxHeight={420} />}
-    <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]">
-      <section className="border border-line bg-paper p-5 sm:p-6">
+    <div className="mt-4 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat{chatCount > 0 ? ` (${chatCount})` : ""}</button></div><div className="flex items-center gap-3"><span className={`inline-flex items-center gap-1.5 font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}><span className={`h-1.5 w-1.5 rounded-none ${live ? "bg-success" : "bg-line-strong"}`} /> {live ? `${feedCount} feed(s) · DB live` : "Not connected"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
+    
+    <div className="mt-4 grid gap-6 xl:grid-cols-[1fr_360px]">
+      <div>
+        {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} mobileFeedFor={mobileFeedByRoll} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChatPanel examId={selectedExamId} senderName={profile?.full_name ?? "Teacher"} senderRole="teacher" onCountChange={setChatCount} maxHeight={420} />}
+      </div>
+      <section className="border border-line bg-paper p-5 sm:p-6 h-fit sticky top-4">
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Selected candidate</p>
         {!selected ? (
           <div className="mt-4 text-[13px] text-ink-soft">No candidate selected or no active candidates.</div>

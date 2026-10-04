@@ -56,16 +56,16 @@ export const FACE = {
 
 // ── Object detection thresholds ──────────────────────────────────────────────
 export const OBJECT = {
-  SCORE_THRESHOLD: 0.15, // passed to the model (keep low — gating happens here)
+  SCORE_THRESHOLD: 0.08, // passed to the model (keep low — gating happens here)
   MAX_RESULTS: 10,
-  // Dropped from 0.28 / 0.22: real-world tests showed phones held at arm's
-  // length or half-hidden behind a hand top out at 22–30% confidence, which
-  // the old gate silently discarded. The temporal confirmation (MIN_HITS
+  // Dropped from 0.18 to 0.10: real-world tests (including the user's
+  // recent test) showed phones held at arm's length or half-hidden behind
+  // hands top out at very low confidence. The temporal confirmation (MIN_HITS
   // inside CONFIRM_WINDOW_MS) still filters one-frame flukes, so a lower
-  // per-sample gate is safe.
-  PHONE_MIN_CONF: 0.22,
-  EARBUDS_MIN_CONF: 0.25,
-  LAPTOP_MIN_CONF: 0.40,
+  // per-sample gate is safe and necessary for consistent detection.
+  PHONE_MIN_CONF: 0.10,
+  EARBUDS_MIN_CONF: 0.10,
+  LAPTOP_MIN_CONF: 0.30,
   // MediaPipe object detector only sees a phone when it's big enough in the
   // frame. Small phones slip through — candidates keep track of the lower
   // frame region for phones (see geometry.ts). Toggling the ROI means the
@@ -110,10 +110,10 @@ export const AUDIO = {
   // speech). Its signature: persistent (never pauses like speech), low-level,
   // and BROADBAND (music/content spreads energy across many frequency bins,
   // while silence has ~none and fan/hum noise concentrates in a few low bins).
-  EARBUDS_RMS_MIN: 0.008,     // floor — below this the mic sees silence
-  EARBUDS_RMS_MAX: 0.045,     // above the adaptive voice gate it is direct speech, not a leak
-  EARBUDS_MIN_ACTIVE_BINS: 8, // broadband content gate (250 Hz – 8 kHz)
-  EARBUDS_ACTIVE_BIN_FLOOR: 4,   // byte-spectrum value a bin must exceed to count as active
+  EARBUDS_RMS_MIN: 0.004,     // floor — below this the mic sees silence
+  EARBUDS_RMS_MAX: 0.055,     // above the adaptive voice gate it is direct speech, not a leak
+  EARBUDS_MIN_ACTIVE_BINS: 5, // broadband content gate (250 Hz – 8 kHz)
+  EARBUDS_ACTIVE_BIN_FLOOR: 2,   // byte-spectrum value a bin must exceed to count as active
   EARBUDS_FREQ_LOW: 250,      // Hz — ignore sub-250 Hz rumble (AC, traffic)
   EARBUDS_FREQ_HIGH: 8000,    // Hz — cap (mic rolloff above this is noise)
   EARBUDS_SUSTAIN: 8,         // consecutive samples (~1.2 s at AUDIO_MS=150) before flagging

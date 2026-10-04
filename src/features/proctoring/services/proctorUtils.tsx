@@ -183,54 +183,129 @@ export async function runDeviceDetection(): Promise<DeviceRisk[]> {
 
 // ── Screen Share Preview ──────────────────────────────────────────────────────
 
-import { screenCapturePermissionStatus } from "@/shared/platform/lockdownBridge";
+// Extended state machine for screen sharing:
+// idle        — not started
+// requesting  — set_window_sharing sent, awaiting getDisplayMedia
+// active      — live stream running, real video track confirmed
+// cancelled   — user dismissed the native picker without selecting
+// denied      — OS system permission denied (TCC)
+// error       — unexpected error (no API, stream ended immediately, etc.)
+// unsupported — getDisplayMedia API not present
+export type ScreenShareState = "idle" | "requesting" | "active" | "cancelled" | "denied" | "error" | "unsupported";
 
 export function useScreenShareTest() {
-  const [state, setState] = useState<"idle" | "active" | "error">("idle");
+  const [state, setState] = useState<ScreenShareState>("idle");
   const [error, setError] = useState<string | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const start = async () => {
+  const start = async (): Promise<MediaStream | null> => {
+    console.log("[SCREEN] Test button clicked");
     setError(null);
-    try {
-      if (isTauri()) {
-        const status = await screenCapturePermissionStatus();
-        if (status === "denied") {
-          throw new Error("Screen share permission denied. Please allow it in System Settings.");
-        }
-      }
+    setState("requesting");
 
-      const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
-      if (!md.getDisplayMedia) throw new Error("Screen share not supported in this browser. Use Chrome, Firefox, or Edge.");
-      // On macOS the exam window uses NSWindowSharingNone to block OS screenshots;
-      // that flag also prevents WKWebView from showing the getDisplayMedia picker.
-      // Temporarily lift it, start the stream, then immediately re-lock.
-      if (isTauri()) await invoke("set_window_sharing", { allow: true }).catch(() => {});
-      let stream: MediaStream;
-      try {
-        stream = await md.getDisplayMedia({ video: true, audio: false });
-      } finally {
-        if (isTauri()) await invoke("set_window_sharing", { allow: false }).catch(() => {});
-      }
-      
-      const tracks = stream.getVideoTracks();
-      if (tracks.length === 0 || tracks[0].readyState !== "live") {
-         stream.getTracks().forEach(t => t.stop());
-         throw new Error("Failed to get a live screen feed.");
-      }
-      
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      tracks[0]?.addEventListener("ended", stop);
-      setState("active");
-      return stream;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed";
-      setError(msg.includes("denied") || msg.includes("Permission") ? "Screen recording permission denied. Open System Settings → Privacy & Security → Screen & System Audio Recording, and enable the app." : msg);
-      setState("error");
-      throw err;
+    const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: unknown) => Promise<MediaStream> };
+
+    // Check API availability first — no point trying if the browser/webview
+    // simply does not expose getDisplayMedia at all.
+    console.log("[SCREEN] getDisplayMedia available =", typeof md.getDisplayMedia === "function");
+    if (typeof md.getDisplayMedia !== "function") {
+      setError("Screen sharing is not available in this WebView configuration.");
+      setState("unsupported");
+      return null;
     }
+
+    // ── Lift NSWindowSharingNone BEFORE calling getDisplayMedia ───────────────
+    // The exam window is marked NSWindowSharingNone at startup so it is
+    // excluded from OS screen-capture APIs (Cmd+Shift+3 shows desktop behind
+    // the exam window). That same flag blocks WKWebView's own getDisplayMedia
+    // picker on macOS — the picker cannot list or capture a window that is
+    // excluded from capture APIs. We must lift it BEFORE the picker appears,
+    // then re-lock it AFTER the stream is acquired (or on failure).
+    //
+    // We fire-and-don't-await set_window_sharing so the invoke promise does not
+    // break the user-gesture association in WebKit. The 80 ms pause gives the
+    // Rust command time to complete before getDisplayMedia is called.
+    if (isTauri()) {
+      console.log("[SCREEN] Lifting NSWindowSharingNone to allow picker");
+      // Await the command so we KNOW the window level has been lowered and
+      // NSWindowSharingReadOnly is set before calling getDisplayMedia.
+      // getDisplayMedia in WKWebView does not have the strict same-microtask
+      // gesture requirement that getUserMedia has, so awaiting here is safe.
+      await invoke("set_window_sharing", { allow: true }).catch(() => {});
+      // Extra tick: give the RunLoop time to process the NSWindow level change
+      // before WebKit internally tries to enumerate capture sources.
+      await new Promise<void>((r) => setTimeout(r, 200));
+    }
+
+    console.log("[SCREEN] Starting display capture request");
+
+    let stream: MediaStream | null = null;
+    try {
+      stream = await md.getDisplayMedia({ video: true, audio: false });
+      console.log("[SCREEN] Capture stream received");
+    } catch (captureErr) {
+      // Re-lock the window immediately on failure.
+      if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
+
+      const name = captureErr instanceof Error ? captureErr.name : "unknown";
+      const msg  = captureErr instanceof Error ? captureErr.message : String(captureErr);
+      console.log("[SCREEN] Capture error name =", name);
+      console.log("[SCREEN] Capture error message =", msg);
+
+      // NotAllowedError: user dismissed the picker OR the OS denied TCC.
+      // We distinguish them: if the error message mentions "permission" or
+      // "denied" the OS blocked it; otherwise the user cancelled.
+      if (name === "NotAllowedError") {
+        const isSystemDenied =
+          msg.toLowerCase().includes("permission") ||
+          msg.toLowerCase().includes("denied") ||
+          msg.toLowerCase().includes("not allowed");
+        if (isSystemDenied) {
+          setError(
+            "Screen recording permission is denied. " +
+            "Open System Settings → Privacy & Security → " +
+            "Screen & System Audio Recording and enable Vignan Exam Browser, " +
+            "then click Test Screen Sharing again."
+          );
+          setState("denied");
+        } else {
+          // User clicked Cancel / closed the picker without selecting.
+          setError(null);
+          setState("cancelled");
+        }
+      } else if (name === "AbortError") {
+        setError(null);
+        setState("cancelled");
+      } else {
+        setError(`Screen sharing failed: ${msg}`);
+        setState("error");
+      }
+      return null;
+    }
+
+    // Re-lock the window now that we have the stream descriptor.
+    if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
+
+    // ── Verify we have a real, live video track ───────────────────────────────
+    const tracks = stream.getVideoTracks();
+    console.log("[SCREEN] Video tracks =", tracks.length);
+    console.log("[SCREEN] Video track state =", tracks[0]?.readyState ?? "n/a");
+
+    if (tracks.length === 0 || tracks[0].readyState !== "live") {
+      stream.getTracks().forEach((t) => t.stop());
+      setError("No live video track was produced by screen sharing.");
+      setState("error");
+      return null;
+    }
+
+    // ── Success path ──────────────────────────────────────────────────────────
+    streamRef.current = stream;
+    if (videoRef.current) videoRef.current.srcObject = stream;
+    // If the user stops sharing from the OS toolbar, update state accordingly.
+    tracks[0].addEventListener("ended", stop);
+    setState("active");
+    return stream;
   };
 
   const stop = () => {

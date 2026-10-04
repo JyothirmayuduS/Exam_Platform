@@ -339,19 +339,54 @@ fn open_media_settings(kind: String) -> Result<(), String> {
 /// the webview's own capture API on macOS. After the stream is acquired the
 /// frontend calls this again with `allow = false` to restore the lockdown.
 ///
+/// When allowing (allow = true) we also:
+///   1. Lower the window level to NSNormalWindowLevel so the macOS screen
+///      picker (system UI) can appear on top of the exam window. At level 1000
+///      (kiosk level) the picker would appear *behind* the exam window.
+///   2. Call CGRequestScreenCaptureAccess() to surface the TCC authorization
+///      request if the user has never granted screen recording permission —
+///      this shows the "Vignan Exam Browser would like to record your screen"
+///      system notification / System Settings prompt.
+///
+/// When re-locking (allow = false) the window level returns to 1000 and the
+/// sharing type returns to NSWindowSharingNone.
+///
 /// On Windows the WDA_EXCLUDEFROMCAPTURE flag is toggled equivalently.
 #[tauri::command]
 fn set_window_sharing(app: tauri::AppHandle, allow: bool) {
     #[cfg(target_os = "macos")]
     {
+        // TCC: if we are about to present the picker, make sure the OS has been
+        // asked for screen recording permission. CGRequestScreenCaptureAccess
+        // is a no-op when already granted and shows the system prompt / System
+        // Settings redirect when not yet determined or denied.
+        if allow {
+            #[link(name = "CoreGraphics", kind = "framework")]
+            extern "C" {
+                fn CGRequestScreenCaptureAccess() -> bool;
+            }
+            unsafe { CGRequestScreenCaptureAccess(); }
+        }
+
         if let Some(win) = app.get_webview_window("exam") {
             if let Ok(ns_win) = win.ns_window() {
                 unsafe {
                     let ns_win = ns_win as *mut objc2::runtime::AnyObject;
-                    // 0 = NSWindowSharingNone (excluded from capture)
-                    // 1 = NSWindowSharingReadOnly (visible to capture APIs)
+
+                    // Toggle the sharing type:
+                    //   0 = NSWindowSharingNone      (excluded from capture APIs)
+                    //   1 = NSWindowSharingReadOnly  (visible to capture APIs)
                     let sharing_type: isize = if allow { 1 } else { 0 };
                     let _: () = objc2::msg_send![ns_win, setSharingType: sharing_type];
+
+                    // Toggle the window level:
+                    // At kiosk level 1000 the macOS system screen-picker sheet
+                    // renders *behind* the exam window on macOS 13+. Lower to
+                    // NSNormalWindowLevel (0) while the picker is open so the
+                    // picker's system UI can appear on top. Restore immediately
+                    // after the picker closes (allow = false).
+                    let level: isize = if allow { 0 } else { 1000 };
+                    let _: () = objc2::msg_send![ns_win, setLevel: level];
                 }
             }
         }
@@ -373,6 +408,7 @@ fn set_window_sharing(app: tauri::AppHandle, allow: bool) {
         let _ = (app, allow);
     }
 }
+
 
 /// Diagnostic: is the exam window excluded from OS screen capture? The web
 /// layer shows a lockdown notice if the exclusion could not be applied.

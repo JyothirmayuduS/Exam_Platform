@@ -17,10 +17,10 @@ type QuestionPanelProps = {
 };
 
 const statusClassMap: Record<QuestionStatus, string> = {
-  answered: "border-emerald-500 bg-emerald-500 text-white shadow-sm",
-  marked: "border-amber-500 bg-amber-500 text-white shadow-sm",
-  visited: "border-slate-300 bg-white text-slate-700",
-  unvisited: "border-slate-200 bg-slate-50 text-slate-400",
+  answered: "bg-success border-success text-white",
+  marked: "bg-amber border-amber text-white",
+  visited: "bg-paper-raised border-line text-ink",
+  unvisited: "bg-paper border-line text-ink",
 };
 
 export default function QuestionPanel({ questions, currentIndex, getStatus, onJump }: QuestionPanelProps) {
@@ -44,16 +44,16 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
   }, [questions, search]);
 
   return (
-    <aside className="space-y-4 rounded-xl border border-line/40 bg-white p-5 shadow-sm">
-      <p className="font-sans text-xs font-semibold uppercase tracking-wider text-slate-500">Question Navigator</p>
+    <aside className="rounded-lg border border-line bg-paper p-3.5 space-y-3">
+      <h2 className="font-sans text-[12px] font-semibold tracking-wider text-soft">Question Navigator</h2>
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Search by #, text, type..."
-        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 outline-none transition-colors focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+        className="w-full rounded-md border border-line bg-paper px-2.5 py-1.5 text-[13px] outline-none focus:border-pri"
         aria-label="Search questions"
       />
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid max-h-[230px] grid-cols-5 gap-1.5 overflow-auto p-0.5">
         {visible.map(({ q, index }) => {
           const status = getStatus(q.id);
           const isCurrent = index === currentIndex;
@@ -61,7 +61,7 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
             <button
               key={q.id}
               onClick={() => onJump(index)}
-              className={`flex h-10 items-center justify-center rounded-lg border font-sans text-xs font-bold transition-all duration-200 ${statusClassMap[status]} ${isCurrent ? "ring-2 ring-emerald-500 ring-offset-2 scale-105" : "hover:brightness-95"}`}
+              className={`flex aspect-square items-center justify-center rounded-md border text-[13px] font-semibold transition-colors ${statusClassMap[status]} ${isCurrent ? "ring-2 ring-pri ring-offset-1" : "hover:bg-line/40"}`}
               aria-label={`Go to question ${index + 1}`}
             >
               {index + 1}
@@ -69,11 +69,11 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
           );
         })}
       </div>
-      <div className="mt-4 space-y-2 font-sans text-[11px] font-medium tracking-wide text-slate-500 pt-2 border-t border-slate-100">
-        <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-emerald-500 shadow-sm" />Answered</span>
-        <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-amber-500 shadow-sm" />Marked for review</span>
-        <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border border-slate-300 bg-white" />Visited</span>
-        <span className="flex items-center gap-2"><span className="h-3 w-3 rounded-full border border-slate-200 bg-slate-50" />Not visited</span>
+      <div className="grid grid-cols-2 gap-1.5 border-t border-line pt-3 font-sans text-[11px] text-soft">
+        <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-[3px] border border-line bg-success" />Answered</span>
+        <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-[3px] border border-line bg-amber" />Marked</span>
+        <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-[3px] border border-line bg-paper-raised" />Visited</span>
+        <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-[3px] border border-line bg-paper" />Not visited</span>
       </div>
     </aside>
   );

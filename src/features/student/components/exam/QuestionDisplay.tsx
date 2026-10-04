@@ -95,68 +95,65 @@ export default function QuestionDisplay({
   if (!question) return null;
 
   const isSubjective = question.type === "subjective" || question.options.length === 0;
-
   return (
-    <section className="rounded-2xl border border-line/40 bg-white p-6 shadow-sm sm:p-8">
-      <div className="flex items-start justify-between gap-4">
-        {/* Question text */}
-        <h2 className="mt-2 font-serif text-2xl leading-relaxed text-slate-800 sm:text-3xl">{question.text}</h2>
+    <>
+      <div className="mb-3.5 flex items-center justify-between border-b border-line pb-2.5">
+        <h2 className="m-0 font-sans text-[18px] font-semibold text-ink">Question {questionIndex} of {examId ? "N/A" : "N/A"}</h2>
         {showMarks && typeof question.marks === "number" && (
-          <span className="mt-3 shrink-0 whitespace-nowrap rounded-full border border-line/50 bg-slate-50 px-3 py-1 font-sans text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <span className="rounded-[4px] border border-line px-2 py-0.5 text-[12px] text-soft">
             {question.marks} {question.marks === 1 ? "mark" : "marks"}
           </span>
         )}
       </div>
 
+      <p className="m-0 mb-1.5 font-serif text-[19px] font-semibold text-ink leading-relaxed">{question.text}</p>
+      
       {/* MCQ options */}
       {question.options.length > 0 && (
-        <div className="mt-8 space-y-3">
-          {question.options.map((opt, i) => {
-            const selected = answer === i;
-            return (
-              <button
-                key={i}
-                onClick={() => onSelectOption(i)}
-                className={`flex w-full items-center gap-4 rounded-xl border p-4 text-left text-sm transition-all duration-200 ${
-                  selected
-                    ? "border-emerald-500 bg-emerald-50 text-emerald-900 shadow-sm ring-1 ring-emerald-500"
-                    : "border-line/60 text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                }`}
-                aria-label={`Option ${String.fromCharCode(65 + i)}`}
-              >
-                <span
-                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-sans text-xs font-bold transition-colors ${
-                    selected
-                      ? "bg-emerald-500 text-white"
-                      : "bg-slate-100 text-slate-500"
+        <>
+          <p className="mb-4 mt-0 font-sans text-[12px] text-soft">Select one answer.</p>
+          <div className="space-y-2">
+            {question.options.map((opt, i) => {
+              const selected = answer === i;
+              return (
+                <label
+                  key={i}
+                  className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3.5 py-3 transition-colors hover:bg-bg ${
+                    selected ? "border-pri bg-paper-raised" : "border-line"
                   }`}
                 >
-                  {String.fromCharCode(65 + i)}
-                </span>
-                {opt}
-              </button>
-            );
-          })}
-
+                  <input
+                    type="radio"
+                    name={`q-${question.id}`}
+                    value={i}
+                    checked={selected}
+                    onChange={() => onSelectOption(i)}
+                    className="mt-1 h-3.5 w-3.5 accent-pri"
+                  />
+                  <span className="text-[14px] leading-snug">{opt}</span>
+                </label>
+              );
+            })}
+          </div>
           {/* Keyboard hint for T/F */}
           {question.options.length === 2 && (
-            <p className="mt-2 text-center font-sans text-xs text-slate-400">
-              Tip: Press <kbd className="rounded border border-line/40 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] shadow-sm">Space</kbd> to toggle T/F
+            <p className="mt-2 text-center font-sans text-[11px] text-soft">
+              Tip: Press <kbd className="rounded border border-line bg-paper px-1 py-0.5 font-mono text-[10px]">Space</kbd> to toggle T/F
             </p>
           )}
-        </div>
+        </>
       )}
 
       {/* Subjective — QR upload block / Answer box / Both */}
       {isSubjective && (
         <div className="mt-6 space-y-4">
           {typeof answer === "string" && answer.startsWith("[Uploaded answer:") ? (
-            <div className="rounded-xl border border-emerald-500/30 bg-emerald-50/50 p-5 shadow-sm">
+            <div className="rounded-lg border border-success bg-[#E4F1E9] p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4">
-                <p className="font-sans text-xs font-bold uppercase tracking-wider text-emerald-700">✓ Handwritten Answer Uploaded</p>
+                <p className="font-sans text-[12px] font-bold tracking-wider text-success">✓ Handwritten Answer Uploaded</p>
                 <button 
                   onClick={() => onSelectOption("" as unknown as number)}
-                  className="rounded-lg border border-red-200 bg-white px-3 py-1.5 font-sans text-xs font-medium text-red-600 transition-colors hover:bg-red-50 hover:text-red-700"
+                  className="rounded-md border border-alert bg-white px-3 py-1.5 font-sans text-[11px] font-medium text-alert hover:bg-alert/10"
                 >
                   Remove & Retake
                 </button>
@@ -170,11 +167,11 @@ export default function QuestionDisplay({
             <>
               {(!question.subjective_mode || question.subjective_mode === "both" || question.subjective_mode === "textbox") && (
                 <div>
-                  <label className="mb-2 block font-sans text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  <label className="mb-2 block font-sans text-[12px] font-semibold text-soft">
                     {question.subjective_mode === "both" ? "Option 1: Type your answer" : "Type your answer"}
                   </label>
                   <textarea
-                    className="h-40 w-full rounded-xl border border-line/60 bg-white p-4 text-sm text-slate-700 outline-none transition-all focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                    className="h-40 w-full rounded-md border border-line bg-white p-3.5 text-[14px] outline-none focus:border-pri"
                     placeholder="Type your response here..."
                     value={typeof answer === "string" ? answer : ""}
                     onChange={(e) => onSelectOption(e.target.value as unknown as number)}
@@ -187,10 +184,10 @@ export default function QuestionDisplay({
                   {question.subjective_mode === "both" && (
                     <div className="relative py-6">
                       <div className="absolute inset-0 flex items-center" aria-hidden="true">
-                        <div className="w-full border-t border-line/40"></div>
+                        <div className="w-full border-t border-line"></div>
                       </div>
                       <div className="relative flex justify-center">
-                        <span className="bg-white px-4 font-sans text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        <span className="bg-paper px-4 font-sans text-[11px] text-soft">
                           Option 2: Scan QR &amp; upload handwritten answer from phone
                         </span>
                       </div>
@@ -219,30 +216,30 @@ export default function QuestionDisplay({
       )}
 
       {/* Revisit later / clear response */}
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-4 border-t border-line/30 pt-6">
-        <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-600 select-none hover:text-slate-900">
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-2.5 border-t border-line pt-3.5">
+        <label className="flex cursor-pointer items-center gap-2 font-sans text-[13px] text-ink hover:opacity-80">
           <input
             type="checkbox"
             checked={isReviewed}
             onChange={onToggleReview}
-            className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+            className="h-3.5 w-3.5 accent-pri"
           />
-          Mark to revisit later
+          Mark for review
         </label>
         {onClear && (
           <button
             onClick={onClear}
             disabled={answer === undefined}
-            className={`flex items-center gap-2 rounded-lg px-4 py-2 font-sans text-xs font-semibold uppercase tracking-wider transition-colors ${
+            className={`rounded-md border border-line bg-paper px-3 py-1.5 font-sans text-[12px] font-medium transition-colors ${
               answer === undefined
-                ? "cursor-not-allowed bg-slate-50 text-slate-300"
-                : "bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700"
+                ? "cursor-not-allowed opacity-50"
+                : "text-alert hover:bg-bg"
             }`}
           >
-            ⌫ Clear response
+            Clear response
           </button>
         )}
       </div>
-    </section>
+    </>
   );
 }

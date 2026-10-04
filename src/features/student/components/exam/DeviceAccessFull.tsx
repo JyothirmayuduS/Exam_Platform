@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { FiCheck, FiAlertTriangle, FiAlertOctagon, FiLock, FiArrowRight } from "react-icons/fi";
-import { useAudioTest, AudioBars, runDeviceDetection, useScreenShareTest, type DeviceRisk } from "@/features/proctoring/services/proctorUtils";
+import { FiCheck, FiAlertTriangle, FiAlertOctagon, FiLock, FiArrowRight, FiRefreshCw } from "react-icons/fi";
+import { useAudioTest, AudioBars, runDeviceDetection, useScreenShareTest, type DeviceRisk, type ScreenShareState } from "@/features/proctoring/services/proctorUtils";
 import type { RefObject } from "react";
 import MonitorQRPanel from "@/features/student/components/exam/MonitorQRPanel";
 
@@ -11,6 +11,7 @@ import MonitorQRPanel from "@/features/student/components/exam/MonitorQRPanel";
 // ─────────────────────────────────────────────────────────────────────────────
 
 type AccessState = "idle" | "granted" | "denied";
+
 
 type DeviceAccessFullProps = {
   attemptId?: string;
@@ -88,7 +89,7 @@ export default function DeviceAccessFull({
           <div className="space-y-2">
             <AccessRow label="Camera" state={cam} />
             <AccessRow label="Microphone" state={mic} />
-            <AccessRow label="Screen sharing" state={screen} />
+          <AccessRow label="Screen sharing" state={screen} screenShareState={screenTest.state} />
 
             {/* Permission error help — kiosk and browser recover differently */}
             {(cam === "denied" || mic === "denied") && (
@@ -205,57 +206,7 @@ export default function DeviceAccessFull({
           </section>
         )}
 
-        {/* ── Screen share test ── */}
-        {(cam === "granted" && mic === "granted") && (
-          <section className="border border-line p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Screen share test</p>
-              {screenTest.state === "idle" || screenTest.state === "error" ? (
-                <button 
-                  onClick={async () => {
-                    try {
-                      const stream = await screenTest.start();
-                      if (stream) onScreenGranted?.(stream);
-                    } catch (e) {
-                      // error state handled by useScreenShareTest
-                    }
-                  }} 
-                  className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-raised"
-                >
-                  Test Screen Sharing
-                </button>
-              ) : (
-                <button onClick={() => {
-                  screenTest.stop();
-                  // The stream stop will trigger handleScreenTrackEnded in StudentExam.tsx
-                  // which sets screen back to "denied".
-                }} className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-wider">
-                  Stop sharing
-                </button>
-              )}
-            </div>
-            {screenTest.state === "active" && (
-              <video ref={screenTest.videoRef as RefObject<HTMLVideoElement>} autoPlay playsInline muted className="w-full border border-line aspect-video bg-black object-contain" />
-            )}
-            {screenTest.state === "error" && (
-              <div className="space-y-2">
-                <p className="text-[12px] text-alert">{screenTest.error}</p>
-                {inKiosk && screenTest.error?.includes("System Settings") && (
-                  <button
-                    onClick={() => onOpenMediaSettings?.("screen")}
-                    className="border border-alert bg-alert/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/20"
-                  >
-                    Open system settings
-                  </button>
-                )}
-              </div>
-            )}
-            {screenTest.state === "idle" && (
-              <p className="text-[12px] text-soft">Verify your screen is being shared correctly before entering the exam.</p>
-            )}
-          </section>
-        )}
-
+        {/* Screen sharing is now natively requested along with camera and microphone. */}
         {/* ── Device detection results ── */}
         {scanDone && (
           <section className="border border-line p-4 space-y-2">
@@ -299,14 +250,35 @@ export default function DeviceAccessFull({
 }
 
 // ── Shared helper ─────────────────────────────────────────────────────────────
-function AccessRow({ label, state }: { label: string; state: AccessState }) {
-  const tone = state === "granted" ? "text-success" : state === "denied" ? "text-alert" : "text-soft";
-  const text = state === "granted" ? "GRANTED" : state === "denied" ? "BLOCKED" : "WAITING";
-  const dot = state === "granted" ? "bg-success" : state === "denied" ? "bg-alert" : "bg-line";
+function AccessRow({
+  label,
+  state,
+  screenShareState,
+}: {
+  label: string;
+  state: AccessState;
+  screenShareState?: ScreenShareState;
+}) {
+  let displayText = state === "granted" ? "GRANTED" : state === "denied" ? "BLOCKED" : "WAITING";
+  let tone = state === "granted" ? "text-success" : state === "denied" ? "text-alert" : "text-soft";
+  let dot  = state === "granted" ? "bg-success" : state === "denied" ? "bg-alert" : "bg-line";
+
+  if (screenShareState !== undefined) {
+    switch (screenShareState) {
+      case "active":       displayText = "GRANTED";     tone = "text-success"; dot = "bg-success"; break;
+      case "requesting":   displayText = "REQUESTING";  tone = "text-amber";   dot = "bg-amber animate-pulse"; break;
+      case "cancelled":    displayText = "CANCELLED";   tone = "text-amber";   dot = "bg-amber"; break;
+      case "denied":       displayText = "DENIED";      tone = "text-alert";   dot = "bg-alert"; break;
+      case "error":        displayText = "ERROR";       tone = "text-alert";   dot = "bg-alert"; break;
+      case "unsupported":  displayText = "UNSUPPORTED"; tone = "text-alert";   dot = "bg-alert"; break;
+      default:             displayText = "WAITING";     tone = "text-soft";    dot = "bg-line"; break;
+    }
+  }
+
   return (
     <div className="flex items-center justify-between border border-line px-3 py-2.5 text-[13px]">
       <span className="flex items-center gap-2"><span className={`h-2 w-2 ${dot}`} />{label}</span>
-      <span className={`font-mono text-[10px] uppercase tracking-wider ${tone}`}>{text}</span>
+      <span className={`font-mono text-[10px] uppercase tracking-wider ${tone}`}>{displayText}</span>
     </div>
   );
 }
