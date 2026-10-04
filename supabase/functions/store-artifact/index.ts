@@ -110,12 +110,23 @@ Deno.serve(async (req: Request) => {
     callerStudentRoll = stu?.roll ?? null;
   } catch { /* ignore — treated as non-student below */ }
   try {
-    const { data: t } = await supabase
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const lookup = serviceKey
+      ? createClient(supabaseUrl, serviceKey)
+      : supabase;
+    const email = (user.email ?? "").trim();
+    const { data: rows } = await lookup
       .from("teachers")
-      .select("id")
-      .eq("auth_id", user.id)
-      .maybeSingle();
-    callerIsStaff = !!t;
+      .select("id, auth_id, email")
+      .or([`auth_id.eq.${user.id}`, email ? `email.eq.${email}` : ""].filter(Boolean).join(","));
+    callerIsStaff = (rows ?? []).length > 0;
+    // Link a teacher who signed in with the same email but a new auth id.
+    if (callerIsStaff && serviceKey) {
+      const unlinked = (rows ?? []).find((r: { auth_id?: string }) => r.auth_id !== user.id);
+      if (unlinked) {
+        await lookup.from("teachers").update({ auth_id: user.id }).eq("id", (unlinked as { id: string }).id);
+      }
+    }
   } catch { /* ignore */ }
 
   // Capture clients write roll-number folders; older clients used UUIDs.

@@ -27,7 +27,9 @@ import {
   storageFolderSegment,
   type R2Artifact,
 } from "@/shared/services/examStorage";
-import { listExams, listAttemptViolations, type ViolationEvent } from "@/shared/data/examApi";
+import { listExamsForTeacher, listAttemptViolations, type ViolationEvent } from "@/shared/data/examApi";
+import { consumeR2Error } from "@/shared/services/r2Function";
+import PageLoader from "@/shared/components/PageLoader";
 import RecordingReviewer from "@/features/proctoring/components/RecordingReview";
 import AIIntegrityCard from "@/features/proctoring/components/AIIntegrityCard";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
@@ -84,23 +86,42 @@ export default function EvidenceBrowser() {
     void (async () => {
       const folders = await listR2ExamFolders();
       if (!alive) return;
-      if (!folders) {
-        setExamError("Could not reach Cloudflare R2 — check the store-artifact edge function deployment and secrets (see SETUP.md §4a).");
+      const bySegment = new Map<string, { id: string; name: string; batch?: string | null }>();
+      let teacherExams: { id: string; name: string; batch?: string | null }[] = [];
+      try {
+        const all = await listExamsForTeacher();
+        teacherExams = all ?? [];
+        for (const e of teacherExams) {
+          const seg = storageFolderSegment(e.id, e.name);
+          bySegment.set(seg, { id: e.id, name: e.name, batch: e.batch });
+          bySegment.set(e.id, { id: e.id, name: e.name, batch: e.batch });
+        }
+      } catch { /* folders still render with their stored names */ }
+      if (!alive) return;
+
+      let folderNames = folders;
+      if (!folderNames) {
+        // Root listing can fail (staff check, empty prefix). Probe each exam
+        // folder the teacher already owns so recordings still open.
+        const probed: string[] = [];
+        for (const e of teacherExams) {
+          const seg = storageFolderSegment(e.id, e.name);
+          const students = await listR2StudentFolders(seg);
+          const legacy = seg === e.id ? null : await listR2StudentFolders(e.id);
+          if (students) probed.push(seg);
+          else if (legacy) probed.push(e.id);
+        }
+        folderNames = probed.length ? probed : null;
+      }
+      if (!folderNames) {
+        const detail = consumeR2Error();
+        setExamError(detail
+          ? `Could not reach Cloudflare R2 — ${detail}`
+          : "Could not reach Cloudflare R2 — check the store-artifact edge function deployment and secrets (see SETUP.md §4a).");
         setExams([]);
         return;
       }
-      // Best-effort name overlay from the exams table.
-      const bySegment = new Map<string, { id: string; name: string; batch?: string | null }>();
-      try {
-        const all = await listExams();
-        for (const e of all ?? []) {
-          const seg = storageFolderSegment(e.id, e.name);
-          bySegment.set(seg, { id: e.id, name: e.name, batch: e.batch });
-          bySegment.set(e.id, { id: e.id, name: e.name, batch: e.batch }); // legacy id folders
-        }
-      } catch { /* offline — folders still render with their stored names */ }
-      if (!alive) return;
-      const rows: ExamFolder[] = folders.map((f) => {
+      const rows: ExamFolder[] = folderNames.map((f) => {
         const seg = stripSlash(f);
         const meta = bySegment.get(seg);
         return { folder: seg, examId: meta?.id, name: meta?.name ?? seg, batch: meta?.batch ?? undefined };
@@ -327,12 +348,7 @@ export default function EvidenceBrowser() {
 }
 
 function Loading() {
-  return (
-    <div className="flex items-center gap-2 border border-dashed border-line-strong p-8 font-mono text-[11px] text-ink-soft">
-      <span className="h-3 w-3 animate-spin rounded-none border border-forest border-t-transparent" />
-      Reading Cloudflare R2…
-    </div>
-  );
+  return <PageLoader label="Reading Cloudflare R2" />;
 }
 
 function StudentEvidence({ exam, student }: { exam: ExamFolder; student: StudentRow }) {

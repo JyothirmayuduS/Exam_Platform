@@ -7,6 +7,7 @@ import { sendProctorAssignmentEmail } from "@/features/teacher/services/emailApi
 import ProctorChatPanel from "@/features/proctoring/components/ProctorChatPanel";
 import { startProctorViewing, identityLabel, type RemoteFeed } from "@/features/proctoring/services/proctorViewer";
 import { startVoiceBroadcast, voiceRoom } from "@/features/proctoring/services/proctorVoice";
+import JobBanner from "@/shared/components/JobBanner";
 import { downloadSessionReportPdf } from "@/shared/services/sessionReport";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
@@ -288,6 +289,7 @@ export default function TeacherProctoring() {
   const nav = getTeacherNav(liveAttemptsCount, submittedAttemptsCount, needsAttentionCount);
 
   const [zipping, setZipping] = useState(false);
+  const [pdfJob, setPdfJob] = useState<string | null>(null);
   const [zipMsg, setZipMsg] = useState<string | null>(null);
   const exportZip = async () => {
     if (zipping) return;
@@ -322,8 +324,9 @@ export default function TeacherProctoring() {
   };
 
   const exportReport = () => {
+    if (pdfJob) return;
     const examName = examList.find((e) => e.id === selectedExamId)?.name || selectedExamId;
-    flash("Session report exporting (includes per-snapshot timeline)…");
+    setPdfJob("Preparing session report…");
     void downloadSessionReportPdf(
       examName,
       selectedExamId,
@@ -341,7 +344,9 @@ export default function TeacherProctoring() {
           created_at: v.created_at,
         })),
       })),
-    );
+      new Date(),
+      { onProgress: setPdfJob },
+    ).then(() => flash("PDF downloaded", "ok")).catch(() => flash("PDF export failed", "err")).finally(() => setPdfJob(null));
   };
 
   // Live voice: publish this proctor's mic into the candidate's own channel.
@@ -437,6 +442,7 @@ export default function TeacherProctoring() {
   }
 
   return <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav} status={live ? "Live monitoring active" : "Not connected"}>
+    <JobBanner label={pdfJob ?? (zipping ? "Packing evidence ZIP…" : null)} />
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
       <button onClick={() => { setStage("select"); setSearchParams({}); }} className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:text-forest">
         <FiGrid aria-hidden /> All assessments

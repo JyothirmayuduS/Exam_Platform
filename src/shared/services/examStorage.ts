@@ -121,7 +121,10 @@ export async function listR2Artifacts(prefix: string): Promise<R2Artifact[] | nu
     if (!out) return null;
     return out.map((o) => {
       const parts = o.key.split("/");
-      const kind = (parts[2] as ArtifactKind | undefined) ?? "screenshots";
+      const known = parts.find((p) =>
+        p === "screenshots" || p === "recordings" || p === "violations" || p === "report" || p === "ai_evidence" || p === "subjective" || p === "monitor",
+      );
+      const kind = (known as ArtifactKind | undefined) ?? (parts[2] as ArtifactKind | undefined) ?? "screenshots";
       return {
         key: o.key,
         kind,
@@ -206,7 +209,7 @@ export async function listStudentArtifacts(
     } catch { /* preserve roll-based reads while profile lookup is offline */ }
   }
   const folders = new Set([segment]);
-  if (!folder) folders.add(examId);
+  folders.add(examId);
   const prefixes = [...folders].flatMap((name) => [...owners].map((owner) => `${name}/${owner}/`));
 
   const merged = new Map<string, R2Artifact>();

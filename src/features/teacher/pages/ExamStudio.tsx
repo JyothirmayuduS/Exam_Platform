@@ -5,8 +5,9 @@
 // Save & exit, and Publish & share. Every number is computed from Supabase —
 // no demo data.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FiArrowLeft, FiArrowRight, FiCheck, FiUpload, FiEdit3, FiEye, FiSettings, FiSearch, FiX, FiChevronDown, FiChevronRight, FiClock, FiLock, FiMail } from "react-icons/fi";
+import PageLoader from "@/shared/components/PageLoader";
 import "./ExamStudio.css";
 import { Button, NumberField } from "@/shared/components/ui";
 import {
@@ -80,6 +81,7 @@ export default function ExamStudio({
   const [shareOpen, setShareOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [result, setResult] = useState<null | { status: string; when?: string; link: string; notified?: number }>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async () => {
     const [exams, qs, allQ] = await Promise.all([
@@ -185,7 +187,7 @@ export default function ExamStudio({
     else notify("Could not save options — database unavailable");
   };
 
-  if (loading) return <div className="p-14 text-center font-mono text-[11px] uppercase tracking-widest text-soft">Loading paper builder…</div>;
+  if (loading) return <PageLoader label="Loading paper builder" />;
   if (!exam) return <div className="border border-dashed border-line p-14 text-center"><p className="font-serif text-xl">Test not found</p><p className="mt-2 text-[13px] text-soft">It may have been deleted.</p></div>;
 
   return (
@@ -196,12 +198,21 @@ export default function ExamStudio({
           <div className="exam-build-title-row">
             <span className="shrink-0 border border-line bg-raised px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-soft">{exam.id}</span>
             <input
+              ref={titleRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
               aria-label="Test name"
               className="border border-transparent bg-transparent px-1 font-serif text-[1.5rem] font-semibold leading-none tracking-tight text-ink outline-none hover:border-line focus:border-forest"
             />
-            <FiEdit3 className="shrink-0 text-soft" size={14} aria-hidden />
+            <button
+              type="button"
+              aria-label="Rename test"
+              title="Rename test"
+              onClick={() => { titleRef.current?.focus(); titleRef.current?.select(); }}
+              className="flex h-8 w-8 shrink-0 items-center justify-center text-soft hover:bg-raised hover:text-forest"
+            >
+              <FiEdit3 size={14} aria-hidden />
+            </button>
           </div>
           <p className="mt-2 text-[12px] leading-none text-soft">
             {exam.batch} · {String(s.language ?? "English")} · {String(s.purpose ?? "")} ·{" "}

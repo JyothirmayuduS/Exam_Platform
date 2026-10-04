@@ -54,7 +54,7 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
       )}
 
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-line bg-paper lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 flex-col border-r border-line bg-paper lg:flex">
         <Link to="/" className="flex items-center gap-3 border-b border-line px-5 py-4">
           <div className="flex h-8 w-8 items-center justify-center border border-ink font-serif text-base font-semibold">V</div>
           <div className="leading-none">
@@ -107,8 +107,8 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
         </div>
       </aside>
 
-      <div className="lg:pl-56">
-        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-paper/95 px-5 py-3 backdrop-blur lg:px-8">
+      <div className="lg:pl-60">
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-paper px-5 py-3 lg:px-8">
           <div><p className="font-mono text-[9px] uppercase tracking-widest" style={{ color: tone }}>{role} console</p><p className="mt-0.5 font-serif text-base font-semibold">{name}</p></div>
           <div className="flex items-center gap-3"><span className="hidden text-[11px] text-soft sm:block">{status}</span><div className="flex h-7 w-7 items-center justify-center rounded-none bg-ink text-[10px] font-semibold text-paper">{name.split(" ").map((x) => x[0]).slice(0, 2).join("")}</div></div>
         </header>

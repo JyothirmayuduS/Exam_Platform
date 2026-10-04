@@ -26,6 +26,7 @@ import {
   updateTeacherProfile,
   type ExamRecord,
 } from "@/shared/data/examApi";
+import JobBanner from "@/shared/components/JobBanner";
 import { downloadSessionReportPdf, downloadCsv, type ReportRow } from "@/shared/services/sessionReport";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 import EvidenceBrowser from "@/features/teacher/pages/EvidenceBrowser";
@@ -259,6 +260,7 @@ function ExamDetail({ notify, navigate, exam }: { notify: (s: string) => void; n
   const criticalFlags = liveAttempts.reduce((n, a) => n + a.flags.filter((f) => f.severity === "critical").length, 0);
   const [rosterCount, setRosterCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pdfJob, setPdfJob] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     void getExamRoster(exam.id).then((rows) => { if (active) setRosterCount(rows.length); });
@@ -281,6 +283,7 @@ function ExamDetail({ notify, navigate, exam }: { notify: (s: string) => void; n
     );
   };
   const exportReport = () => {
+    if (pdfJob) return;
     const rows: ReportRow[] = liveAttempts.map((a) => ({
       name: a.name,
       roll: a.roll,
@@ -289,10 +292,13 @@ function ExamDetail({ notify, navigate, exam }: { notify: (s: string) => void; n
       startedAt: a.startedAtIso ?? null,
       violations: a.flags.map((f) => ({ description: f.label, type: "flag", severity: f.severity, offset_seconds: null, created_at: f.atIso ?? f.at })),
     }));
-    notify(`Session report exporting (includes per-snapshot timeline)…`);
-    void downloadSessionReportPdf(exam.name, exam.id, rows);
+    setPdfJob("Preparing session report…");
+    void downloadSessionReportPdf(exam.name, exam.id, rows, new Date(), { onProgress: setPdfJob })
+      .then(() => notify("PDF downloaded"))
+      .catch(() => notify("PDF export failed"))
+      .finally(() => setPdfJob(null));
   };
-  return <><PageHeading eyebrow="Exams / Open" title={exam.name} detail={`${exam.batch} · Live session`} action={<Button onClick={() => navigate("/teacher/exams")}>← Back to exams</Button>} /><div className="mt-8 flex flex-wrap items-center justify-between gap-4 border border-alert/30 bg-alert/5 px-5 py-4"><div><p className="font-mono text-[10px] uppercase tracking-widest text-alert">Live session</p><p className="mt-1 text-[13px]">The exam is in progress. Candidate activity is updating in real time.</p></div><span className="font-mono text-[11px] text-alert">● Running</span></div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Candidates" value={String(totalCandidates)} detail={`${inProgress} active · ${pausedCount} paused · ${offline} not started`} tone="text-ink"/><Metric label="Submitted" value={String(submitted)} detail="Received" tone="text-success"/><Metric label="In progress" value={String(inProgress)} detail="Active now" tone="text-ink"/><Metric label="Flags" value={String(flagCount)} detail={`${criticalFlags} critical`} tone={flagCount ? "text-alert" : "text-ink"}/></div><div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]"><div className="space-y-6"><section className="border border-line bg-paper p-6"><div className="flex items-center justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-soft">Session progress</p><h2 className="mt-2 font-serif text-xl font-semibold">Candidate completion</h2></div><span className="font-mono text-[10px] text-alert">LIVE NOW</span></div><div className="mt-6 h-3 bg-line"><div className="h-full bg-forest" style={{ width: `${Math.min(100, Math.max(0, (submitted / totalCandidates) * 100))}%` }}/></div><div className="mt-3 flex justify-between font-mono text-[10px] text-soft"><span>{submitted} of {totalCandidates} submitted</span><span>{flagCount} flag(s)</span></div><div className="mt-7 grid gap-3 sm:grid-cols-3"><StatusRow label="Submitted" value={String(submitted)} tone="bg-success"/><StatusRow label="In progress" value={String(inProgress)} tone="bg-forest"/><StatusRow label="Paused" value={String(pausedCount)} tone="bg-amber"/></div></section><section className="border border-line"><div className="flex items-center justify-between border-b border-line px-5 py-4"><div><p className="font-mono text-[10px] uppercase tracking-widest text-soft">Recent activity</p><h2 className="mt-1 font-serif text-xl font-semibold">What is happening now</h2></div><Button onClick={() => navigate("/teacher/submissions")}>View all</Button></div><div className="divide-y divide-line">{liveAttempts.slice(0,4).map((a) => <div key={a.id} className="flex gap-4 px-5 py-4"><span className="w-16 shrink-0 font-mono text-[10px] text-soft"></span><div><p className="text-[13px]">{a.name}</p><p className="mt-1 text-[11px] text-soft">{a.state}{a.flags.length ? ` · ${a.flags.length} flag(s)` : ""}</p></div></div>)}</div></section></div><aside className="space-y-6"><section className="border border-line bg-raised p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-soft">Exam controls</p><div className="mt-4 grid gap-2"><Button onClick={() => void pauseAll()}>{busy ? "Pausing…" : "Pause exam"}</Button><Button onClick={broadcast}>Broadcast message</Button><Button onClick={() => navigate(`/teacher/exams/${exam.id}/settings`)}>Edit settings</Button><Button onClick={exportReport}>Export live report</Button></div></section><section className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-soft">Exam information</p><div className="mt-4 space-y-3 text-[12px]"><Info label="Questions" value={exam.count}/><Info label="Duration" value={`${exam.duration} minutes`}/><Info label="Security" value={exam.mode === "lockdown" ? "Lockdown Browser" : "Standard"}/><Info label="Assigned" value={exam.batch}/></div></section></aside></div></>; }
+  return <><JobBanner label={pdfJob} /><PageHeading eyebrow="Exams / Open" title={exam.name} detail={`${exam.batch} · Live session`} action={<Button onClick={() => navigate("/teacher/exams")}>← Back to exams</Button>} /><div className="mt-8 flex flex-wrap items-center justify-between gap-4 border border-alert/30 bg-alert/5 px-5 py-4"><div><p className="font-mono text-[10px] uppercase tracking-widest text-alert">Live session</p><p className="mt-1 text-[13px]">The exam is in progress. Candidate activity is updating in real time.</p></div><span className="font-mono text-[11px] text-alert">● Running</span></div><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Candidates" value={String(totalCandidates)} detail={`${inProgress} active · ${pausedCount} paused · ${offline} not started`} tone="text-ink"/><Metric label="Submitted" value={String(submitted)} detail="Received" tone="text-success"/><Metric label="In progress" value={String(inProgress)} detail="Active now" tone="text-ink"/><Metric label="Flags" value={String(flagCount)} detail={`${criticalFlags} critical`} tone={flagCount ? "text-alert" : "text-ink"}/></div><div className="mt-8 grid gap-6 xl:grid-cols-[1fr_360px]"><div className="space-y-6"><section className="border border-line bg-paper p-6"><div className="flex items-center justify-between"><div><p className="font-mono text-[10px] uppercase tracking-widest text-soft">Session progress</p><h2 className="mt-2 font-serif text-xl font-semibold">Candidate completion</h2></div><span className="font-mono text-[10px] text-alert">LIVE NOW</span></div><div className="mt-6 h-3 bg-line"><div className="h-full bg-forest" style={{ width: `${Math.min(100, Math.max(0, (submitted / totalCandidates) * 100))}%` }}/></div><div className="mt-3 flex justify-between font-mono text-[10px] text-soft"><span>{submitted} of {totalCandidates} submitted</span><span>{flagCount} flag(s)</span></div><div className="mt-7 grid gap-3 sm:grid-cols-3"><StatusRow label="Submitted" value={String(submitted)} tone="bg-success"/><StatusRow label="In progress" value={String(inProgress)} tone="bg-forest"/><StatusRow label="Paused" value={String(pausedCount)} tone="bg-amber"/></div></section><section className="border border-line"><div className="flex items-center justify-between border-b border-line px-5 py-4"><div><p className="font-mono text-[10px] uppercase tracking-widest text-soft">Recent activity</p><h2 className="mt-1 font-serif text-xl font-semibold">What is happening now</h2></div><Button onClick={() => navigate("/teacher/submissions")}>View all</Button></div><div className="divide-y divide-line">{liveAttempts.slice(0,4).map((a) => <div key={a.id} className="flex gap-4 px-5 py-4"><span className="w-16 shrink-0 font-mono text-[10px] text-soft"></span><div><p className="text-[13px]">{a.name}</p><p className="mt-1 text-[11px] text-soft">{a.state}{a.flags.length ? ` · ${a.flags.length} flag(s)` : ""}</p></div></div>)}</div></section></div><aside className="space-y-6"><section className="border border-line bg-raised p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-soft">Exam controls</p><div className="mt-4 grid gap-2"><Button onClick={() => void pauseAll()}>{busy ? "Pausing…" : "Pause exam"}</Button><Button onClick={broadcast}>Broadcast message</Button><Button onClick={() => navigate(`/teacher/exams/${exam.id}/settings`)}>Edit settings</Button><Button onClick={exportReport}>Export live report</Button></div></section><section className="border border-line p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-soft">Exam information</p><div className="mt-4 space-y-3 text-[12px]"><Info label="Questions" value={exam.count}/><Info label="Duration" value={`${exam.duration} minutes`}/><Info label="Security" value={exam.mode === "lockdown" ? "Lockdown Browser" : "Standard"}/><Info label="Assigned" value={exam.batch}/></div></section></aside></div></>; }
 
 function StatusRow({ label, value, tone }: { label: string; value: string; tone: string }) { return <div><div className="flex items-center gap-2"><span className={`h-2 w-2 ${tone}`}/><span className="font-mono text-[11px] text-soft">{label}</span></div><p className="mt-1 pl-4 font-serif text-xl">{value}</p></div>; }
 function Info({ label, value }: { label: string; value: string }) { return <div className="flex justify-between gap-3 border-b border-line pb-2 last:border-0"><span className="text-soft">{label}</span><span className="text-right">{value}</span></div>; }
@@ -392,10 +398,12 @@ function Reports({ notify }: { notify: (s: string) => void }) {
       // One PDF at a time: long-exam images must not be loaded for every
       // student concurrently. No sampling or frame limits in either path.
       for (let i = 0; i < jobs.length; i++) {
-        setPdfProgress(`Preparing PDF ${i + 1}/${jobs.length} - all stored snapshots…`);
-        await downloadSessionReportPdf(selectedExam?.name ?? "Exam", jobs[i].id, jobs[i].rows);
+        setPdfProgress(`Preparing PDF ${i + 1} of ${jobs.length}…`);
+        await downloadSessionReportPdf(selectedExam?.name ?? "Exam", jobs[i].id, jobs[i].rows, new Date(), {
+          onProgress: (message) => setPdfProgress(`PDF ${i + 1} of ${jobs.length} · ${message}`),
+        });
       }
-      notify("PDF export finished. Check snapshot pages for any missing evidence.");
+      notify("PDF downloaded");
     } catch (err) {
       console.error("[Reports] PDF export failed:", err);
       notify("PDF export failed. Please retry a single student's report.");
@@ -461,6 +469,7 @@ function Reports({ notify }: { notify: (s: string) => void }) {
 
   return (
     <>
+      <JobBanner label={pdfProgress ?? (zipping ? "Packing evidence ZIP…" : null)} />
       <PageHeading eyebrow="Reports" title="Performance reports" detail="Live stats, exports, and result publishing — straight from the database." action={
         <div className="flex flex-wrap items-center gap-2">
           <select value={examId} onChange={(e) => setExamId(e.target.value)} className="border border-line bg-paper px-2 py-2.5 font-mono text-[10px] uppercase tracking-wider text-soft">
@@ -473,7 +482,7 @@ function Reports({ notify }: { notify: (s: string) => void }) {
           <Button onClick={exportCsv}>Export CSV</Button>
         </div>
       } />
-      {pdfProgress && <p role="status" className="mt-4 text-[12px] text-soft">{pdfProgress} Long exams can create large PDFs; keep this tab open.</p>}
+      {pdfProgress && <p role="status" className="sr-only">{pdfProgress}</p>}
       <div className="mt-8 flex gap-2 border-b border-line pb-3 font-mono text-[10px] uppercase tracking-wider text-soft">
         {["Overview", "Item Analysis", "Student Reports", "Trends"].map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)} className={`px-3 py-1.5 hover:text-ink ${activeTab === tab ? "border-b-2 border-forest text-forest pb-3 -mb-[14px]" : ""}`}>{tab}</button>

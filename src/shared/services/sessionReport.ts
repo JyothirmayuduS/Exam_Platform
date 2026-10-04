@@ -279,7 +279,7 @@ export async function downloadSessionReportPdf(
   examId: string,
   rows: ReportRow[],
   generatedAt = new Date(),
-  opts: { includeSnapshots?: boolean } = {},
+  opts: { includeSnapshots?: boolean; onProgress?: (message: string) => void } = {},
 ): Promise<void> {
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true });
   const W = doc.internal.pageSize.getWidth();
@@ -385,7 +385,10 @@ export async function downloadSessionReportPdf(
   // receives the examId only for the DB/storage folder resolution — the
   // collector also tolerates the `${examId}-${roll}` filename id.
   if (opts.includeSnapshots !== false) {
+    let index = 0;
     for (const r of rows) {
+      index += 1;
+      opts.onProgress?.(`Building PDF · ${r.name} · snapshots ${index} of ${rows.length}`);
       try {
         await drawSnapshotTimeline(doc, r, examId);
       } catch (err) {
@@ -400,6 +403,7 @@ export async function downloadSessionReportPdf(
 
   // Filename: keep the caller's id — per-candidate exports pass
   // `${examId}-${roll}` so each student's PDF is uniquely named.
+  opts.onProgress?.("Saving the PDF…");
   doc.save(`Session_Report_${examId}.pdf`);
 }
 

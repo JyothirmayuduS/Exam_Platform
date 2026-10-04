@@ -14,6 +14,7 @@ import {
   downloadSessionReportCsv,
   type ReportRow,
 } from "@/shared/services/sessionReport";
+import JobBanner from "@/shared/components/JobBanner";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 
 // Proctor console — a live monitoring dashboard for the exam the signed-in
@@ -814,6 +815,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
   const navigate = useNavigate();
   const [liveRows, setLiveRows] = useState<LiveAttempt[]>([]);
   const [exporting, setExporting] = useState<"pdf" | "csv" | null>(null);
+  const [pdfJob, setPdfJob] = useState<string | null>(null);
   const [expandedRoll, setExpandedRoll] = useState<string | null>(null);
   const [zipping, setZipping] = useState(false);
   const [zipMsg, setZipMsg] = useState<string | null>(null);
@@ -852,10 +854,11 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
     reportRows.length === 0 ? 100 : Math.max(0, Math.round((1 - flagged.length / reportRows.length) * 100));
 
   const runExportPdf = () => {
+    if (pdfJob) return;
     setExporting("pdf");
-    window.setTimeout(() => {
-      void downloadSessionReportPdf(examName, examId, reportRows).finally(() => setExporting(null));
-    }, 50);
+    setPdfJob("Preparing session report…");
+    void downloadSessionReportPdf(examName, examId, reportRows, new Date(), { onProgress: setPdfJob })
+      .finally(() => { setExporting(null); setPdfJob(null); });
   };
   const runExportCsv = () => {
     setExporting("csv");
@@ -897,6 +900,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
 
   return (
     <div className="mt-8 space-y-8">
+      <JobBanner label={pdfJob ?? (zipping ? "Packing evidence ZIP…" : null)} />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total students" value={String(reportRows.length)} sub="attempts in this session" />
         <StatCard label="Submitted" value={String(submitted)} sub="papers received" />

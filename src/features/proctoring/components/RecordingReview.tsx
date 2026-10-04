@@ -74,7 +74,11 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
       try {
         const arts = await listStudentArtifacts(examId, roll, folderOverride);
         if (cancelled) return;
-        if (!arts || arts.length === 0) {
+        if (!arts) {
+          setState((s) => ({ ...s, status: "error" }));
+          return;
+        }
+        if (arts.length === 0) {
           setState((s) => ({ ...s, status: "empty" }));
           return;
         }

@@ -26,18 +26,49 @@ export type R2ListedObject = {
   lastModified: string | null;
 };
 
+let lastR2Error: string | null = null;
+
+/** Last store-artifact failure, for surfaces that otherwise only see null. */
+export function consumeR2Error(): string | null {
+  const message = lastR2Error;
+  lastR2Error = null;
+  return message;
+}
+
+async function readInvokeError(error: { message?: string; context?: Response }): Promise<string> {
+  let message = error.message || "store-artifact failed";
+  try {
+    const body = error.context ? await error.context.clone().json() as { error?: string } : null;
+    if (body?.error) message = body.error;
+  } catch { /* body already consumed or not JSON */ }
+  return message;
+}
+
 async function invoke<T>(body: Record<string, unknown>): Promise<T | null> {
-  if (!supabaseConfigured) return null;
+  lastR2Error = null;
+  if (!supabaseConfigured) {
+    lastR2Error = "Supabase is not configured";
+    return null;
+  }
   const db = getSupabase();
-  if (!db) return null;
+  if (!db) {
+    lastR2Error = "Supabase client is unavailable";
+    return null;
+  }
   try {
     const { data, error } = await db.functions.invoke("store-artifact", { body });
     if (error || !data) {
-      console.warn(`[r2Function] store-artifact (${body.op ?? "put"}) failed:`, error?.message ?? "no data");
+      lastR2Error = error ? await readInvokeError(error as { message?: string; context?: Response }) : "store-artifact returned no data";
+      console.warn(`[r2Function] store-artifact (${body.op ?? "put"}) failed:`, lastR2Error);
+      return null;
+    }
+    if (typeof data === "object" && data && "error" in data && (data as { error?: string }).error) {
+      lastR2Error = String((data as { error: string }).error);
       return null;
     }
     return data as T;
   } catch (err) {
+    lastR2Error = err instanceof Error ? err.message : "store-artifact request failed";
     console.warn("[r2Function] invoke error:", err);
     return null;
   }

@@ -38,7 +38,13 @@ export default function ProtectedRoute({ children, allowedRole }: ProtectedRoute
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-paper">
-        <div className="h-8 w-8 animate-spin rounded-none border-4 border-ink border-t-transparent"></div>
+        <div className="flex flex-col items-center gap-4" role="status" aria-live="polite">
+          <span className="relative block h-10 w-10" aria-hidden>
+            <span className="absolute inset-0 rounded-full border-2 border-line" />
+            <span className="absolute inset-0 animate-spin rounded-full border-2 border-transparent border-t-forest" />
+          </span>
+          <p className="font-mono text-[11px] uppercase tracking-widest text-soft">Signing you in</p>
+        </div>
       </div>
     );
   }
