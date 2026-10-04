@@ -5,7 +5,7 @@
 // Save & exit, and Publish & share. Every number is computed from Supabase —
 // no demo data.
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FiArrowLeft, FiArrowRight, FiCheck, FiUpload, FiEdit3, FiEye, FiSettings, FiSearch, FiX, FiChevronDown, FiChevronRight, FiClock, FiLock, FiMail } from "react-icons/fi";
 import "./ExamStudio.css";
 import { Button, Badge, NumberField } from "@/shared/components/ui";
@@ -133,31 +133,17 @@ export default function ExamStudio({
     void unlinkQuestionFromExam(examId, qid).then((ok) => { if (!ok) notify("Removed locally, but the change could not reach the database."); });
   };
 
-  const bankList = useMemo(() => {
+  const showBankResults = search.trim() !== "";
+
+  const bankMatches = useMemo(() => {
     const term = search.trim().toLowerCase();
     return bank
       .filter((q) => !inPool.has(q.id))
       .filter((q) => (term ? `${q.id} ${q.title} ${q.unit ?? ""} ${q.exam_name ?? ""}`.toLowerCase().includes(term) : true))
       .filter((q) => (typeFilter === "All" || q.type === typeFilter))
       .filter((q) => (diffFilter === "All" || (q.difficulty || "Medium") === diffFilter))
-      .slice(0, term ? 40 : 24);
+      .slice(0, 10);
   }, [bank, inPool, search, typeFilter, diffFilter]);
-
-  const groupedQuestions = useMemo(() => {
-    const groups: { section: string; items: DBQuestion[] }[] = [];
-    const order: string[] = [];
-    const bySection = new Map<string, DBQuestion[]>();
-    for (const q of questions) {
-      const sec = TYPE_LABEL[q.type] ?? q.type ?? "Question";
-      if (!bySection.has(sec)) {
-        bySection.set(sec, []);
-        order.push(sec);
-      }
-      bySection.get(sec)!.push(q);
-    }
-    for (const sec of order) groups.push({ section: sec, items: bySection.get(sec)! });
-    return groups;
-  }, [questions]);
 
   // ── Save the whole test (name, duration, settings, pool counts) ───────────
   const saveAll = async (): Promise<ExamRecord | null> => {
@@ -203,200 +189,202 @@ export default function ExamStudio({
   if (!exam) return <div className="border border-dashed border-line p-14 text-center"><p className="font-serif text-xl">Test not found</p><p className="mt-2 text-[13px] text-soft">It may have been deleted.</p></div>;
 
   return (
-    <div className="exam-studio -mx-4 -mt-2 sm:-mx-6 lg:-mx-8">
-      <header className="exam-studio-top">
-        <div className="exam-studio-top-inner">
-          <div className="min-w-0 flex-1">
-            <Button size="sm" variant="ghost" icon={<FiArrowLeft />} onClick={() => navigate(`/teacher/exams/${examId}`)}>Back to test</Button>
-            <div className="exam-studio-title-row">
-              <span className="border border-line bg-raised px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-soft">{exam.id}</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Test name" className="min-w-0 flex-1 border border-transparent bg-transparent px-1 font-serif text-2xl font-semibold tracking-tight text-ink outline-none transition hover:border-line focus:border-forest sm:text-3xl sm:min-w-[240px]" />
-              <FiEdit3 className="text-soft" aria-hidden />
-            </div>
-            <p className="mt-1 text-[12px] text-soft">{exam.batch} · {String(s.language ?? "English")} · {String(s.purpose ?? "")} · <span className={exam.status === "draft" ? "text-amber" : "text-success"}>{exam.status}</span></p>
+    <div className="exam-build">
+      <header className="exam-build-header">
+        <div className="min-w-0 flex-1">
+          <Button size="sm" variant="ghost" icon={<FiArrowLeft />} onClick={() => navigate(`/teacher/exams/${examId}`)}>Back to test</Button>
+          <div className="mt-2 flex flex-wrap items-center gap-2 sm:gap-3">
+            <span className="border border-line bg-raised px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-soft">{exam.id}</span>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              aria-label="Test name"
+              className="min-w-0 flex-1 border border-transparent bg-transparent px-1 font-serif text-2xl font-semibold tracking-tight text-ink outline-none transition hover:border-line focus:border-forest sm:min-w-[16rem] sm:text-[1.65rem]"
+            />
+            <FiEdit3 className="hidden text-soft sm:block" aria-hidden />
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="lg" onClick={() => void saveAndExit()} disabled={saving} icon={<FiCheck />}>{saving ? "Saving…" : "Save & exit"}</Button>
-            <Button size="lg" variant="primary" onClick={() => setShareOpen(true)} iconRight={<FiArrowRight />}>Publish &amp; share</Button>
-          </div>
+          <p className="mt-1 text-[12px] text-soft">
+            {exam.batch} · {String(s.language ?? "English")} · {String(s.purpose ?? "")} ·{" "}
+            <span className={exam.status === "draft" ? "text-amber" : "text-success"}>{exam.status}</span>
+          </p>
+        </div>
+        <div className="exam-build-header-actions">
+          <Button size="md" variant="secondary" onClick={() => void saveAndExit()} disabled={saving} icon={<FiCheck />}>
+            {saving ? "Saving…" : "Save & exit"}
+          </Button>
+          <Button size="md" variant="primary" onClick={() => setShareOpen(true)} iconRight={<FiArrowRight />}>
+            Publish &amp; share
+          </Button>
         </div>
       </header>
 
-      <div className="exam-studio-body">
-        {/* Left — question bank rail */}
-        <aside className="exam-studio-bank" aria-label="Question bank">
-          <div className="exam-studio-panel-head">
-            <h2>Question bank</h2>
-            <p>Pick items from your library. Same-type questions become one section on the paper.</p>
-          </div>
-          <div className="exam-studio-search-wrap">
-            <label htmlFor="question-bank-search" className="sr-only">Search question bank</label>
-            <div className="relative">
-              <FiSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-soft" aria-hidden />
-              <input id="question-bank-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by text, ID, unit…" className={`block w-full pl-10 ${inputCls}`} />
-            </div>
-          </div>
-          <div className="exam-studio-filters">
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="min-w-0 flex-1 border border-line bg-paper px-2 py-1.5 text-[11px] outline-none focus:border-forest">
-              <option value="All">All types</option><option>MCQ</option><option>MSQ</option><option>Numerical</option><option>True / False</option><option>Subjective</option><option>Coding</option>
-            </select>
-            <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="min-w-0 flex-1 border border-line bg-paper px-2 py-1.5 text-[11px] outline-none focus:border-forest">
-              <option value="All">All levels</option><option>Easy</option><option>Medium</option><option>Hard</option>
-            </select>
-          </div>
-          <div className="flex flex-wrap gap-2 border-b border-line px-4 pb-3">
-            <Button size="sm" className="flex-1" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>New</Button>
-            <Button size="sm" variant="secondary" className="flex-1" icon={<FiUpload />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&bulk=1&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>CSV</Button>
-          </div>
-          <div className="exam-studio-bank-scroll">
-            {bankList.length === 0 && (
-              <p className="px-2 py-4 text-center text-[12px] text-soft">
-                {bank.length === inPool.size ? "Every bank question is already on this paper." : "No matches — try another filter or search."}
-              </p>
-            )}
-            {bankList.map((q) => (
-              <button type="button" key={q.id} onClick={() => addToPool(q.id)} className="exam-studio-bank-item">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="font-mono text-[9px] text-soft">{q.id}</span>
-                  <span className="bg-raised px-1 py-0.5 font-mono text-[8px] text-soft">{q.type}</span>
-                  <span className={`font-mono text-[8px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>{q.difficulty ?? "Med"}</span>
-                </div>
-                <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-ink">{q.title}</p>
-                <span className="mt-2 inline-block font-mono text-[9px] uppercase tracking-wider text-forest">+ Add to paper</span>
-              </button>
-            ))}
-          </div>
-        </aside>
-
-        {/* Center — live paper */}
-        <main className="exam-studio-paper" aria-label="Paper composition">
-          <div className="exam-studio-panel-head flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2>Your paper</h2>
-              <p>{questions.length ? `${questions.length} in pool · ${perStudent} delivered per candidate` : "Add questions from the bank on the left"}</p>
-            </div>
-            {questions.length > 0 && (
-              <div className="flex flex-wrap gap-2 font-mono text-[10px]">
-                {["Easy", "Medium", "Hard"].map((d) => {
-                  const n = questions.filter((q) => (q.difficulty || "Medium") === d).length;
-                  if (n === 0) return null;
-                  return <span key={d} className={d === "Easy" ? "text-success" : d === "Hard" ? "text-alert" : "text-amber"}>{d} · {n}</span>;
-                })}
-              </div>
-            )}
-          </div>
-          <div className="exam-studio-paper-scroll">
-            {questions.length === 0 ? (
-              <div className="exam-studio-empty-paper">
-                <p className="font-serif text-xl text-forest">Your paper is empty</p>
-                <p className="mx-auto mt-2 max-w-md text-[12px] text-soft">Use the question bank on the left, or create / import questions. Sections appear automatically when you mix types.</p>
-              </div>
-            ) : (
-              <table className="w-full min-w-[640px] text-left text-[13px]">
-                <thead className="sticky top-0 z-10 bg-raised shadow-[0_1px_0_var(--color-line,#e4e0d8)]">
-                  <tr className="font-mono text-[10px] uppercase tracking-wider text-soft">
-                    <th className="px-4 py-2.5">#</th>
-                    <th className="px-4 py-2.5">Question</th>
-                    <th className="px-4 py-2.5">Unit</th>
-                    <th className="px-4 py-2.5">Level</th>
-                    <th className="px-4 py-2.5 text-right">Marks</th>
-                    <th className="px-4 py-2.5 text-right" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {groupedQuestions.map((group) => (
-                    <Fragment key={group.section}>
-                      <tr className="bg-forest/5">
-                        <td colSpan={6} className="px-4 py-2 font-mono text-[10px] uppercase tracking-widest text-forest">
-                          Section · {group.section} <span className="text-soft">({group.items.length})</span>
-                        </td>
-                      </tr>
-                      {group.items.map((q, idx) => (
-                        <tr key={q.id} className="group border-b border-line hover:bg-raised/50">
-                          <td className="px-4 py-2.5 font-mono text-[10px] text-soft">{idx + 1}</td>
-                          <td className="max-w-[420px] px-4 py-2.5">
-                            <span className="font-mono text-[10px] text-soft">{q.id}</span>
-                            <p className="mt-0.5 line-clamp-2">{q.title}</p>
-                          </td>
-                          <td className="px-4 py-2.5 text-[12px] text-soft">{q.unit || "General"}</td>
-                          <td className="px-4 py-2.5">
-                            <span className={`font-mono text-[10px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>{q.difficulty ?? "Medium"}</span>
-                          </td>
-                          <td className="px-4 py-2.5 text-right tabular-nums">{q.marks || 1}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            <div className="flex items-center justify-end gap-1 opacity-100 sm:opacity-0 sm:transition group-hover:opacity-100">
-                              <Button size="sm" variant="ghost" aria-label="Edit" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&edit=${q.id}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)} />
-                              <Button size="sm" variant="ghost" aria-label={`Remove ${q.id}`} className="text-alert hover:bg-alert/10" onClick={() => removeFromPool(q.id)} icon={<FiX />} />
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </main>
-
-        {/* Right — summary & delivery */}
-        <aside className="exam-studio-inspector" aria-label="Test summary">
-          <div className="exam-studio-panel-head">
-            <h2>Summary</h2>
-            <p>Duration, delivery rules, and publish.</p>
-          </div>
-          <div className="exam-studio-inspector-scroll">
-            <div className="exam-studio-stat-grid">
-              <div className="exam-studio-stat"><strong>{sections.length}</strong><span>Sections</span></div>
-              <div className="exam-studio-stat"><strong>{topics.size}</strong><span>Topics</span></div>
-              <div className="exam-studio-stat"><strong>{questions.length}</strong><span>In pool</span></div>
-              <div className="exam-studio-stat"><strong>{totalMarks}</strong><span>Marks</span></div>
-            </div>
-
-            {sections.length > 0 && (
-              <div className="exam-studio-section-pills">
-                {sections.map((sec) => (
-                  <span key={sec.type} className="exam-studio-section-pill">{sec.type} · {sec.count}</span>
-                ))}
-              </div>
-            )}
-
-            <label className="mt-4 block text-[12px] text-soft">
-              <span className="font-medium text-ink">Test duration (minutes)</span>
-              <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Test duration in minutes" className={`mt-1.5 block w-full ${inputCls}`} />
-            </label>
-
-            <p className="mt-3 text-[11px] leading-relaxed text-soft">
-              {s.randomSelect ? `Each candidate gets ${perStudent} question${perStudent === 1 ? "" : "s"} drawn from the pool.` : `All candidates see the same ${perStudent} question${perStudent === 1 ? "" : "s"}.`}
-              {s.negative ? " Negative marking is on." : ""}
-            </p>
-
-            <div className="exam-studio-inspector-actions">
-              <Button variant="secondary" className="w-full justify-center" icon={<FiEye />} onClick={() => setPreviewOpen(true)}>Preview paper</Button>
-              <div className="relative w-full">
-                <Button variant="secondary" className="w-full justify-center" icon={<FiSettings />} iconRight={<FiChevronDown />} onClick={() => setMenuOpen((o) => !o)}>Advanced options</Button>
-                {menuOpen && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
-                    <div className="absolute left-0 right-0 top-full z-30 mt-1 border border-line bg-paper py-2 shadow-xl">
-                      {([
-                        ["test", "Test options", "Mode, marking, security"],
-                        ["sections", "Section options", "Shuffle & per-student draw"],
-                        ["registration", "Registration", "Fields before start"],
-                      ] as const).map(([key, label, detail]) => (
-                        <button key={key} type="button" onClick={() => { setMenuOpen(false); setDialog(key); }} className="flex w-full items-start justify-between gap-3 px-4 py-2.5 text-left transition hover:bg-raised">
-                          <span><span className="block text-[12px] font-medium">{label}</span><span className="mt-0.5 block text-[10px] text-soft">{detail}</span></span>
-                          <FiChevronRight className="shrink-0 text-soft" aria-hidden />
-                        </button>
-                      ))}
+      <section className="exam-build-toolbar" aria-label="Add questions">
+        <div className="exam-build-toolbar-label">
+          <label htmlFor="question-bank-search" className="text-[13px] font-medium text-ink">Search and add questions</label>
+          <span className="font-mono text-[9px] uppercase tracking-widest text-soft">Question bank</span>
+        </div>
+        <div className="relative">
+          <FiSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-soft" aria-hidden />
+          <input
+            id="question-bank-search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Type a question, ID, unit or the test it came from…"
+            className={`block w-full py-2.5 pl-10 pr-3 text-[13px] ${inputCls}`}
+          />
+          {showBankResults && (
+            <div className="exam-build-search-panel" onMouseDown={(e) => e.preventDefault()}>
+              {bankMatches.length === 0 ? (
+                <p className="px-4 py-3 text-[12px] text-soft">No matching questions in your bank.</p>
+              ) : (
+                bankMatches.map((q) => (
+                  <button
+                    type="button"
+                    key={q.id}
+                    onClick={() => { addToPool(q.id); setSearch(""); setSearchFocused(false); }}
+                    className="flex w-full items-start justify-between gap-3 border-b border-line px-4 py-2.5 text-left transition last:border-0 hover:bg-raised"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono text-[10px] text-soft">{q.id}</span>
+                        <span className="bg-raised px-1.5 py-0.5 font-mono text-[9px] text-soft">{q.type}</span>
+                        <span className={`font-mono text-[9px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>
+                          {q.difficulty ?? "Medium"}
+                        </span>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-[13px] leading-snug">{q.title}</p>
                     </div>
-                  </>
-                )}
-              </div>
-              <Button variant="primary" className="w-full justify-center" onClick={() => setShareOpen(true)} iconRight={<FiArrowRight />}>Publish &amp; share</Button>
+                    <span className="shrink-0 self-center border border-forest px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-forest">Add</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="exam-build-toolbar-foot">
+          <div className="exam-build-toolbar-group">
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="exam-build-select">
+              <option value="All">All types</option>
+              <option>MCQ</option><option>MSQ</option><option>Numerical</option><option>True / False</option><option>Subjective</option><option>Coding</option>
+            </select>
+            <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="exam-build-select">
+              <option value="All">All levels</option>
+              <option>Easy</option><option>Medium</option><option>Hard</option>
+            </select>
+            <Button size="md" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>
+              Write new question
+            </Button>
+            <Button size="md" variant="secondary" icon={<FiUpload />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&bulk=1&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>
+              Import CSV
+            </Button>
+          </div>
+          <div className="exam-build-toolbar-group exam-build-toolbar-group--end">
+            <div className="exam-build-duration">
+              <span className="font-medium text-ink">Duration (min)</span>
+              <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Test duration in minutes" className={inputCls} />
+            </div>
+            <Button size="md" variant="secondary" icon={<FiEye />} onClick={() => setPreviewOpen(true)}>Preview</Button>
+            <div className="relative">
+              <Button size="md" variant="secondary" icon={<FiSettings />} iconRight={<FiChevronDown />} onClick={() => setMenuOpen((o) => !o)}>
+                Advanced options
+              </Button>
+              {menuOpen && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} aria-hidden />
+                  <div className="absolute right-0 top-full z-30 mt-1 w-72 border border-line bg-paper py-1 shadow-xl">
+                    {([
+                      ["test", "Test Options", "Duration, mode, marking, results & calculator"],
+                      ["sections", "Section Options", "Random draw, shuffle, section order & timing"],
+                      ["registration", "Candidate Registration Fields", "What candidates fill in before the test"],
+                    ] as const).map(([key, label, detail]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => { setMenuOpen(false); setDialog(key); }}
+                        className="flex w-full items-start justify-between gap-3 px-4 py-2.5 text-left transition hover:bg-raised"
+                      >
+                        <span>
+                          <span className="block text-[13px] font-medium">{label}</span>
+                          <span className="mt-0.5 block text-[11px] leading-snug text-soft">{detail}</span>
+                        </span>
+                        <FiChevronRight className="mt-0.5 shrink-0 text-soft" aria-hidden />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
-        </aside>
+        </div>
+      </section>
+
+      <div className="exam-build-metrics" role="group" aria-label="Paper summary">
+        <BuildMetric value={String(sections.length)} label="Sections" detail={sections.length ? sections.map((x) => x.type).join(" · ") : "none yet"} />
+        <BuildMetric value={String(topics.size)} label="Topics / skills" detail={topics.size ? Array.from(topics).slice(0, 3).join(" · ") : "none yet"} />
+        <BuildMetric value={String(questions.length)} label="Questions" detail={questions.length ? `${perStudent} per student` : "add some above"} highlight />
+        <BuildMetric value={String(totalMarks)} label="Marks" detail={s.negative ? "negative marking on" : "no negative marking"} highlight />
+      </div>
+
+      <div className="exam-build-table-wrap">
+        <table className="w-full min-w-[820px] text-left text-[13px]">
+          <thead>
+            <tr className="border-b border-line bg-raised font-mono text-[10px] uppercase tracking-wider text-soft">
+              <th className="px-3 py-2.5 sm:px-4">Section</th>
+              <th className="px-3 py-2.5 sm:px-4">Question</th>
+              <th className="hidden px-3 py-2.5 md:table-cell sm:px-4">Skill / Unit</th>
+              <th className="hidden px-3 py-2.5 lg:table-cell sm:px-4">Source</th>
+              <th className="px-3 py-2.5 sm:px-4">Level</th>
+              <th className="hidden px-3 py-2.5 sm:table-cell sm:px-4">Q-Type</th>
+              <th className="px-3 py-2.5 text-right sm:px-4">Marks</th>
+              <th className="w-28 px-2 py-2.5 text-right sm:px-4" />
+            </tr>
+          </thead>
+          <tbody>
+            {questions.map((q) => (
+              <tr key={q.id} className="group border-b border-line last:border-0 hover:bg-raised/50">
+                <td className="px-3 py-2.5 sm:px-4">
+                  <span className="inline-block bg-forest/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-forest">{TYPE_LABEL[q.type] ?? q.type}</span>
+                </td>
+                <td className="max-w-[360px] px-3 py-2.5 sm:px-4">
+                  <span className="font-mono text-[10px] text-soft">{q.id}</span>
+                  <p className="mt-0.5 line-clamp-2">{q.title}</p>
+                </td>
+                <td className="hidden px-3 py-2.5 text-soft md:table-cell sm:px-4">{q.unit || "General"}</td>
+                <td className="hidden px-3 py-2.5 font-mono text-[10px] uppercase text-soft lg:table-cell sm:px-4">Self</td>
+                <td className="px-3 py-2.5 sm:px-4">
+                  <span className={`font-mono text-[10px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>{q.difficulty ?? "Medium"}</span>
+                </td>
+                <td className="hidden px-3 py-2.5 font-mono text-[10px] text-soft sm:table-cell sm:px-4">{q.type}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums sm:px-4">{q.marks || 1}</td>
+                <td className="px-2 py-2.5 text-right sm:px-4">
+                  <div className="flex items-center justify-end gap-0.5">
+                    <Button size="sm" variant="ghost" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&edit=${q.id}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Edit</Button>
+                    <Button size="sm" variant="ghost" aria-label={`Remove ${q.id}`} className="text-alert hover:bg-alert/10" onClick={() => removeFromPool(q.id)} icon={<FiX />} />
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {questions.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-4 py-12 text-center">
+                  <p className="font-serif text-xl text-forest">Your paper is empty</p>
+                  <p className="mx-auto mt-2 max-w-md text-[12px] text-soft">Search your question bank above, write a new question, or import a CSV. Section rows appear here as you add them.</p>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        <div className="exam-build-table-foot">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-soft">Tip: rows are grouped by section — questions of the same type form one section for candidates.</p>
+          <div className="flex flex-wrap gap-2">
+            {["Easy", "Medium", "Hard"].map((d) => {
+              const n = questions.filter((q) => (q.difficulty || "Medium") === d).length;
+              if (n === 0) return null;
+              return <span key={d} className={`font-mono text-[10px] ${d === "Easy" ? "text-success" : d === "Hard" ? "text-alert" : "text-amber"}`}>{d} · {n}</span>;
+            })}
+          </div>
+        </div>
       </div>
 
       {/* ── Dialogs ────────────────────────────────────────────────────────── */}
@@ -454,6 +442,16 @@ export default function ExamStudio({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function BuildMetric({ value, label, detail, highlight }: { value: string; label: string; detail: string; highlight?: boolean }) {
+  return (
+    <div className="exam-build-metric">
+      <p className={`exam-build-metric-value ${highlight ? "text-forest" : "text-ink"}`}>{value}</p>
+      <p className="exam-build-metric-label">{label}</p>
+      <p className="exam-build-metric-detail" title={detail}>{detail}</p>
     </div>
   );
 }
