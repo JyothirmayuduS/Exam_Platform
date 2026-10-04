@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
 import { supabaseConfigured } from "@/shared/data/env";
-import { listLiveAttempts, subscribeToAttempts, forceSubmitAttempt, saveViolation, setAttemptPaused, listExams, listProctorAssignments, saveProctorAssignments, listFaculty, type LiveAttempt, type ViolationEvent, type FacultyMember } from "@/shared/data/examApi";
+import { listLiveAttempts, subscribeToAttempts, forceSubmitAttempt, saveViolation, setAttemptPaused, listExamsForTeacher, listProctoringStats, listProctorAssignments, saveProctorAssignments, listFaculty, type LiveAttempt, type ViolationEvent, type FacultyMember } from "@/shared/data/examApi";
 import { sendProctorAssignmentEmail } from "@/features/teacher/services/emailApi";
 import ProctorChatPanel from "@/features/proctoring/components/ProctorChatPanel";
 import { startProctorViewing, identityLabel, type RemoteFeed } from "@/features/proctoring/services/proctorViewer";
@@ -67,7 +67,7 @@ export default function TeacherProctoring() {
   const { profile } = useCurrentProfile();
   const [searchParams, setSearchParams] = useSearchParams();
   const paramExamId = searchParams.get("examId") ?? searchParams.get("exam");
-  const [examList, setExamList] = useState<{ id: string; name: string; batch?: string }[]>([]);
+  const [examList, setExamList] = useState<{ id: string; name: string; batch?: string; status: string; candidates: number; active: number }[]>([]);
   // Two-stage flow: pick the assessment(s) first (Mettl-style selector), then
   // enter the live command centre for the chosen exam. A ?examId deep link
   // jumps straight into monitoring.
@@ -78,6 +78,7 @@ export default function TeacherProctoring() {
     setSearchParams({ examId });
     setStage("monitor");
   };
+  const selectedExam = examList.find((e) => e.id === selectedExamId) ?? null;
 
   const [students, setStudents] = useState<Student[]>([]);
   const [live, setLive] = useState(false);
@@ -150,15 +151,37 @@ export default function TeacherProctoring() {
     return map;
   }, [feeds]);
 
-  // Load available exams for switcher
+  // Load real exams + roster stats for the switcher. Prefer published papers
+  // with enrollments so a draft like Test 16 is not the silent default.
   useEffect(() => {
     let active = true;
-    (async () => {
-      const all = await listExams();
+    void (async () => {
+      const [exams, stats] = await Promise.all([listExamsForTeacher(), listProctoringStats()]);
       if (!active) return;
-      if (all && all.length > 0) setExamList(all);
+      const list = (exams ?? [])
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          batch: e.batch,
+          status: e.status,
+          candidates: stats[e.id]?.candidates ?? 0,
+          active: stats[e.id]?.active ?? 0,
+        }))
+        .sort((a, b) => {
+          const rank = (x: typeof a) => (x.status === "draft" ? 2 : x.candidates > 0 ? 0 : 1);
+          return rank(a) - rank(b) || b.candidates - a.candidates || a.name.localeCompare(b.name);
+        });
+      setExamList(list);
+      if (paramExamId) return;
+      if (selectedExamId && list.some((e) => e.id === selectedExamId)) return;
+      const preferred = list.find((e) => e.status !== "draft" && e.candidates > 0) ?? list.find((e) => e.status !== "draft") ?? list[0];
+      if (preferred && stage === "monitor") {
+        setSelectedExamId(preferred.id);
+        setSearchParams({ examId: preferred.id });
+      }
     })();
     return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramExamId]);
 
   // Live attempt roster from the DB (realtime) for selected exam
@@ -192,13 +215,13 @@ export default function TeacherProctoring() {
     let viewer: Awaited<ReturnType<typeof startProctorViewing>> | null = null;
     let timer: number | undefined;
     let attempt = 0;
-    const FAILED = "LiveKit feeds unavailable — retrying…";
 
     const connectOnce = async () => {
       if (!active) return;
       attempt += 1;
       setViewerState("connecting");
       setViewerError(null);
+      let lastError = "LiveKit feeds unavailable — retrying…";
       try {
         viewer = await startProctorViewing({
           room: selectedExamId,
@@ -208,16 +231,17 @@ export default function TeacherProctoring() {
             setViewerState(state);
             if (state === "connected") setViewerError(null);
           },
-          onFeeds: (feeds: RemoteFeed[]) => {
+          onFeeds: (next: RemoteFeed[]) => {
             if (!active) return;
-            console.debug("[proctor-viewer] feeds:", feeds.length, feeds.map(f => ({ identity: f.identity, hasCamera: !!f.cameraTrack, hasScreen: !!f.screenTrack })));
-            setFeeds(feeds);
+            console.debug("[proctor-viewer] feeds:", next.length, next.map(f => ({ identity: f.identity, hasCamera: !!f.cameraTrack, hasScreen: !!f.screenTrack })));
+            setFeeds(next);
           },
         });
         viewerRef.current = viewer;
-      } catch (err: any) {
+      } catch (err: unknown) {
         viewer = null;
-        if (active) setViewerError(err?.message ?? FAILED);
+        lastError = err instanceof Error ? err.message : lastError;
+        if (active) setViewerError(lastError);
       }
       if (!active) return;
       if (viewer) {
@@ -226,13 +250,14 @@ export default function TeacherProctoring() {
         setViewerError(null);
         return;
       }
-      // Connect failed — show why and retry with backoff until it heals.
-      const delay = Math.min(3_000 * attempt, 12_000);
       if (active) {
         setViewerState("error");
-        setViewerError(FAILED);
+        setViewerError(lastError);
       }
-      timer = window.setTimeout(() => void connectOnce(), delay);
+      // Config / auth failures will not heal by hammering the token endpoint.
+      const fatal = /missing|not configured|unauthorized|forbidden|secrets/i.test(lastError);
+      if (fatal || attempt >= 6) return;
+      timer = window.setTimeout(() => void connectOnce(), Math.min(3_000 * attempt, 12_000));
     };
 
     void connectOnce();
@@ -278,15 +303,12 @@ export default function TeacherProctoring() {
   }, [filter, students]);
   const selectCandidate = (candidate: Student) => { setSelected(candidate); setView("wall"); setScreenMode(true); };
   const feedCount = feeds.filter((f) => f.cameraTrack).length;
-  
-  const activeCount = students.length;
-  const flaggedCount = students.filter(s => s.violation).length;
-  const clearCount = activeCount - flaggedCount;
-  
-  const liveAttemptsCount = students.filter(s => s.status !== "Submitted").length;
-  const submittedAttemptsCount = students.filter(s => s.status === "Submitted").length;
-  const needsAttentionCount = students.filter(s => s.violation !== "").length;
-  const nav = getTeacherNav(liveAttemptsCount, submittedAttemptsCount, needsAttentionCount);
+  const enrolledCount = students.length;
+  const writingCount = students.filter((s) => s.status === "Writing" || s.status === "Paused").length;
+  const flaggedCount = students.filter((s) => s.violation).length;
+  const submittedAttemptsCount = students.filter((s) => s.status === "Submitted").length;
+  const nav = getTeacherNav(writingCount, submittedAttemptsCount, flaggedCount, examList.length);
+  const examIsEmpty = !!selectedExam && selectedExam.status === "draft" && enrolledCount === 0;
 
   const [zipping, setZipping] = useState(false);
   const [pdfJob, setPdfJob] = useState<string | null>(null);
@@ -443,18 +465,16 @@ export default function TeacherProctoring() {
 
   return <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav} status={live ? "Live monitoring active" : "Not connected"}>
     <JobBanner label={pdfJob ?? (zipping ? "Packing evidence ZIP…" : null)} />
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
-      <button onClick={() => { setStage("select"); setSearchParams({}); }} className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft transition hover:text-forest">
-        <FiGrid aria-hidden /> All assessments
-      </button>
-      <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Proctoring centre · {examList.find((e) => e.id === selectedExamId)?.name || selectedExamId}</span>
-    </div>
-    <div className="mt-6 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-      <div>
-        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Faculty console / Proctoring</p>
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="font-serif text-3xl font-semibold">Live proctoring</h1>
-          {examList.length > 0 && (
+
+    <header className="flex flex-col gap-4 border-b border-line pb-5 lg:flex-row lg:items-end lg:justify-between">
+      <div className="min-w-0">
+        <button type="button" onClick={() => { setStage("select"); setSearchParams({}); }} className="inline-flex items-center gap-2 text-[13px] text-forest underline-offset-2 hover:underline">
+          <FiGrid aria-hidden /> All assessments
+        </button>
+        <h1 className="mt-2 font-serif text-3xl font-semibold tracking-tight">Live proctoring</h1>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <label className="text-[12px] text-ink-soft">
+            Exam
             <select
               value={selectedExamId}
               onChange={(e) => {
@@ -462,22 +482,21 @@ export default function TeacherProctoring() {
                 setSearchParams({ examId: e.target.value });
               }}
               aria-label="Select exam to monitor"
-              className="border border-line-strong bg-paper px-3 py-1 font-serif text-lg font-semibold text-maroon hover:border-maroon focus:border-maroon focus:outline-none cursor-pointer"
+              className="ml-2 min-w-[220px] border border-line-strong bg-paper px-3 py-2 text-[14px] text-ink outline-none focus:border-forest"
             >
               {examList.map((ex) => (
                 <option key={ex.id} value={ex.id}>
-                  {ex.name} ({ex.batch || ex.id})
+                  {ex.name} · {ex.status} · {ex.candidates} enrolled
                 </option>
               ))}
             </select>
-          )}
+          </label>
+          <span className="text-[13px] text-ink-soft">{selectedExam?.batch || selectedExamId}</span>
         </div>
-        <p className="mt-1 text-[13px] text-ink-soft">
-          Active Session: <strong className="text-ink">{examList.find(e => e.id === selectedExamId)?.name || selectedExamId}</strong> · Monitoring {students.length} candidate(s)
-        </p>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2">
         <button
+          type="button"
           onClick={() => {
             setShowAssignModal(true);
             setLoadingFaculty(true);
@@ -491,168 +510,164 @@ export default function TeacherProctoring() {
               });
             });
           }}
-          className="border border-line-strong px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest"
+          className="border border-line-strong px-4 py-2.5 text-[13px] hover:border-forest hover:text-forest"
         >
-          Assign Proctors
+          Assign proctors
         </button>
-        <button onClick={() => void exportZip()} disabled={zipping} className="border border-forest px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-forest/5 disabled:cursor-not-allowed disabled:opacity-60">{zipping ? "Zipping…" : "Download Evidence ZIP"}</button>
-        <button onClick={exportReport} className="border border-line-strong px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Export Report</button>
-        <span className="inline-flex items-center gap-2 border border-alert/30 bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-alert"><span className="h-1.5 w-1.5 animate-pulse rounded-none bg-alert" /> Session live</span>
-        {zipMsg && <span className="inline-flex items-center px-2 py-2 font-mono text-[10px] text-ink-soft">{zipMsg}</span>}
+        <button type="button" onClick={() => void exportZip()} disabled={zipping} className="border border-forest px-4 py-2.5 text-[13px] text-forest hover:bg-forest/5 disabled:opacity-60">{zipping ? "Zipping…" : "Evidence ZIP"}</button>
+        <button type="button" onClick={exportReport} className="border border-line-strong px-4 py-2.5 text-[13px] hover:border-forest hover:text-forest">Export report</button>
+        <span className={`inline-flex items-center gap-2 border px-3 py-2.5 text-[12px] ${writingCount > 0 ? "border-alert/30 bg-alert/5 text-alert" : "border-line text-ink-soft"}`}>
+          <span className={`h-1.5 w-1.5 ${writingCount > 0 ? "animate-pulse bg-alert" : "bg-line-strong"}`} />
+          {writingCount > 0 ? "Session live" : "No one writing"}
+        </span>
       </div>
+    </header>
+
+    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <article className="rounded-2xl border border-line bg-paper p-4"><p className="text-[12px] text-ink-soft">On roster</p><p className="mt-1 font-serif text-3xl font-semibold tabular-nums">{enrolledCount}</p><p className="mt-1 text-[12px] text-ink-soft">Enrolled for this exam</p></article>
+      <article className="rounded-2xl border border-line bg-paper p-4"><p className="text-[12px] text-ink-soft">Writing now</p><p className="mt-1 font-serif text-3xl font-semibold tabular-nums text-forest">{writingCount}</p><p className="mt-1 text-[12px] text-ink-soft">In progress or paused</p></article>
+      <article className="rounded-2xl border border-line bg-paper p-4"><p className="text-[12px] text-ink-soft">Flags</p><p className={`mt-1 font-serif text-3xl font-semibold tabular-nums ${flaggedCount ? "text-alert" : ""}`}>{flaggedCount}</p><p className="mt-1 text-[12px] text-ink-soft">Candidates with violations</p></article>
+      <article className="rounded-2xl border border-line bg-paper p-4"><p className="text-[12px] text-ink-soft">Camera feeds</p><p className={`mt-1 font-serif text-3xl font-semibold tabular-nums ${viewerState === "error" ? "text-alert" : ""}`}>{feedCount}</p><p className="mt-1 text-[12px] text-ink-soft">{viewerState === "connected" ? "LiveKit connected" : viewerState}</p></article>
     </div>
-    <div className="mt-4 flex flex-wrap gap-4 border-b border-line pb-4">
-      <Stat label="Candidates" value={activeCount.toString()} sub="connected" />
-      <Stat label="Flags" value={flaggedCount.toString()} sub="violations" alert={flaggedCount > 0} />
-      <Stat label="Live Feeds" value={feedCount.toString()} sub={viewerState === "connected" ? "Live" : viewerState} alert={viewerState === "error" || viewerState === "disconnected"}/>
+
+    <div className="mt-4">
+      <AllocationPanel students={students} proctors={proctors} me={profile?.full_name ?? ""} />
     </div>
-    <AllocationPanel students={students} proctors={proctors} me={profile?.full_name ?? ""} />
-    {viewerState === "error" && viewerError && (
-      <div className="mt-4 border border-alert/40 bg-alert/5 px-4 py-3 font-mono text-[11px] text-alert">
-        <strong>LiveKit Error:</strong> {viewerError}
+
+    {examIsEmpty && (
+      <div className="mt-4 rounded-2xl border border-amber/40 bg-amber/5 px-4 py-3 text-[13px] text-amber">
+        This exam is still a draft with nobody enrolled. Switch to a published paper with a roster, or enroll students first.
       </div>
     )}
-    <div className="mt-4 flex flex-col justify-between gap-4 border-b border-line pb-3 sm:flex-row sm:items-center"><div className="flex gap-1"><button onClick={() => setView("wall")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "wall" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Video wall</button><button onClick={() => setView("activity")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "activity" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Activity</button><button onClick={() => setView("chat")} className={`border-b-2 px-4 py-2 font-mono text-[10px] uppercase tracking-wider ${view === "chat" ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Proctor Chat{chatCount > 0 ? ` (${chatCount})` : ""}</button></div><div className="flex items-center gap-3"><span className={`inline-flex items-center gap-1.5 font-mono text-[10px] ${live ? "text-success" : "text-ink-soft"}`}><span className={`h-1.5 w-1.5 rounded-none ${live ? "bg-success" : "bg-line-strong"}`} /> {live ? `${feedCount} feed(s) · DB live` : "Not connected"}</span><select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-wider"><option>All candidates</option><option>Flagged only</option><option>Submitted</option></select></div></div>
-    
-    <div className="mt-4 grid gap-6 xl:grid-cols-[1fr_360px]">
-      <div>
-        {view === "wall" ? <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} mobileFeedFor={mobileFeedByRoll} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }}/> : view === "activity" ? <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/> : <ProctorChatPanel examId={selectedExamId} senderName={profile?.full_name ?? "Teacher"} senderRole="teacher" onCountChange={setChatCount} maxHeight={420} />}
+    {viewerState === "error" && viewerError && !examIsEmpty && (
+      <div className="mt-4 rounded-2xl border border-alert/40 bg-alert/5 px-4 py-3 text-[13px] text-alert" role="alert">
+        {viewerError}
       </div>
-      <section className="border border-line bg-paper p-5 sm:p-6 h-fit sticky top-4">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Selected candidate</p>
+    )}
+    {viewerState === "connected" && writingCount === 0 && !examIsEmpty && (
+      <div className="mt-4 rounded-2xl border border-line bg-paper px-4 py-3 text-[13px] text-ink-soft">
+        Room is connected. Feeds appear when a candidate starts the exam and publishes their camera.
+      </div>
+    )}
+    {zipMsg && <p className="mt-3 text-[12px] text-ink-soft">{zipMsg}</p>}
+
+    <div className="mt-5 flex flex-col justify-between gap-3 border-b border-line pb-3 sm:flex-row sm:items-center">
+      <div className="flex flex-wrap gap-1">
+        {(["wall", "activity", "chat"] as const).map((tab) => (
+          <button key={tab} type="button" onClick={() => setView(tab)} className={`rounded-full px-4 py-2 text-[13px] ${view === tab ? "bg-forest text-paper" : "text-ink-soft hover:bg-paper-raised"}`}>
+            {tab === "wall" ? "Video wall" : tab === "activity" ? "Activity" : `Proctor chat${chatCount ? ` (${chatCount})` : ""}`}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-3">
+        <span className={`text-[12px] ${live ? "text-success" : "text-ink-soft"}`}>{live ? `${feedCount} feed(s) · roster live` : "Roster offline"}</span>
+        <select value={filter} onChange={(e) => setFilter(e.target.value)} className="border border-line-strong bg-paper px-3 py-2 text-[13px]" aria-label="Filter candidates">
+          <option>All candidates</option>
+          <option>Flagged only</option>
+          <option>Submitted</option>
+        </select>
+      </div>
+    </div>
+
+    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="min-w-0 rounded-2xl border border-line bg-paper p-3 sm:p-4">
+        {view === "wall" ? (
+          <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} mobileFeedFor={mobileFeedByRoll} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }}/>
+        ) : view === "activity" ? (
+          <ActivityView visible={visible} selected={selected} onSelect={selectCandidate}/>
+        ) : (
+          <ProctorChatPanel examId={selectedExamId} senderName={profile?.full_name ?? "Teacher"} senderRole="teacher" onCountChange={setChatCount} maxHeight={420} />
+        )}
+      </div>
+
+      <aside className="h-fit rounded-2xl border border-line bg-paper p-5 xl:sticky xl:top-4">
+        <p className="text-[12px] text-ink-soft">Selected candidate</p>
         {!selected ? (
-          <div className="mt-4 text-[13px] text-ink-soft">No candidate selected or no active candidates.</div>
+          <p className="mt-3 text-[14px] text-ink-soft">Pick a candidate from the wall or activity list.</p>
         ) : (
           <>
-            <div className="mt-4 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="font-serif text-xl font-semibold">{selected.name}</h2>
-                <p className="mt-1 font-mono text-[10px] text-ink-soft">{selected.roll} · {selected.status} · {selected.progress}% complete</p>
+            <div className="mt-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="truncate font-serif text-xl font-semibold">{selected.name}</h2>
+                <p className="mt-1 text-[12px] text-ink-soft">{selected.roll} · {selected.status} · {selected.progress}%</p>
               </div>
-              <span className={`font-mono text-[10px] uppercase ${selected.violation ? "text-alert" : "text-success"}`}>{selected.violation ? "Violation detected" : "Clear"}</span>
+              <span className={`shrink-0 text-[12px] font-semibold ${selected.violation ? "text-alert" : "text-success"}`}>{selected.violation ? "Flagged" : "Clear"}</span>
             </div>
-            <div className="mt-5 flex border-b border-line font-mono text-[10px] uppercase tracking-wider">
-              <button onClick={() => setScreenMode(false)} className={`border-b-2 px-3 py-2 ${!screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Camera view</button>
-              <button onClick={() => setScreenMode(true)} className={`border-b-2 px-3 py-2 ${screenMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}>Screen recording</button>
-              <button onClick={() => setPhoneMode(true)} className={`border-b-2 px-3 py-2 ${phoneMode ? "border-forest text-forest" : "border-transparent text-ink-soft"}`}><FiSmartphone className="mr-1 inline" aria-hidden /> Phone desk</button>
+            <div className="mt-4 flex gap-1 rounded-full bg-paper-raised p-1 text-[12px]">
+              <button type="button" onClick={() => { setScreenMode(false); setPhoneMode(false); }} className={`flex-1 rounded-full px-2 py-1.5 ${!screenMode && !phoneMode ? "bg-paper text-forest" : "text-ink-soft"}`}>Camera</button>
+              <button type="button" onClick={() => { setScreenMode(true); setPhoneMode(false); }} className={`flex-1 rounded-full px-2 py-1.5 ${screenMode && !phoneMode ? "bg-paper text-forest" : "text-ink-soft"}`}>Screen</button>
+              <button type="button" onClick={() => { setPhoneMode(true); setScreenMode(false); }} className={`flex-1 rounded-full px-2 py-1.5 ${phoneMode ? "bg-paper text-forest" : "text-ink-soft"}`}>Phone</button>
             </div>
             {phoneMode ? (
-              <div className="relative mt-4 flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#D9D5CB]">
+              <div className="relative mt-3 flex aspect-video items-center justify-center overflow-hidden rounded-xl border border-line bg-[#D9D5CB]">
                 <FeedView feed={mobileFeedByRoll.get(selected.roll.toLowerCase()) ?? null} initials={selected.name.split(" ").map((x) => x[0]).slice(0, 2).join("")} />
-                <span className="absolute bottom-2 left-2 inline-flex items-center gap-1.5 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper"><span className="h-1 w-1 rounded-none bg-alert" /> Phone desk feed</span>
               </div>
             ) : screenMode ? (
               <ScreenRecording selected={selected} feed={feedFor(selected)}/>
             ) : (
-              <div className="relative mt-4 flex aspect-video items-center justify-center overflow-hidden border border-line bg-[#D9D5CB]">
+              <div className="relative mt-3 flex aspect-video items-center justify-center overflow-hidden rounded-xl border border-line bg-[#D9D5CB]">
                 <FeedView feed={feedFor(selected)} initials={selected.name.split(" ").map((x) => x[0]).slice(0, 2).join("")}/>
-                <span className="absolute bottom-2 left-2 inline-flex items-center gap-1.5 bg-ink/75 px-2 py-1 font-mono text-[9px] text-paper"><span className="h-1 w-1 rounded-none bg-alert" /> Live camera</span>
               </div>
             )}
             <AudioPlayer track={feedFor(selected)?.audioTrack} />
-            <div className="mt-5">
-              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-                Violation log{selected.violations.length > 0 && <> · {selected.violations.length} event{selected.violations.length > 1 ? "s" : ""}</>}
-              </p>
+            <div className="mt-4">
+              <p className="text-[12px] text-ink-soft">Violations{selected.violations.length ? ` · ${selected.violations.length}` : ""}</p>
               {selected.violations.length === 0 ? (
-                <p className="mt-2 border-l-2 border-success px-3 py-2 text-[12px] text-ink-soft">No proctoring flags. All checks are passing.</p>
+                <p className="mt-2 text-[13px] text-ink-soft">No flags yet.</p>
               ) : (
-                <div className="mt-2 space-y-1.5">
+                <div className="mt-2 max-h-40 space-y-1.5 overflow-y-auto">
                   {[...selected.violations]
                     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-                    .slice(0, 6)
+                    .slice(0, 8)
                     .map((v) => (
-                      <div key={v.id} className="flex items-start gap-2 border-l-2 border-alert bg-alert/[0.04] px-3 py-2">
-                        <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-none ${v.severity === "critical" ? "bg-alert" : v.severity === "high" ? "bg-amber" : "bg-ink-soft"}`} />
-                        <div className="min-w-0">
-                          <p className="text-[12px]">{v.description || v.violation_type}</p>
-                          <p className="mt-0.5 font-mono text-[9px] text-ink-soft">
-                            {v.violation_type} · {new Date(v.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            {v.offset_seconds != null ? ` · @ ${formatClock(v.offset_seconds)}` : ""}
-                          </p>
-                        </div>
+                      <div key={v.id} className="rounded-lg border border-alert/20 bg-alert/[0.04] px-3 py-2">
+                        <p className="text-[13px]">{v.description || v.violation_type}</p>
+                        <p className="mt-0.5 text-[11px] text-ink-soft">
+                          {new Date(v.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          {v.offset_seconds != null ? ` · @ ${formatClock(v.offset_seconds)}` : ""}
+                        </p>
                       </div>
                     ))}
                 </div>
               )}
             </div>
+            <div className="mt-4 grid gap-2">
+              <button type="button" disabled={selected.status === "Submitted"} onClick={() => void runAction("warning")} className="rounded-xl border border-line-strong py-2.5 text-[13px] disabled:opacity-50 hover:border-forest">Send warning</button>
+              <button
+                type="button"
+                disabled={voiceBusy || selected.status === "Submitted"}
+                onClick={() => void toggleSpeak(selected)}
+                className={`inline-flex items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] disabled:opacity-50 ${
+                  speakingTo === selected.roll ? "border border-alert bg-alert text-paper" : "border border-forest bg-forest/5 text-forest hover:bg-forest hover:text-paper"
+                }`}
+              >
+                {speakingTo === selected.roll ? <><FiMicOff aria-hidden /> Stop speaking</> : voiceBusy ? "Connecting mic…" : <><FiMic aria-hidden /> Speak to candidate</>}
+              </button>
+              <button type="button" disabled={selected.status !== "Writing" && selected.status !== "Paused"} onClick={() => void runAction(selected.status === "Paused" ? "resume" : "pause")} className="rounded-xl border border-amber py-2.5 text-[13px] text-amber disabled:opacity-50">
+                {selected.status === "Paused" ? "Resume candidate" : "Pause candidate"}
+              </button>
+              <button type="button" disabled={selected.status === "Submitted"} onClick={() => void runAction("escalation")} className="rounded-xl border border-alert py-2.5 text-[13px] text-alert disabled:opacity-50">Escalate incident</button>
+              <button
+                type="button"
+                disabled={!selected.realAttemptId || selected.status === "Submitted"}
+                onClick={() => {
+                  if (!confirm(`Force submit the exam for ${selected.name}?`)) return;
+                  void runAction("force_submit");
+                }}
+                className="rounded-xl border border-forest bg-forest/5 py-2.5 text-[13px] text-forest disabled:opacity-50 hover:bg-forest hover:text-paper"
+              >
+                Force submit
+              </button>
+              {actionMsg && (
+                <p className={`rounded-xl border px-3 py-2 text-[12px] ${
+                  actionMsg.tone === "err" ? "border-alert/40 bg-alert/5 text-alert" :
+                  actionMsg.tone === "warn" ? "border-amber/40 bg-amber/5 text-amber" :
+                  "border-success/40 bg-success/5 text-success"
+                }`}>{actionMsg.text}</p>
+              )}
+            </div>
           </>
         )}
-      </section>
-      <aside className="border border-line p-5">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Candidate activity</p>
-        <div className="mt-4 space-y-4">
-          {!selected ? (
-            <p className="text-[12px] text-ink-soft">Select a candidate to view activity.</p>
-          ) : selected.violations.length === 0 ? (
-            <p className="text-[12px] text-ink-soft">No proctoring activity recorded for this candidate yet.</p>
-          ) : (
-            [...selected.violations]
-              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-              .map((v) => (
-                <div key={v.id} className="flex gap-3">
-                  <span className="font-mono text-[10px] text-ink-soft">
-                    {new Date(v.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </span>
-                  <p className="text-[12px]">{v.description || v.violation_type}</p>
-                </div>
-              ))
-          )}
-        </div>
-        <div className="mt-6 grid gap-2">
-          <button
-            disabled={!selected || selected.status === "Submitted"}
-            onClick={() => void runAction("warning")}
-            className="border border-line-strong py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft disabled:opacity-50 hover:bg-line-strong transition-colors"
-          >
-            Send warning
-          </button>
-          <button
-            disabled={!selected || voiceBusy || selected.status === "Submitted"}
-            onClick={() => void toggleSpeak(selected)}
-            className={`inline-flex items-center justify-center gap-2 py-2 font-mono text-[10px] uppercase tracking-wider transition-colors disabled:opacity-50 ${
-              speakingTo === selected?.roll
-                ? "border border-alert bg-alert text-paper hover:bg-alert/90"
-                : "border border-forest bg-forest/5 text-forest hover:bg-forest hover:text-paper"
-            }`}
-          >
-            {speakingTo === selected?.roll ? <><FiMicOff aria-hidden /> Stop speaking</> : voiceBusy ? "Connecting mic…" : <><FiMic aria-hidden /> Speak to candidate</>}
-          </button>
-          <button
-            disabled={!selected || (selected.status !== "Writing" && selected.status !== "Paused")}
-            onClick={() => void runAction(selected?.status === "Paused" ? "resume" : "pause")}
-            className="border border-amber py-2 font-mono text-[10px] uppercase tracking-wider text-amber disabled:opacity-50 hover:bg-amber/10 transition-colors"
-          >
-            {selected?.status === "Paused" ? "Resume candidate" : "Pause candidate"}
-          </button>
-          <button
-            disabled={!selected || selected.status === "Submitted"}
-            onClick={() => void runAction("escalation")}
-            className="border border-alert py-2 font-mono text-[10px] uppercase tracking-wider text-alert disabled:opacity-50 hover:bg-alert/10 transition-colors"
-          >
-            Escalate incident
-          </button>
-          <button
-            disabled={!selected || !selected.realAttemptId || selected.status === "Submitted"}
-            onClick={() => {
-              if (!selected) return;
-              if (!confirm(`Are you sure you want to force submit the exam for ${selected.name}?`)) return;
-              void runAction("force_submit");
-            }}
-            className="border border-forest bg-forest/5 py-2 font-mono text-[10px] uppercase tracking-wider text-forest disabled:opacity-50 hover:bg-forest hover:text-paper transition-colors"
-          >
-            Force Submit
-          </button>
-          {actionMsg && (
-            <p className={`border px-3 py-2 font-mono text-[9px] uppercase tracking-wider ${
-              actionMsg.tone === "err" ? "border-alert/40 bg-alert/5 text-alert" :
-              actionMsg.tone === "warn" ? "border-amber/40 bg-amber/5 text-amber" :
-              "border-success/40 bg-success/5 text-success"
-            }`}>
-              {actionMsg.text}
-            </p>
-          )}
-        </div>
       </aside>
     </div>
 

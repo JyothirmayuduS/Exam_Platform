@@ -6,8 +6,8 @@
 // grants `canSubscribe` to authenticated proctor/teacher/admin roles — a
 // student's token can never watch another student.
 //
-// Degrades gracefully: with no LiveKit/Supabase config `startProctorViewing`
-// resolves to `null` and the UI shows placeholder tiles instead of live feeds.
+// Throws a clear Error when LiveKit/Supabase is missing or the token/connect
+// fails, so the console can show the real reason instead of a silent blank wall.
 
 import { Room, RoomEvent } from "livekit-client";
 import { env, livekitConfigured } from "@/shared/data/env";
@@ -39,15 +39,26 @@ export type ViewerHandle = {
 /** Ask the Edge Function for a proctor (subscribe-capable) token. */
 async function fetchViewerToken(
   room: string,
-): Promise<{ token: string; url: string; identity: string } | null> {
+): Promise<{ token: string; url: string; identity: string }> {
   const db = getSupabase();
-  if (!db) return null;
+  if (!db) throw new Error("Supabase is not configured in this build.");
   const { data, error } = await db.functions.invoke("livekit-token", {
     body: { room, canSubscribe: true, canPublish: false },
   });
   if (error || !data?.token) {
     console.error("[proctor-viewer] Edge Function error:", error, "| data:", data);
-    return null;
+    let detail = error?.message || "livekit-token returned no token";
+    try {
+      const ctx = (error as { context?: Response } | null)?.context;
+      if (ctx) {
+        const body = await ctx.clone().json() as { error?: string };
+        if (body?.error) detail = body.error;
+      }
+    } catch { /* keep detail */ }
+    if (data && typeof data === "object" && "error" in data && (data as { error?: string }).error) {
+      detail = String((data as { error?: string }).error);
+    }
+    throw new Error(`LiveKit token failed — ${detail}`);
   }
   return {
     token: data.token as string,
@@ -66,18 +77,13 @@ export async function startProctorViewing(opts: {
   room: string;
   onState?: (s: ViewerState) => void;
   onFeeds?: (feeds: RemoteFeed[]) => void;
-}): Promise<ViewerHandle | null> {
+}): Promise<ViewerHandle> {
   console.warn("[proctor-viewer] [start] START — livekitConfigured:", livekitConfigured, "| supabaseUrl:", env.supabaseUrl ? "[ok] SET" : "[fail] MISSING", "| room:", opts.room);
   if (!livekitConfigured) {
-    console.error("[proctor-viewer] [fail] ABORT: livekitConfigured=false — VITE_LIVEKIT_URL is missing on Vercel");
-    return null;
+    throw new Error("VITE_LIVEKIT_URL is missing from this build — set it on Vercel and redeploy.");
   }
   console.debug("[proctor-viewer] fetching token for room:", opts.room);
   const creds = await fetchViewerToken(opts.room);
-  if (!creds) {
-    console.error("[proctor-viewer] [fail] ABORT: token fetch returned null — Edge Function call failed or returned no token");
-    return null;
-  }
   console.warn("[proctor-viewer] [ok] token received — identity:", creds.identity, "url:", creds.url, "| token starts with:", creds.token.slice(0, 30) + "...");
 
   // adaptiveStream pauses tracks attached to off-screen elements. Viewers only
@@ -169,7 +175,8 @@ export async function startProctorViewing(opts: {
   } catch (err) {
     void room.disconnect();
     console.error("[proctor-viewer] [fail] room.connect() FAILED:", err);
-    return null;
+    const message = err instanceof Error ? err.message : "room.connect failed";
+    throw new Error(`LiveKit connect failed — ${message}`);
   }
 
   const diagnostics = () => {

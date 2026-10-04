@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { FiVideo, FiUsers, FiActivity, FiAlertTriangle, FiCheckCircle, FiClock, FiSearch } from "react-icons/fi";
-import { listExams, listProctoringStats } from "@/shared/data/examApi";
+import { listExamsForTeacher, listProctoringStats } from "@/shared/data/examApi";
 import { Button, Badge, EmptyState } from "@/shared/components/ui";
 
 type ExamRow = {
@@ -31,16 +31,21 @@ export default function ProctoringAssessmentSelect({
   useEffect(() => {
     let active = true;
     void (async () => {
-      const [exams, stats] = await Promise.all([listExams(), listProctoringStats()]);
+      const [exams, stats] = await Promise.all([listExamsForTeacher(), listProctoringStats()]);
       if (!active) return;
-      const list = (exams ?? []).map((e) => ({
-        id: e.id,
-        name: e.name,
-        batch: e.batch ?? null,
-        status: e.status,
-        scheduled_at: e.scheduled_at ?? null,
-        stats: stats[e.id] ?? { candidates: 0, active: 0, submitted: 0, paused: 0, flagged: 0 },
-      }));
+      const list = (exams ?? [])
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          batch: e.batch ?? null,
+          status: e.status,
+          scheduled_at: e.scheduled_at ?? null,
+          stats: stats[e.id] ?? { candidates: 0, active: 0, submitted: 0, paused: 0, flagged: 0 },
+        }))
+        .sort((a, b) => {
+          const rank = (x: typeof a) => (x.status === "draft" ? 2 : x.stats.candidates > 0 ? 0 : 1);
+          return rank(a) - rank(b) || b.stats.candidates - a.stats.candidates;
+        });
       setRows(list);
       setLoading(false);
     })();
@@ -97,7 +102,7 @@ export default function ProctoringAssessmentSelect({
       {/* Totals */}
       <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={<FiUsers />} label="Total candidates" value={totals.candidates} detail="Across all assessments" />
-        <SummaryCard icon={<FiActivity />} label="Active right now" value={totals.active} detail="In-progress + not started" tone="text-forest" />
+        <SummaryCard icon={<FiActivity />} label="Active right now" value={totals.active} detail="In progress right now" tone="text-forest" />
         <SummaryCard icon={<FiAlertTriangle />} label="Flagged" value={totals.flagged} detail="Violation events logged" tone={totals.flagged > 0 ? "text-alert" : "text-ink"} />
         <SummaryCard icon={<FiCheckCircle />} label="Submitted" value={totals.submitted} detail="Papers closed" tone="text-success" />
       </div>
