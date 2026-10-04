@@ -112,28 +112,8 @@ export async function listEnrolledExamsForAuthUser(
     }
   }
 
-  // 3. Fallback: also include published exams matching batch/branch
-  const { data: allPublished } = await db
-    .from("exams")
-    .select("*")
-    .neq("status", "draft")
-    .order("created_at", { ascending: false });
-
-  if (allPublished) {
-    for (const raw of allPublished) {
-      const norm = normalizeExamRecord(raw);
-      if (!examMap.has(norm.id)) {
-        if (
-          !student?.branch ||
-          norm.batch.toLowerCase().includes(student.branch.toLowerCase()) ||
-          norm.batch.toLowerCase().includes("all")
-        ) {
-          examMap.set(norm.id, norm);
-        }
-      }
-    }
-  }
-
+  // Only enrolled exams. Do not invent a batch match — that looked like mock
+  // data when every published CSE paper appeared for every CSE student.
   const exams = Array.from(examMap.values()).sort((a, b) => {
     const left = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
     const right = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
@@ -144,29 +124,36 @@ export async function listEnrolledExamsForAuthUser(
 }
 
 /**
- * Realtime: fire `onChange` whenever an exam for this batch is inserted or
- * updated (e.g. the moment the teacher clicks Publish). Returns an unsubscribe.
- */
-
-
-/**
- * Realtime: fire `onChange` whenever an exam for this batch is inserted or
- * updated (e.g. the moment the teacher clicks Publish). Returns an unsubscribe.
+ * Realtime: fire `onChange` when this student's enrollments or attempts change,
+ * or when any exam row updates (publish / schedule). Prefer a real student id
+ * over a hardcoded batch string.
  */
 export function subscribeToStudentExams(
-  batch: string,
+  studentId: string | null | undefined,
   onChange: () => void,
 ): () => void {
   const db = getSupabase();
   if (!db) return () => undefined;
-  const channel = db
-    .channel(`exams-${batch}`)
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "exams", filter: `batch=eq.${batch}` },
-      () => onChange(),
-    )
-    .subscribe();
+  const channelId = `student-exams-${studentId ?? "anon"}-${Math.random().toString(36).slice(2)}`;
+  let channel = db.channel(channelId).on(
+    "postgres_changes",
+    { event: "*", schema: "public", table: "exams" },
+    () => onChange(),
+  );
+  if (studentId) {
+    channel = channel
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "enrollments", filter: `student_id=eq.${studentId}` },
+        () => onChange(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "attempts", filter: `student_id=eq.${studentId}` },
+        () => onChange(),
+      );
+  }
+  channel.subscribe();
   return () => {
     db.removeChannel(channel);
   };

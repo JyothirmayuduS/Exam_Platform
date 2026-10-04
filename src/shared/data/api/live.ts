@@ -233,14 +233,18 @@ export async function listProctoringStats(): Promise<
     const row = (out[examId] ??= { candidates: 0, active: 0, submitted: 0, paused: 0, flagged: 0 });
     row[field] += 1;
   };
+  // Candidates = real enrollments (roster size), not invented attempt rows.
+  const { data: enrolled } = await db.from("enrollments").select("exam_id");
+  if (enrolled) {
+    for (const r of enrolled as { exam_id?: string }[]) bump(String(r.exam_id ?? ""), "candidates");
+  }
   const { data: attempts } = await db
     .from("attempts")
     .select("exam_id,state,student_id");
   if (attempts) {
     for (const r of attempts as { exam_id?: string; state?: string; student_id?: string }[]) {
       const examId = String(r.exam_id ?? "");
-      bump(examId, "candidates");
-      if (r.state === "in_progress" || r.state === "not_started") bump(examId, "active");
+      if (r.state === "in_progress") bump(examId, "active");
       else if (r.state === "submitted") bump(examId, "submitted");
       else if (r.state === "paused") bump(examId, "paused");
     }

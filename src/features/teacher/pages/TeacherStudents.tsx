@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { FiDownload, FiChevronRight, FiUserPlus, FiCheckCircle } from "react-icons/fi";
-import { getExamRoster, bulkEnrollStudents, removeStudentFromExam, getStudentsByBranchAndSection, bulkImportGlobalStudents, provisionStudentLoginAccounts, type Student as DBStudent } from "@/shared/data/examApi";
+import { getExamRoster, bulkEnrollStudents, removeStudentFromExam, getStudentsByBranchAndSection, listStudentDirectoryFilters, bulkImportGlobalStudents, provisionStudentLoginAccounts, type Student as DBStudent } from "@/shared/data/examApi";
 
 type Exam = { id: string; name: string; batch: string; state: string; tone: string };
 
@@ -248,14 +248,32 @@ function Tab({ active, onClick, label, hint }: { active: boolean; onClick: () =>
 }
 
 function DirectoryPicker({ batch, notify, onEnrolled }: { batch: Exam | null; notify: (m: string) => void; onEnrolled: () => void; }) {
-  const [branch, setBranch] = useState("CSE");
-  const [section, setSection] = useState("A");
+  const [branches, setBranches] = useState<string[]>([]);
+  const [sections, setSections] = useState<string[]>([]);
+  const [branch, setBranch] = useState("");
+  const [section, setSection] = useState("");
   const [students, setStudents] = useState<DBStudent[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
 
+  useEffect(() => {
+    let active = true;
+    void listStudentDirectoryFilters().then((filters) => {
+      if (!active) return;
+      setBranches(filters.branches);
+      setSections(filters.sections);
+      setBranch((cur) => cur || filters.branches[0] || "");
+      setSection((cur) => cur || filters.sections[0] || "");
+    });
+    return () => { active = false; };
+  }, []);
+
   const fetchStudents = async () => {
+    if (!branch || !section) {
+      notify("Pick a branch and section from the directory first");
+      return;
+    }
     setLoading(true);
     const results = await getStudentsByBranchAndSection(branch, section);
     setStudents(results);
@@ -307,20 +325,14 @@ function DirectoryPicker({ batch, notify, onEnrolled }: { batch: Exam | null; no
       <div className="mt-4 flex flex-wrap items-end gap-4">
         <label className="block text-[11px] uppercase tracking-wider text-ink-soft">Branch
           <select value={branch} onChange={(e) => setBranch(e.target.value)} className="mt-1.5 block w-48 border border-line-strong bg-paper px-3 py-3 text-[14px] outline-none focus:border-forest">
-            <option value="CSE">CSE</option>
-            <option value="ECE">ECE</option>
-            <option value="IT">IT</option>
-            <option value="MECH">MECH</option>
-            <option value="CIVIL">CIVIL</option>
+            {branches.length === 0 && <option value="">No branches in directory</option>}
+            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
         </label>
         <label className="block text-[11px] uppercase tracking-wider text-ink-soft">Section
           <select value={section} onChange={(e) => setSection(e.target.value)} className="mt-1.5 block w-32 border border-line-strong bg-paper px-3 py-3 text-[14px] outline-none focus:border-forest">
-            <option value="A">A</option>
-            <option value="B">B</option>
-            <option value="C">C</option>
-            <option value="D">D</option>
-            <option value="E">E</option>
+            {sections.length === 0 && <option value="">No sections</option>}
+            {sections.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
         <button onClick={fetchStudents} disabled={loading} className="border border-line-strong px-6 py-3 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest disabled:opacity-50">

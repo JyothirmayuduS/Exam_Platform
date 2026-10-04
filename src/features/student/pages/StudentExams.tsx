@@ -16,8 +16,6 @@ export const STUDENT_NAV = [
   { label: "Help & support", to: "/student/help" },
 ];
 
-export const STUDENT_BATCH = "CSE — Sem III · Sec A/B"; // Keep for fallback purposes
-
 type Row = { id: string; name: string; meta: string; when: string; status: "published" | "scheduled" | "completed" };
 
 function toRow(e: ExamRecord): Row {
@@ -104,7 +102,17 @@ export default function StudentExams() {
       }
     };
     void load();
-    const unsub = subscribeToStudentExams(STUDENT_BATCH, () => void load());
+    let unsub: () => void = () => {};
+    void (async () => {
+      const { getSupabase } = await import("@/shared/data/supabase");
+      const db = getSupabase();
+      if (!db || !active) return;
+      const { data: { user } } = await db.auth.getUser();
+      if (!user || !active) return;
+      const { data: st } = await db.from("students").select("id").eq("auth_id", user.id).maybeSingle();
+      if (!active) return;
+      unsub = subscribeToStudentExams(st?.id ?? null, () => void load());
+    })();
     return () => { active = false; unsub(); };
   }, []);
 

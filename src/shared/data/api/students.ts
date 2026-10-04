@@ -126,6 +126,23 @@ export async function getStudentsByBranchAndSection(branch?: string, section?: s
   return data as Student[] || [];
 }
 
+/** Distinct branch / section values from the real students table. */
+export async function listStudentDirectoryFilters(): Promise<{ branches: string[]; sections: string[] }> {
+  const db = getSupabase();
+  if (!db) return { branches: [], sections: [] };
+  const { data } = await db.from("students").select("branch, section");
+  const branches = new Set<string>();
+  const sections = new Set<string>();
+  for (const row of (data ?? []) as { branch?: string | null; section?: string | null }[]) {
+    if (row.branch?.trim()) branches.add(row.branch.trim());
+    if (row.section?.trim()) sections.add(row.section.trim());
+  }
+  return {
+    branches: Array.from(branches).sort((a, b) => a.localeCompare(b)),
+    sections: Array.from(sections).sort((a, b) => a.localeCompare(b)),
+  };
+}
+
 
 export async function bulkImportGlobalStudents(students: { roll: string; name: string; email: string; branch: string; section: string; phone?: string }[]): Promise<{ error?: string; count: number }> {
   const db = getSupabase();

@@ -123,6 +123,7 @@ function toUIAttempt(row: LiveAttempt, examName: string): Attempt {
     network,
     autoSaveAt: timeAgo(row.auto_saved_at),
     flags,
+    answers: row.answers ?? {},
     paper: row.paper ?? [],
     score: row.score,
   };

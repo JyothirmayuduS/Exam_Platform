@@ -132,7 +132,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     if (!examBundle) return;
     const questions = examBundle.questions ?? [];
     
-    // Merge live DB attempts with the mock paper content for evaluation
+    // Merge live attempts with the exam's question pool from Supabase.
     const mapped: Candidate[] = liveAttempts
       .filter((a) => a.state === "Submitted") // We only grade submitted
       .map((a, i) => {
