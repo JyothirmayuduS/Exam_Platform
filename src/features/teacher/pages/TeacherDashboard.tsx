@@ -155,71 +155,58 @@ function Overview({ notify, navigate, examsList, loading, avgScore, scoredCount,
   const first = profile?.full_name?.split(" ")[0] ?? "Faculty";
   const questionCount = examsList.reduce((acc, e) => acc + (parseInt(e.count) || 0), 0);
   return (
-    <div className="surface">
-      <header className="surface-head">
+    <div className="sheet">
+      <header className="sheet-top">
         <div>
-          <p className="surface-eyebrow">Overview</p>
-          <h1 className="surface-title">Good morning, {first}.</h1>
-          <p className="surface-detail">Live candidates, drafts, and the queue that still needs you.</p>
+          <h1>Good morning, {first}.</h1>
+          <p>Here is what needs your attention today.</p>
         </div>
         <Button primary icon={<PlusIcon />} onClick={() => navigate("/teacher/exams/new")}>New exam</Button>
       </header>
-      <div className="surface-stats">
-        <button type="button" className="surface-stat" onClick={() => navigate("/teacher/submissions")}>
-          <span>Live candidates</span><strong className="text-alert">{stats.live}</strong><em>Currently active</em>
-        </button>
-        <button type="button" className="surface-stat" onClick={() => navigate("/teacher/evaluate")}>
-          <span>Needs review</span><strong className="text-amber">{stats.submitted}</strong><em>{stats.flagged} flagged</em>
-        </button>
-        <button type="button" className="surface-stat" onClick={() => navigate("/teacher/bank")}>
-          <span>My questions</span><strong className="text-forest">{questionCount}</strong><em>Questions across exams</em>
-        </button>
-        <button type="button" className="surface-stat" onClick={() => navigate("/teacher/reports")}>
-          <span>Avg. score</span><strong>{avgScore != null ? `${avgScore}%` : "—"}</strong><em>{avgScore != null ? `Across ${scoredCount} scored attempt(s)` : "No scored attempts yet"}</em>
-        </button>
-      </div>
-      <div className="surface-split">
-        <section className="surface-panel">
-          <div className="surface-panel-head">
-            <h2>Exam activity</h2>
-            <button type="button" onClick={() => navigate("/teacher/exams")}>Manage exams</button>
-          </div>
-          {loading ? <p className="surface-empty">Loading exams…</p> : examsList.length === 0 ? <p className="surface-empty">No exams yet.</p> : (
-            <ul className="surface-rows">
-              {examsList.slice(0, 6).map((exam) => (
-                <li key={exam.id}>
-                  <button type="button" className="surface-row" onClick={() => navigate(`/teacher/exams/${exam.id}`)}>
-                    <span className="surface-row-main">
-                      <strong>{exam.name}</strong>
-                      <em>{exam.batch}</em>
-                    </span>
-                    <span className={`surface-chip ${exam.tone}`}>{exam.state}</span>
-                    <span className="surface-bar" aria-hidden><i style={{ width: `${exam.progress}%` }} /></span>
-                    <span className="surface-meta">{exam.count}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-        <aside className="surface-panel">
-          <div className="surface-panel-head">
-            <h2>Action queue</h2>
-            <span className="surface-count">{stats.flagged + stats.submitted}</span>
-          </div>
-          <div className="surface-queue">
-            {[
-              ["Review flagged submissions", `${stats.flagged} pending`, "/teacher/submissions"],
-              ["Grade subjective answers", `${stats.submitted} remaining`, "/teacher/evaluate"],
-              ["Open performance reports", "Analytics", "/teacher/reports"],
-            ].map(([label, count, to]) => (
-              <button key={label} type="button" onClick={() => navigate(to)}>
-                <span>{label}</span><em>{count}</em>
+      <nav className="sheet-facts" aria-label="Today">
+        <button type="button" onClick={() => navigate("/teacher/submissions")}><strong className="text-alert">{stats.live}</strong> live now</button>
+        <button type="button" onClick={() => navigate("/teacher/evaluate")}><strong className="text-amber">{stats.submitted}</strong> to grade</button>
+        <button type="button" onClick={() => navigate("/teacher/bank")}><strong>{questionCount}</strong> questions</button>
+        <button type="button" onClick={() => navigate("/teacher/reports")}><strong>{avgScore != null ? `${avgScore}%` : "—"}</strong> average{avgScore != null ? ` · ${scoredCount} scored` : ""}</button>
+      </nav>
+      <section className="sheet-block">
+        <h2>Still to do</h2>
+        <ul className="sheet-list">
+          {[
+            ["Review flagged submissions", `${stats.flagged} pending`, "/teacher/submissions"],
+            ["Grade subjective answers", `${stats.submitted} remaining`, "/teacher/evaluate"],
+            ["Open performance reports", "Scores and snapshots", "/teacher/reports"],
+          ].map(([label, count, to]) => (
+            <li key={label}>
+              <button type="button" className="sheet-row" onClick={() => navigate(to)}>
+                <span className="sheet-row-main"><strong>{label}</strong></span>
+                <span className="sheet-quiet">{count}</span>
               </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+      <section className="sheet-block">
+        <div className="sheet-block-head">
+          <h2>Exams</h2>
+          <button type="button" onClick={() => navigate("/teacher/exams")}>All exams</button>
+        </div>
+        {loading ? <p className="sheet-empty">Loading exams…</p> : examsList.length === 0 ? <p className="sheet-empty">No exams yet.</p> : (
+          <ul className="sheet-list">
+            {examsList.slice(0, 8).map((exam) => (
+              <li key={exam.id}>
+                <button type="button" className="sheet-row" onClick={() => navigate(`/teacher/exams/${exam.id}`)}>
+                  <span className="sheet-row-main">
+                    <strong>{exam.name}</strong>
+                    <em>{exam.batch} · {exam.count}</em>
+                  </span>
+                  <span className={`sheet-status ${exam.tone}`}>{exam.state}</span>
+                </button>
+              </li>
             ))}
-          </div>
-        </aside>
-      </div>
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
@@ -535,84 +522,80 @@ function Reports({ notify }: { notify: (s: string) => void }) {
   return (
     <>
       <JobBanner label={pdfProgress ?? (zipping ? "Packing evidence ZIP…" : null)} />
-      <div className="surface">
-      <header className="surface-head">
+      <div className="sheet">
+      <header className="sheet-top">
         <div>
-          <p className="surface-eyebrow">Reports</p>
-          <h1 className="surface-title">Performance reports</h1>
-          <p className="surface-detail">Scores, per-second snapshots, violations, and the exam audio, exported from this exam.</p>
+          <h1>Performance reports</h1>
+          <p>Scores, every stored snapshot with its violations, and the exam recordings for the paper you pick.</p>
         </div>
       </header>
-      <div className="surface-toolbar">
-        <select value={examId} onChange={(e) => setExamId(e.target.value)} aria-label="Exam" className="surface-select">
+      <label className="sheet-select">
+        Exam
+        <select value={examId} onChange={(e) => setExamId(e.target.value)} aria-label="Exam">
           {exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          {exams.length === 0 && <option value="">No exams yet — create one first</option>}
+          {exams.length === 0 && <option value="">No exams yet</option>}
         </select>
-        <span className="surface-toolbar-gap" />
+      </label>
+      <div className="sheet-actions">
         <Button onClick={() => void releaseResults()}>{busy ? "Releasing…" : resultsPublished ? "Results released" : "Release results"}</Button>
         <Button onClick={() => void publishAnswerKey()}>{answerKeyPublished ? "Answer key published" : "Publish answer key"}</Button>
         <Button onClick={exportCsv}>Export CSV</Button>
         <Button primary onClick={() => void exportPdf()} disabled={!!pdfProgress}>{pdfProgress ? "Exporting…" : "Export PDF"}</Button>
       </div>
       {pdfProgress && <p role="status" className="sr-only">{pdfProgress}</p>}
-      <div className="mt-8 flex gap-2 border-b border-line pb-3 font-mono text-[10px] uppercase tracking-wider text-soft">
+      <nav className="sheet-tabs" aria-label="Report sections">
         {["Overview", "Item Analysis", "Student Reports", "Trends"].map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)} className={`px-3 py-1.5 hover:text-ink ${activeTab === tab ? "border-b-2 border-forest text-forest pb-3 -mb-[14px]" : ""}`}>{tab}</button>
+          <button key={tab} type="button" onClick={() => setActiveTab(tab)} className={activeTab === tab ? "is-on" : ""}>{tab}</button>
         ))}
-      </div>
+      </nav>
 
       {activeTab === "Overview" && (
         <>
-          <div className="mt-8 grid gap-4 sm:grid-cols-4">
-            <Metric label="Average (Mean)" value={mean != null ? `${mean.toFixed(1)}%` : "—"} detail={`Across ${scores.length} scored attempt(s)`} tone="text-ink"/>
-            <Metric label="Median Score" value={median != null ? `${median.toFixed(1)}%` : "—"} detail={scores.length ? "Middle of the pack" : "No scores yet"} tone="text-forest"/>
-            <Metric label="Standard Dev" value={stdDev != null ? `${stdDev.toFixed(1)}%` : "—"} detail="Score spread" tone="text-amber"/>
-            <Metric label="Highest Score" value={highest != null ? `${highest.toFixed(1)}%` : "—"} detail={submitted.length ? `${submitted.length} submitted` : "No submissions"} tone="text-success"/>
-          </div>
-          <div className="mt-8 border border-line p-6">
-            <div className="flex items-center justify-between">
-              <h2 className="font-serif text-xl font-semibold">Score Distribution</h2>
-              <span className="font-mono text-[10px] text-soft">{scores.length} scored attempt(s)</span>
-            </div>
-            <div className="mt-8 flex h-44 items-end gap-3 border-b border-line px-4">
+          <dl className="sheet-dl">
+            <div><dt>Average across {scores.length} scored attempt{scores.length === 1 ? "" : "s"}</dt><dd>{mean != null ? `${mean.toFixed(1)}%` : "—"}</dd></div>
+            <div><dt>Median</dt><dd>{median != null ? `${median.toFixed(1)}%` : "—"}</dd></div>
+            <div><dt>Spread</dt><dd>{stdDev != null ? `${stdDev.toFixed(1)}%` : "—"}</dd></div>
+            <div><dt>Highest · {submitted.length} submitted</dt><dd>{highest != null ? `${highest.toFixed(1)}%` : "—"}</dd></div>
+          </dl>
+          <section className="sheet-block">
+            <h2>How scores spread</h2>
+            <ul className="sheet-bars">
               {buckets.map((count, i) => (
-                <div key={i} className="group flex flex-1 flex-col items-center gap-2">
-                  <span className="font-mono text-[9px] text-soft">{count || ""}</span>
-                  <div className="w-full bg-forest/40 transition-colors group-hover:bg-forest/80" style={{ height: `${Math.round((count / maxBucket) * 100)}%` }}/>
-                  <span className="font-mono text-[9px] text-soft">{i * 10}</span>
-                </div>
+                <li key={i}>
+                  <span>{i * 10}–{i * 10 + 9}</span>
+                  <i style={{ width: `${Math.round((count / maxBucket) * 100)}%` }} />
+                  <span>{count}</span>
+                </li>
               ))}
-            </div>
-            <p className="mt-4 text-center font-mono text-[10px] text-soft uppercase tracking-widest">Score Brackets (%)</p>
-          </div>
-          {flagged.length > 0 && <div className="mt-6 border border-alert/30 bg-alert/5 p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-alert">Proctoring flags</p><p className="mt-2 text-[13px]">{flagged.length} candidate(s) carry violation flags in this exam — review recordings before finalising marks.</p></div>}
+            </ul>
+          </section>
+          {flagged.length > 0 && <p className="sheet-note">{flagged.length} candidate{flagged.length === 1 ? "" : "s"} have violation flags. Review recordings before you finalise marks.</p>}
         </>
       )}
 
       {activeTab === "Item Analysis" && <QuestionItemAnalysis examId={examId} />}
 
       {activeTab === "Student Reports" && (
-        <div className="mt-8 border border-line bg-paper">
-          <div className="surface-panel-head">
-            <div>
-              <h2>Individual student reports</h2>
-              <p>Each PDF includes every stored per-second snapshot, the violations on that second, and the exam audio files.</p>
-            </div>
-            <div className="surface-toolbar-actions">
-              <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Download evidence ZIP"}</Button>
-              <Button primary onClick={() => void exportPdf(submitted)} disabled={submitted.length === 0 || !!pdfProgress}>Generate all PDFs</Button>
-            </div>
+        <section className="sheet-block">
+          <h2>One report per student</h2>
+          <p>Each PDF includes every stored snapshot, the violations on that second, and a list of the exam recordings.</p>
+          <div className="sheet-actions">
+            <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Download evidence ZIP"}</Button>
+            <Button primary onClick={() => void exportPdf(submitted)} disabled={submitted.length === 0 || !!pdfProgress}>Generate all PDFs</Button>
           </div>
-          <div className="divide-y divide-line">
+          <ul className="sheet-list">
             {submitted.map((a) => (
-              <div key={a.id} className="flex items-center justify-between gap-4 px-5 py-4">
-                <div><p className="text-[13px] font-medium">{a.name}</p><p className="mt-0.5 font-mono text-[10px] text-soft">{a.roll} · {a.answered}/{a.total} answered · score {a.score != null ? `${a.score}%` : "pending"}</p></div>
+              <li key={a.id} className="sheet-row" style={{ cursor: "default" }}>
+                <span className="sheet-row-main">
+                  <strong>{a.name}</strong>
+                  <em>{a.roll} · {a.answered}/{a.total} answered · {a.score != null ? `${a.score}%` : "score pending"}</em>
+                </span>
                 <Button onClick={() => void exportPdf([a])} disabled={!!pdfProgress}>PDF</Button>
-              </div>
+              </li>
             ))}
-            {submitted.length === 0 && <p className="px-5 py-10 text-center text-[12px] text-soft">No submissions for this exam yet.</p>}
-          </div>
-        </div>
+          </ul>
+          {submitted.length === 0 && <p className="sheet-empty">No submissions for this exam yet.</p>}
+        </section>
       )}
 
       {activeTab === "Trends" && <ExamTrends exams={exams} />}

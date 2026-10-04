@@ -5,7 +5,6 @@ import "./teacherSurfaces.css";
 
 type Props = { notify: (message: string) => void; navigate: (path: string) => void };
 
-const inputClass = "mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest";
 const TYPES = ["MCQ", "MSQ", "True / False", "Numerical", "Subjective"];
 const DIFFICULTIES = ["Easy", "Medium", "Hard"];
 const UNITS = ["Trees & Graphs", "Normalization", "Sorting", "OS Scheduling", "Networking", "Databases", "Custom / Other"];
@@ -246,16 +245,15 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
   const isSubj = type === "Subjective";
 
   return (
-    <div className="surface">
-      <header className="surface-head">
+    <div className="sheet">
+      <header className="sheet-top">
         <div>
-          <p className="surface-eyebrow">Question bank / {editId ? `Edit ${editId}` : "New question"}{examId ? ` · ${examId}` : ""}</p>
-          <h1 className="surface-title">{editId ? "Edit question" : "Create a question"}</h1>
-          <p className="surface-detail">Type, prompt, options, and marks save together into the question bank.</p>
+          <h1>{editId ? "Edit question" : "Create a question"}</h1>
+          <p>{examId ? `This question is saved on ${examId}.` : "This question is saved in the general bank."}</p>
         </div>
-        <div className="surface-toolbar-actions">
-          <button type="button" onClick={() => setBulkOpen((o) => !o)} className="q-ghost"><FiUpload /> Bulk upload CSV</button>
-          <button type="button" onClick={() => navigate(exitPath)} className="q-ghost"><FiArrowLeft /> Back</button>
+        <div className="q-links">
+          <button type="button" onClick={() => setBulkOpen((o) => !o)}><FiUpload /> Bulk upload CSV</button>
+          <button type="button" onClick={() => navigate(exitPath)}><FiArrowLeft /> Back</button>
         </div>
       </header>
 
@@ -327,117 +325,93 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
         </section>
       )}
 
-      <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="space-y-6">
-          <section className="border border-line bg-paper p-6">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">1 · Question format</p>
-            <div className="q-types">
-              {TYPES.map((item) => (
-                <button key={item} type="button" onClick={() => setType(item)} className={type === item ? "is-on" : ""}>
-                  {item}
-                </button>
-              ))}
-            </div>
-          </section>
+      <form className="q-form" onSubmit={(e) => { e.preventDefault(); void saveOne(); }}>
+        <label className="q-field">
+          Format
+          <select value={type} onChange={(e) => setType(e.target.value)}>
+            {TYPES.map((item) => <option key={item}>{item}</option>)}
+          </select>
+        </label>
 
-          <section className="border border-line bg-paper p-6 sm:p-8">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">2 · Student content</p>
-            <label className="mt-4 block text-[12px] text-ink-soft">
-              Question title / prompt <span className="text-alert">*</span>
-              <textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={4} placeholder="Write the complete question…" className={`${inputClass} resize-y text-[14px]`} />
-            </label>
+        <label className="q-field">
+          Question
+          <textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={4} placeholder="Write the complete question…" />
+        </label>
 
-            {(isMcq || isMsq) && (
-              <div className="mt-6">
-                <p className="text-[12px] font-medium">{isMsq ? "Options (pick every correct one)" : "Options"}</p>
-                {options.map((opt, i) => {
-                  const picked = isMsq ? correctSet.includes(i) : correct === i;
-                  return (
-                    <div key={i} className={`q-option ${picked ? "is-on" : ""}`}>
-                      <span>Option {String.fromCharCode(65 + i)}</span>
-                      <input value={opt} onChange={(e) => setOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))} placeholder={`Enter option ${String.fromCharCode(65 + i)}`} />
-                      <button
-                        type="button"
-                        onClick={() => (isMsq
-                          ? setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]))
-                          : setCorrect(i))}
-                      >
-                        {picked ? "Correct" : "Mark correct"}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {isTf && (
-              <div className="mt-6 grid grid-cols-2 gap-3">
-                {["True", "False"].map((label, i) => (
-                  <button key={label} type="button" onClick={() => setCorrect(i)} className={`border p-4 text-left text-[13px] ${correct === i ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft"}`}>
-                    {correct === i ? "● " : "○ "}{label}
+        {(isMcq || isMsq) && (
+          <fieldset className="q-field">
+            <legend>{isMsq ? "Options — mark every correct one" : "Options — mark the correct one"}</legend>
+            {options.map((opt, i) => {
+              const picked = isMsq ? correctSet.includes(i) : correct === i;
+              return (
+                <div key={i} className={`q-option-line ${picked ? "is-on" : ""}`}>
+                  <span>{String.fromCharCode(65 + i)}</span>
+                  <input value={opt} onChange={(e) => setOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))} placeholder={`Option ${String.fromCharCode(65 + i)}`} />
+                  <button
+                    type="button"
+                    onClick={() => (isMsq
+                      ? setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]))
+                      : setCorrect(i))}
+                  >
+                    {picked ? "Correct" : "Mark correct"}
                   </button>
-                ))}
-              </div>
-            )}
+                </div>
+              );
+            })}
+          </fieldset>
+        )}
 
-            {isNum && (
-              <div className="mt-6">
-                <label className="block text-[12px] text-ink-soft">
-                  Expected numerical answer
-                  <input value={expected} onChange={(e) => setExpected(e.target.value)} placeholder="e.g. 42 or 3.14" className={inputClass} />
-                </label>
-              </div>
-            )}
+        {isTf && (
+          <div className="q-field">
+            Answer
+            {["True", "False"].map((label, i) => (
+              <button key={label} type="button" onClick={() => setCorrect(i)} className={`q-choice ${correct === i ? "is-on" : ""}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
-            {isSubj && (
-              <div className="mt-6 grid gap-2 sm:grid-cols-3">
-                {([["both", "QR + Answer box"], ["qr", "QR upload only"], ["textbox", "Answer box only"]] as const).map(([mode, label]) => (
-                  <button key={mode} type="button" onClick={() => setSubjectiveMode(mode)} className={`border px-3 py-3 text-[12px] ${subjectiveMode === mode ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft"}`}>
-                    {subjectiveMode === mode ? "● " : "○ "}{label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </section>
+        {isNum && (
+          <label className="q-field">
+            Expected answer
+            <input value={expected} onChange={(e) => setExpected(e.target.value)} placeholder="e.g. 42 or 3.14" />
+          </label>
+        )}
 
-          <section className="border border-line bg-paper p-6 sm:p-8">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">3 · Scoring and organization</p>
-            <div className="mt-5 grid gap-5 sm:grid-cols-2">
-              <label className="block text-[12px] text-ink-soft">
-                Unit
-                <select value={unit} onChange={(e) => setUnit(e.target.value)} className={inputClass}>
-                  {UNITS.map((u) => <option key={u}>{u}</option>)}
-                </select>
-              </label>
-              <label className="block text-[12px] text-ink-soft">
-                Difficulty
-                <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} className={inputClass}>
-                  {DIFFICULTIES.map((d) => <option key={d}>{d}</option>)}
-                </select>
-              </label>
-              <label className="block text-[12px] text-ink-soft">
-                Marks
-                <input type="number" min={0} step={0.5} value={marks} onChange={(e) => setMarks(Number(e.target.value) || 0)} className={inputClass} />
-              </label>
-            </div>
-          </section>
-        </div>
+        {isSubj && (
+          <div className="q-field">
+            How the student answers
+            {([["both", "QR and an answer box"], ["qr", "QR upload only"], ["textbox", "Answer box only"]] as const).map(([mode, label]) => (
+              <button key={mode} type="button" onClick={() => setSubjectiveMode(mode)} className={`q-choice ${subjectiveMode === mode ? "is-on" : ""}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
-        <aside>
-          <section className="border border-line p-5">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Save question</p>
-            <div className="mt-3 space-y-1.5 text-[12px] text-ink-soft">
-              <p><span className="text-ink">Type:</span> {type}{examId ? ` · exam ${examId}` : " · general bank"}</p>
-              <p><span className="text-ink">Difficulty:</span> {difficulty}</p>
-              <p><span className="text-ink">Marks:</span> {marks}</p>
-              <p className="text-[11px]">Saved questions appear in the pool picker on the exam setup page.</p>
-            </div>
-            <button onClick={() => void saveOne()} disabled={saving || !title.trim()} className="mt-4 w-full border border-forest bg-forest py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:cursor-not-allowed disabled:opacity-50">
-              {saving ? "Saving…" : editId ? "Update question" : "Save to question bank"}
-            </button>
-          </section>
-        </aside>
-      </div>
+        <label className="q-field">
+          Unit
+          <select value={unit} onChange={(e) => setUnit(e.target.value)}>
+            {UNITS.map((u) => <option key={u}>{u}</option>)}
+          </select>
+        </label>
+        <label className="q-field">
+          Difficulty
+          <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
+            {DIFFICULTIES.map((d) => <option key={d}>{d}</option>)}
+          </select>
+        </label>
+        <label className="q-field">
+          Marks
+          <input type="number" min={0} step={0.5} value={marks} onChange={(e) => setMarks(Number(e.target.value) || 0)} />
+        </label>
+
+        <button type="submit" disabled={saving || !title.trim()} className="q-save">
+          {saving ? "Saving…" : editId ? "Update question" : "Save to question bank"}
+        </button>
+        <p className="sheet-quiet" style={{ marginTop: 10 }}>{type} · {difficulty} · {marks} mark{marks === 1 ? "" : "s"}</p>
+      </form>
     </div>
   );
 }

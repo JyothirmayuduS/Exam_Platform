@@ -8,7 +8,7 @@ import type { ExamRecord } from "@/shared/data/examApi";
 import { deleteExam, getExamDeletionSafety, type ExamDeletionSafety } from "@/shared/data/examApi";
 import { PageHeading, Button } from "@/features/teacher/pages/TeacherDashboard";
 import { PlusIcon, ArrowRightIcon } from "@/shared/components/ui";
-import { FiGrid, FiList, FiTrash2 } from "react-icons/fi";
+import { FiTrash2 } from "react-icons/fi";
 import CreateTestModal from "@/features/teacher/components/teacher/CreateTestModal";
 import "./teacherSurfaces.css";
 
@@ -46,7 +46,6 @@ export default function TeacherExams({
 }) {
   const [takers, setTakers] = useState<Record<string, number>>({});
   const [filter, setFilter] = useState("All exams");
-  const [view, setView] = useState<"cards" | "list">("cards");
   const [showCreate, setShowCreate] = useState(autoCreate);
   const [deleting, setDeleting] = useState<ExamCard | null>(null);
 
@@ -104,123 +103,70 @@ export default function TeacherExams({
   const drafts = cards.filter((c) => c.state === "Draft").length;
 
   return (
-    <div className="surface">
-      <header className="surface-head">
+    <div className="sheet">
+      <header className="sheet-top">
         <div>
-          <p className="surface-eyebrow">Faculty console / Exams</p>
-          <h1 className="surface-title">My tests</h1>
-          <p className="surface-detail">Every card is one assessment. Open a live test, or continue a draft in the paper builder.</p>
+          <h1>My tests</h1>
+          <p>{live} live, {scheduled} scheduled, {drafts} still in draft.</p>
         </div>
         <Button primary icon={<PlusIcon />} onClick={() => setShowCreate(true)}>Create new test</Button>
       </header>
 
-      <div className="surface-stats surface-stats-3">
-        <button type="button" className="surface-stat" onClick={() => setFilter("Live")}><span>Published</span><strong className="text-forest">{live}</strong><em>Currently live</em></button>
-        <button type="button" className="surface-stat" onClick={() => setFilter("Scheduled")}><span>Scheduled</span><strong className="text-amber">{scheduled}</strong><em>Upcoming assessments</em></button>
-        <button type="button" className="surface-stat" onClick={() => setFilter("Draft")}><span>Drafts</span><strong>{drafts}</strong><em>Need your attention</em></button>
-      </div>
+      <nav className="sheet-filters" aria-label="Filter tests">
+        {[
+          ["All exams", cards.length],
+          ["Live", live],
+          ["Scheduled", scheduled],
+          ["Draft", drafts],
+        ].map(([item, count]) => (
+          <button key={String(item)} type="button" onClick={() => setFilter(String(item))} className={filter === item ? "is-on" : ""}>
+            {item === "Draft" ? "Drafts" : item} {count}
+          </button>
+        ))}
+      </nav>
 
-      <div className="surface-toolbar">
-        <div className="surface-tabs">
-          {["All exams", "Live", "Scheduled", "Draft"].map((item) => (
-            <button key={item} type="button" onClick={() => setFilter(item)} className={filter === item ? "is-on" : ""}>{item}</button>
-          ))}
-        </div>
-        <div className="surface-tabs">
-          <button type="button" onClick={() => setView("cards")} className={view === "cards" ? "is-on" : ""}><FiGrid aria-hidden /> Cards</button>
-          <button type="button" onClick={() => setView("list")} className={view === "list" ? "is-on" : ""}><FiList aria-hidden /> List</button>
-        </div>
-      </div>
-
-      {view === "cards" ? (
-        <div className="test-grid">
-          {filtered.map((exam) => (
-            <article key={exam.id} className="test-card">
-              <div className="test-card-top">
-                <p>{exam.id}</p>
-                <span className={exam.tone}>{exam.state}</span>
-              </div>
-              <h3>{exam.name}</h3>
-              <p className="test-card-batch">{exam.batch}</p>
-              <dl className="test-card-stats">
-                <div><dt>Questions</dt><dd>{exam.questionCount ? String(exam.questionCount) : "—"}</dd></div>
-                <div><dt>Duration</dt><dd>{exam.duration ? `${exam.duration}m` : "—"}</dd></div>
-                <div><dt>Test takers</dt><dd>{exam.takers}</dd></div>
-              </dl>
-              <div className="test-card-actions">
-                <Button
-                  onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
-                  iconRight={<ArrowRightIcon />}
-                  className="min-w-0 flex-1"
-                >
-                  {exam.state === "Draft" ? "Continue setup" : "Open test"}
-                </Button>
-                <button
-                  type="button"
-                  onClick={() => setDeleting(exam)}
-                  aria-label={`Delete ${exam.name}`}
-                  title="Delete this test"
-                  className="test-card-delete"
-                >
-                  <FiTrash2 aria-hidden />
-                </button>
-              </div>
-            </article>
-          ))}
-          {filtered.length === 0 && (
-            <div className="col-span-full border border-dashed border-line-strong p-12 text-center sm:col-span-2 xl:col-span-4">
-              <p className="font-serif text-xl">No tests here yet</p>
-              <p className="mt-2 text-[13px] text-ink-soft">Create your first exam — it will appear as a card here.</p>
-              <button onClick={() => setShowCreate(true)} className="mt-5 border border-forest bg-forest px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
-                Create your first test
-              </button>
-            </div>
-          )}
+      {filtered.length === 0 ? (
+        <div className="sheet-block">
+          <p className="sheet-empty">Nothing in this list.</p>
+          <Button primary onClick={() => setShowCreate(true)}>Create a test</Button>
         </div>
       ) : (
-        <div className="mt-5 overflow-x-auto border border-line bg-paper">
-          <table className="w-full min-w-[760px] text-left text-[13px]">
-            <thead>
-              <tr className="border-b border-line bg-paper-raised font-mono text-[10px] uppercase tracking-wider text-ink-soft">
-                <th className="px-5 py-3">Test</th>
-                <th className="px-5 py-3">Course &amp; batch</th>
-                <th className="px-5 py-3">Questions</th>
-                <th className="px-5 py-3">Duration</th>
-                <th className="px-5 py-3">Test takers</th>
-                <th className="px-5 py-3">Status</th>
-                <th className="px-5 py-3 text-right"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((exam) => (
-                <tr key={exam.id} className="border-b border-line last:border-0 hover:bg-paper-raised">
-                  <td className="px-5 py-4">
-                    <p className="font-medium">{exam.name}</p>
-                    <p className="mt-1 font-mono text-[9px] text-ink-soft">{exam.id}</p>
-                  </td>
-                  <td className="px-5 py-4 text-ink-soft">{exam.batch}</td>
-                  <td className="px-5 py-4">{exam.questionCount}</td>
-                  <td className="px-5 py-4">{exam.duration ? `${exam.duration} min` : "—"}</td>
-                  <td className="px-5 py-4">{exam.takers}</td>
-                  <td className="px-5 py-4"><span className={`font-mono text-[10px] uppercase ${exam.tone}`}>{exam.state}</span></td>
-                  <td className="px-5 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Button size="sm" onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)} iconRight={<ArrowRightIcon />}>{exam.state === "Draft" ? "Continue setup" : "Open"}</Button>
-                      <button
-                        onClick={() => setDeleting(exam)}
-                        aria-label={`Delete ${exam.name}`}
-                        title="Delete this test"
-                        className="border border-line-strong p-2 text-ink-soft transition hover:border-alert hover:bg-alert/10 hover:text-alert"
-                      >
-                        <FiTrash2 aria-hidden />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ul className="sheet-list">
+          {filtered.map((exam) => (
+            <li key={exam.id} className="sheet-row" style={{ cursor: "default" }}>
+              <span className="sheet-row-main">
+                <strong>{exam.name}</strong>
+                <em>
+                  {exam.batch}
+                  {" · "}
+                  {exam.questionCount ? `${exam.questionCount} questions` : "No questions yet"}
+                  {" · "}
+                  {exam.duration ? `${exam.duration} min` : "No duration"}
+                  {" · "}
+                  {exam.takers} sitting
+                </em>
+              </span>
+              <span className={`sheet-status ${exam.tone}`}>{exam.state}</span>
+              <Button
+                size="sm"
+                onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
+                iconRight={<ArrowRightIcon />}
+              >
+                {exam.state === "Draft" ? "Continue" : "Open"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setDeleting(exam)}
+                aria-label={`Delete ${exam.name}`}
+                title="Delete this test"
+                className="q-links"
+                style={{ width: 36, height: 36, justifyContent: "center", color: "inherit" }}
+              >
+                <FiTrash2 aria-hidden />
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
       {showCreate && (
         <CreateTestModal
