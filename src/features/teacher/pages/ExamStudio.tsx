@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FiArrowLeft, FiArrowRight, FiCheck, FiUpload, FiEdit3, FiEye, FiSettings, FiSearch, FiX, FiChevronDown, FiChevronRight, FiClock, FiLock, FiMail } from "react-icons/fi";
 import "./ExamStudio.css";
-import { Button, Badge, NumberField } from "@/shared/components/ui";
+import { Button, NumberField } from "@/shared/components/ui";
 import {
   listExamsForTeacher,
   listQuestionsForExam,
@@ -191,46 +191,46 @@ export default function ExamStudio({
   return (
     <div className="exam-build">
       <header className="exam-build-header">
-        <div className="min-w-0 flex-1">
+        <div className="exam-build-title">
           <Button size="sm" variant="ghost" icon={<FiArrowLeft />} onClick={() => navigate(`/teacher/exams/${examId}`)}>Back to test</Button>
-          <div className="mt-2 flex flex-wrap items-center gap-2 sm:gap-3">
-            <span className="border border-line bg-raised px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-soft">{exam.id}</span>
+          <div className="exam-build-title-row">
+            <span className="shrink-0 border border-line bg-raised px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-soft">{exam.id}</span>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
               aria-label="Test name"
-              className="min-w-0 flex-1 border border-transparent bg-transparent px-1 font-serif text-2xl font-semibold tracking-tight text-ink outline-none transition hover:border-line focus:border-forest sm:min-w-[16rem] sm:text-[1.65rem]"
+              className="border border-transparent bg-transparent px-1 font-serif text-[1.5rem] font-semibold leading-none tracking-tight text-ink outline-none hover:border-line focus:border-forest"
             />
-            <FiEdit3 className="hidden text-soft sm:block" aria-hidden />
+            <FiEdit3 className="shrink-0 text-soft" size={14} aria-hidden />
           </div>
-          <p className="mt-1 text-[12px] text-soft">
+          <p className="mt-2 text-[12px] leading-none text-soft">
             {exam.batch} · {String(s.language ?? "English")} · {String(s.purpose ?? "")} ·{" "}
             <span className={exam.status === "draft" ? "text-amber" : "text-success"}>{exam.status}</span>
           </p>
         </div>
         <div className="exam-build-header-actions">
-          <Button size="md" variant="secondary" onClick={() => void saveAndExit()} disabled={saving} icon={<FiCheck />}>
+          <Button size="sm" variant="secondary" onClick={() => void saveAndExit()} disabled={saving} icon={<FiCheck />}>
             {saving ? "Saving…" : "Save & exit"}
           </Button>
-          <Button size="md" variant="primary" onClick={() => setShareOpen(true)} iconRight={<FiArrowRight />}>
+          <Button size="sm" variant="primary" onClick={() => setShareOpen(true)} iconRight={<FiArrowRight />}>
             Publish &amp; share
           </Button>
         </div>
       </header>
 
       <section className="exam-build-toolbar" aria-label="Add questions">
-        <div className="exam-build-toolbar-label">
+        <div className="exam-build-toolbar-top">
           <label htmlFor="question-bank-search" className="text-[13px] font-medium text-ink">Search and add questions</label>
           <span className="font-mono text-[9px] uppercase tracking-widest text-soft">Question bank</span>
         </div>
-        <div className="relative">
-          <FiSearch className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-soft" aria-hidden />
+        <div className="exam-build-search">
+          <FiSearch className="exam-build-search-icon" size={15} aria-hidden />
           <input
             id="question-bank-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Type a question, ID, unit or the test it came from…"
-            className={`block w-full py-2.5 pl-10 pr-3 text-[13px] ${inputCls}`}
+            className={inputCls}
           />
           {showBankResults && (
             <div className="exam-build-search-panel" onMouseDown={(e) => e.preventDefault()}>
@@ -241,8 +241,8 @@ export default function ExamStudio({
                   <button
                     type="button"
                     key={q.id}
-                    onClick={() => { addToPool(q.id); setSearch(""); setSearchFocused(false); }}
-                    className="flex w-full items-start justify-between gap-3 border-b border-line px-4 py-2.5 text-left transition last:border-0 hover:bg-raised"
+                    onClick={() => { addToPool(q.id); setSearch(""); }}
+                    className="flex w-full items-center justify-between gap-3 border-b border-line px-4 py-2.5 text-left last:border-0 hover:bg-raised"
                   >
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -254,7 +254,7 @@ export default function ExamStudio({
                       </div>
                       <p className="mt-1 line-clamp-2 text-[13px] leading-snug">{q.title}</p>
                     </div>
-                    <span className="shrink-0 self-center border border-forest px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-forest">Add</span>
+                    <span className="shrink-0 border border-forest px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-forest">Add</span>
                   </button>
                 ))
               )}
@@ -262,59 +262,56 @@ export default function ExamStudio({
           )}
         </div>
 
-        <div className="exam-build-toolbar-foot">
-          <div className="exam-build-toolbar-group">
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="exam-build-select">
-              <option value="All">All types</option>
-              <option>MCQ</option><option>MSQ</option><option>Numerical</option><option>True / False</option><option>Subjective</option><option>Coding</option>
-            </select>
-            <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="exam-build-select">
-              <option value="All">All levels</option>
-              <option>Easy</option><option>Medium</option><option>Hard</option>
-            </select>
-            <Button size="md" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>
-              Write new question
+        <div className="exam-build-bar">
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} aria-label="Filter by type" className="exam-build-select">
+            <option value="All">All types</option>
+            <option>MCQ</option><option>MSQ</option><option>Numerical</option><option>True / False</option><option>Subjective</option><option>Coding</option>
+          </select>
+          <select value={diffFilter} onChange={(e) => setDiffFilter(e.target.value)} aria-label="Filter by difficulty" className="exam-build-select">
+            <option value="All">All levels</option>
+            <option>Easy</option><option>Medium</option><option>Hard</option>
+          </select>
+          <Button size="sm" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>
+            Write new question
+          </Button>
+          <Button size="sm" variant="secondary" icon={<FiUpload />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&bulk=1&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>
+            Import CSV
+          </Button>
+          <span className="exam-build-grow" aria-hidden />
+          <label className="exam-build-duration">
+            <span>Duration (min)</span>
+            <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Test duration in minutes" />
+          </label>
+          <Button size="sm" variant="secondary" icon={<FiEye />} onClick={() => setPreviewOpen(true)}>Preview</Button>
+          <div className="exam-build-menu">
+            <Button size="sm" variant="secondary" icon={<FiSettings />} iconRight={<FiChevronDown />} onClick={() => setMenuOpen((o) => !o)}>
+              Advanced options
             </Button>
-            <Button size="md" variant="secondary" icon={<FiUpload />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&bulk=1&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>
-              Import CSV
-            </Button>
-          </div>
-          <div className="exam-build-toolbar-group exam-build-toolbar-group--end">
-            <div className="exam-build-duration">
-              <span className="font-medium text-ink">Duration (min)</span>
-              <NumberField value={duration} onChange={setDuration} min={1} max={600} fallback={duration} aria-label="Test duration in minutes" className={inputCls} />
-            </div>
-            <Button size="md" variant="secondary" icon={<FiEye />} onClick={() => setPreviewOpen(true)}>Preview</Button>
-            <div className="relative">
-              <Button size="md" variant="secondary" icon={<FiSettings />} iconRight={<FiChevronDown />} onClick={() => setMenuOpen((o) => !o)}>
-                Advanced options
-              </Button>
-              {menuOpen && (
-                <>
-                  <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} aria-hidden />
-                  <div className="absolute right-0 top-full z-30 mt-1 w-72 border border-line bg-paper py-1 shadow-xl">
-                    {([
-                      ["test", "Test Options", "Duration, mode, marking, results & calculator"],
-                      ["sections", "Section Options", "Random draw, shuffle, section order & timing"],
-                      ["registration", "Candidate Registration Fields", "What candidates fill in before the test"],
-                    ] as const).map(([key, label, detail]) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => { setMenuOpen(false); setDialog(key); }}
-                        className="flex w-full items-start justify-between gap-3 px-4 py-2.5 text-left transition hover:bg-raised"
-                      >
-                        <span>
-                          <span className="block text-[13px] font-medium">{label}</span>
-                          <span className="mt-0.5 block text-[11px] leading-snug text-soft">{detail}</span>
-                        </span>
-                        <FiChevronRight className="mt-0.5 shrink-0 text-soft" aria-hidden />
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} aria-hidden />
+                <div className="absolute right-0 top-full z-30 mt-1 w-72 border border-line bg-paper py-1 shadow-xl">
+                  {([
+                    ["test", "Test Options", "Duration, mode, marking, results & calculator"],
+                    ["sections", "Section Options", "Random draw, shuffle, section order & timing"],
+                    ["registration", "Candidate Registration Fields", "What candidates fill in before the test"],
+                  ] as const).map(([key, label, detail]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => { setMenuOpen(false); setDialog(key); }}
+                      className="flex w-full items-start justify-between gap-3 px-4 py-2.5 text-left hover:bg-raised"
+                    >
+                      <span>
+                        <span className="block text-[13px] font-medium">{label}</span>
+                        <span className="mt-0.5 block text-[11px] leading-snug text-soft">{detail}</span>
+                      </span>
+                      <FiChevronRight className="mt-0.5 shrink-0 text-soft" aria-hidden />
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -329,36 +326,36 @@ export default function ExamStudio({
       <div className="exam-build-table-wrap">
         <table className="w-full min-w-[820px] text-left text-[13px]">
           <thead>
-            <tr className="border-b border-line bg-raised font-mono text-[10px] uppercase tracking-wider text-soft">
-              <th className="px-3 py-2.5 sm:px-4">Section</th>
-              <th className="px-3 py-2.5 sm:px-4">Question</th>
-              <th className="hidden px-3 py-2.5 md:table-cell sm:px-4">Skill / Unit</th>
-              <th className="hidden px-3 py-2.5 lg:table-cell sm:px-4">Source</th>
-              <th className="px-3 py-2.5 sm:px-4">Level</th>
-              <th className="hidden px-3 py-2.5 sm:table-cell sm:px-4">Q-Type</th>
-              <th className="px-3 py-2.5 text-right sm:px-4">Marks</th>
-              <th className="w-28 px-2 py-2.5 text-right sm:px-4" />
+            <tr>
+              <th>Section</th>
+              <th>Question</th>
+              <th className="hidden md:table-cell">Skill / Unit</th>
+              <th className="hidden lg:table-cell">Source</th>
+              <th>Level</th>
+              <th className="hidden sm:table-cell">Q-Type</th>
+              <th className="text-right">Marks</th>
+              <th className="w-24 text-right" />
             </tr>
           </thead>
           <tbody>
             {questions.map((q) => (
-              <tr key={q.id} className="group border-b border-line last:border-0 hover:bg-raised/50">
-                <td className="px-3 py-2.5 sm:px-4">
+              <tr key={q.id} className="border-b border-line last:border-0 hover:bg-raised/50">
+                <td>
                   <span className="inline-block bg-forest/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-forest">{TYPE_LABEL[q.type] ?? q.type}</span>
                 </td>
-                <td className="max-w-[360px] px-3 py-2.5 sm:px-4">
+                <td className="max-w-[360px]">
                   <span className="font-mono text-[10px] text-soft">{q.id}</span>
                   <p className="mt-0.5 line-clamp-2">{q.title}</p>
                 </td>
-                <td className="hidden px-3 py-2.5 text-soft md:table-cell sm:px-4">{q.unit || "General"}</td>
-                <td className="hidden px-3 py-2.5 font-mono text-[10px] uppercase text-soft lg:table-cell sm:px-4">Self</td>
-                <td className="px-3 py-2.5 sm:px-4">
+                <td className="hidden text-soft md:table-cell">{q.unit || "General"}</td>
+                <td className="hidden font-mono text-[10px] uppercase text-soft lg:table-cell">Self</td>
+                <td>
                   <span className={`font-mono text-[10px] ${q.difficulty === "Easy" ? "text-success" : q.difficulty === "Hard" ? "text-alert" : "text-amber"}`}>{q.difficulty ?? "Medium"}</span>
                 </td>
-                <td className="hidden px-3 py-2.5 font-mono text-[10px] text-soft sm:table-cell sm:px-4">{q.type}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums sm:px-4">{q.marks || 1}</td>
-                <td className="px-2 py-2.5 text-right sm:px-4">
-                  <div className="flex items-center justify-end gap-0.5">
+                <td className="hidden font-mono text-[10px] text-soft sm:table-cell">{q.type}</td>
+                <td className="text-right tabular-nums">{q.marks || 1}</td>
+                <td className="text-right">
+                  <div className="flex items-center justify-end gap-1">
                     <Button size="sm" variant="ghost" icon={<FiEdit3 />} onClick={() => navigate(`/teacher/questions/new?exam=${examId}&edit=${q.id}&back=${encodeURIComponent(`/teacher/exams/${examId}/build`)}`)}>Edit</Button>
                     <Button size="sm" variant="ghost" aria-label={`Remove ${q.id}`} className="text-alert hover:bg-alert/10" onClick={() => removeFromPool(q.id)} icon={<FiX />} />
                   </div>
@@ -367,9 +364,9 @@ export default function ExamStudio({
             ))}
             {questions.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
-                  <p className="font-serif text-xl text-forest">Your paper is empty</p>
-                  <p className="mx-auto mt-2 max-w-md text-[12px] text-soft">Search your question bank above, write a new question, or import a CSV. Section rows appear here as you add them.</p>
+                <td colSpan={8} className="py-10 text-center">
+                  <p className="font-serif text-lg text-forest">Your paper is empty</p>
+                  <p className="mx-auto mt-1.5 max-w-md text-[12px] text-soft">Search your question bank above, write a new question, or import a CSV. Section rows appear here as you add them.</p>
                 </td>
               </tr>
             )}
@@ -449,9 +446,11 @@ export default function ExamStudio({
 function BuildMetric({ value, label, detail, highlight }: { value: string; label: string; detail: string; highlight?: boolean }) {
   return (
     <div className="exam-build-metric">
-      <p className={`exam-build-metric-value ${highlight ? "text-forest" : "text-ink"}`}>{value}</p>
-      <p className="exam-build-metric-label">{label}</p>
-      <p className="exam-build-metric-detail" title={detail}>{detail}</p>
+      <p className={`exam-build-metric-value ${highlight ? "is-accent" : ""}`}>{value}</p>
+      <div className="exam-build-metric-copy">
+        <p className="exam-build-metric-label">{label}</p>
+        <p className="exam-build-metric-detail" title={detail}>{detail}</p>
+      </div>
     </div>
   );
 }
