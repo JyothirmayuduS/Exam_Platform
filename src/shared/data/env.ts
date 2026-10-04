@@ -12,10 +12,53 @@ const placeholder = (v: string) =>
   v.includes("PASTE_YOUR") ||
   v === "your-anon-public-key";
 
+/**
+ * Normalize a LiveKit server URL for `Room.connect`.
+ * Accepts `wss://`, `ws://`, or `https://`/`http://` (rewritten to ws), and
+ * host-only values like `exam.livekit.cloud` (prefixed with `wss://`).
+ * Returns "" when the value is empty, a pull placeholder, or unusable.
+ */
+export function normalizeLivekitUrl(raw: string | null | undefined): string {
+  let v = String(raw ?? "").trim().replace(/^["']|["']$/g, "");
+  if (!v) return "";
+  if (/^\[.+\]$/.test(v) || v.toLowerCase() === "sensitive") return "";
+  if (v.includes("your-project") || v.includes("YOUR-PROJECT") || v.includes("PASTE_YOUR")) return "";
+  if (/^https:\/\//i.test(v)) v = `wss://${v.slice("https://".length)}`;
+  else if (/^http:\/\//i.test(v)) v = `ws://${v.slice("http://".length)}`;
+  else if (!/^wss?:\/\//i.test(v)) {
+    // Host-only LiveKit Cloud URLs are common in dashboards — coerce them.
+    if (/^[A-Za-z0-9.-]+\.livekit\.cloud\/?$/i.test(v)) v = `wss://${v.replace(/\/$/, "")}`;
+    else return "";
+  }
+  try {
+    const u = new URL(v);
+    if (u.protocol !== "wss:" && u.protocol !== "ws:") return "";
+    if (!u.hostname) return "";
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Prefer the Edge Function's LIVEKIT_URL when it is a valid ws(s) URL; otherwise
+ * fall back to the Vite build-time URL. Prevents a bad/empty server secret from
+ * overriding a good client config (the "Failed to construct 'URL'" failure mode).
+ */
+export function resolveLivekitUrl(...candidates: Array<string | null | undefined>): string {
+  for (const c of candidates) {
+    const n = normalizeLivekitUrl(c);
+    if (n) return n;
+  }
+  return "";
+}
+
+const rawLivekit = import.meta.env.VITE_LIVEKIT_URL ?? "";
+
 export const env = {
   supabaseUrl: rawUrl,
   supabaseAnonKey: rawKey,
-  livekitUrl: import.meta.env.VITE_LIVEKIT_URL ?? "",
+  livekitUrl: normalizeLivekitUrl(rawLivekit),
   // An empty or non-absolute VITE_EXAM_ENTRY_PATH is treated as unset — see
   // the same normalisation in main.tsx. Accepting "" here silently routed
   // deep links to a bare "?examId=…" relative path.
@@ -51,5 +94,4 @@ export const env = {
 export const supabaseConfigured = !placeholder(rawUrl) && !placeholder(rawKey);
 
 /** True when a LiveKit server URL is set (token still minted server-side). */
-export const livekitConfigured =
-  !!env.livekitUrl && !env.livekitUrl.includes("your-project");
+export const livekitConfigured = !!env.livekitUrl;

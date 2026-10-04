@@ -10,7 +10,7 @@
 // fails, so the console can show the real reason instead of a silent blank wall.
 
 import { Room, RoomEvent } from "livekit-client";
-import { env, livekitConfigured } from "@/shared/data/env";
+import { env, livekitConfigured, resolveLivekitUrl } from "@/shared/data/env";
 import { getSupabase } from "@/shared/data/supabase";
 
 export type ViewerState = "connecting" | "connected" | "reconnecting" | "disconnected";
@@ -60,9 +60,15 @@ async function fetchViewerToken(
     }
     throw new Error(`LiveKit token failed — ${detail}`);
   }
+  const url = resolveLivekitUrl(data.url as string | undefined, env.livekitUrl);
+  if (!url) {
+    throw new Error(
+      "LiveKit URL is invalid — set LIVEKIT_URL (Supabase secret) and VITE_LIVEKIT_URL to a wss:// host, then redeploy.",
+    );
+  }
   return {
     token: data.token as string,
-    url: (data.url as string) || env.livekitUrl,
+    url,
     identity: (data.identity as string) ?? "proctor",
   };
 }

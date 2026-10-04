@@ -13,7 +13,7 @@ import { Room, RoomEvent, createLocalTracks } from "livekit-client";
 // The exact track type createLocalTracks returns — derived so we never drift
 // from whatever livekit-client exports for the installed version.
 type CreatedMicTrack = Awaited<ReturnType<typeof createLocalTracks>>[number];
-import { env, livekitConfigured } from "@/shared/data/env";
+import { env, livekitConfigured, resolveLivekitUrl } from "@/shared/data/env";
 import { getSupabase } from "@/shared/data/supabase";
 
 /** Build the per-candidate announcement room, sanitized for LiveKit. */
@@ -26,7 +26,9 @@ async function mintVoiceToken(room: string): Promise<{ token: string; url: strin
   if (!db) return null;
   const { data, error } = await db.functions.invoke("livekit-token", { body: { room } });
   if (error || !data?.token) return null;
-  return { token: data.token as string, url: (data.url as string) || env.livekitUrl };
+  const url = resolveLivekitUrl(data.url as string | undefined, env.livekitUrl);
+  if (!url) return null;
+  return { token: data.token as string, url };
 }
 
 // ── Staff side: push-to-talk broadcast ───────────────────────────────────────

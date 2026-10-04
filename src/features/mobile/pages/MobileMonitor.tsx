@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Room, RoomEvent, Track } from "livekit-client";
+import { env, resolveLivekitUrl } from "@/shared/data/env";
 import {
   validateMonitorToken,
   sendMonitorHeartbeat,
@@ -122,7 +123,9 @@ export default function MobileMonitor() {
           stopSnapshotFallback();
         });
 
-      await room.connect(data.url as string, data.token as string);
+      const livekitUrl = resolveLivekitUrl(data.url as string | undefined, env.livekitUrl);
+      if (!livekitUrl) throw new Error("LiveKit URL is invalid — set LIVEKIT_URL / VITE_LIVEKIT_URL to a wss:// host");
+      await room.connect(livekitUrl, data.token as string);
 
       if (camTrackRef.current) {
         const clone = camTrackRef.current.clone();

@@ -10,7 +10,7 @@
 // a local-only camera preview so the exam UI still works in the prototype.
 
 import { Room, RoomEvent, createLocalTracks } from "livekit-client";
-import { env, livekitConfigured } from "@/shared/data/env";
+import { env, livekitConfigured, resolveLivekitUrl } from "@/shared/data/env";
 import { getSupabase } from "@/shared/data/supabase";
 
 export type ProctorState = "connecting" | "connected" | "reconnecting" | "disconnected" | "local-only";
@@ -32,7 +32,9 @@ export async function fetchProctorToken(
     body: { room, identity, canPublish: true, canSubscribe: false },
   });
   if (error || !data?.token) return null;
-  return { token: data.token as string, url: (data.url as string) || env.livekitUrl };
+  const url = resolveLivekitUrl(data.url as string | undefined, env.livekitUrl);
+  if (!url) return null;
+  return { token: data.token as string, url };
 }
 
 /**

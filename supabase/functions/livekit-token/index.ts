@@ -16,10 +16,11 @@ Deno.serve(async (req: Request) => {
 
   const apiKey = Deno.env.get("LIVEKIT_API_KEY");
   const apiSecret = Deno.env.get("LIVEKIT_API_SECRET");
-  const url = Deno.env.get("LIVEKIT_URL") ?? "";
+  const url = normalizeLivekitUrl(Deno.env.get("LIVEKIT_URL") ?? "");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   if (!apiKey || !apiSecret) return json({ error: "LiveKit secrets not configured" }, 500);
+  if (!url) return json({ error: "LIVEKIT_URL is missing or invalid — set a wss:// LiveKit host" }, 500);
   if (!supabaseUrl || !anonKey) return json({ error: "Supabase env not configured" }, 500);
 
   let body: Record<string, unknown> = {};
@@ -223,6 +224,25 @@ function json(payload: unknown, status = 200): Response {
     status,
     headers: { ...CORS, "Content-Type": "application/json" },
   });
+}
+
+/** Coerce dashboard / https LiveKit hosts into a connectable ws(s) URL. */
+function normalizeLivekitUrl(raw: string): string {
+  let v = raw.trim().replace(/^["']|["']$/g, "");
+  if (!v) return "";
+  if (/^https:\/\//i.test(v)) v = `wss://${v.slice("https://".length)}`;
+  else if (/^http:\/\//i.test(v)) v = `ws://${v.slice("http://".length)}`;
+  else if (!/^wss?:\/\//i.test(v)) {
+    if (/^[A-Za-z0-9.-]+\.livekit\.cloud\/?$/i.test(v)) v = `wss://${v.replace(/\/$/, "")}`;
+    else return "";
+  }
+  try {
+    const u = new URL(v);
+    if ((u.protocol !== "wss:" && u.protocol !== "ws:") || !u.hostname) return "";
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
 }
 
 /** SHA-256 hex of the raw monitor token — matches what mobile-monitor-session stores. */
