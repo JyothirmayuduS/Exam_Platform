@@ -1712,8 +1712,7 @@ function StudentExamSession() {
               <ExamTools />
             </div>
           )}
-        </aside>
-      </div>
+        </div>
       </div>
       {showShortcuts && (
         <div className="fixed bottom-4 right-4 z-[65] w-full max-w-sm border border-line bg-paper p-4 text-[12px] shadow-xl">
@@ -1735,6 +1734,7 @@ function StudentExamSession() {
           void doSubmit();
         }}
       />
+      </div>
     </div>
   );
 }
