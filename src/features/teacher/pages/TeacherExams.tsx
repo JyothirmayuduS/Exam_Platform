@@ -8,9 +8,8 @@ import type { ExamRecord } from "@/shared/data/examApi";
 import { deleteExam, getExamDeletionSafety, type ExamDeletionSafety } from "@/shared/data/examApi";
 import { PageHeading, Button } from "@/features/teacher/pages/TeacherDashboard";
 import { PlusIcon, ArrowRightIcon } from "@/shared/components/ui";
-import { FiTrash2 } from "react-icons/fi";
+import { FiGrid, FiList, FiTrash2 } from "react-icons/fi";
 import CreateTestModal from "@/features/teacher/components/teacher/CreateTestModal";
-import "./teacherSurfaces.css";
 
 type ExamCard = {
   id: string;
@@ -46,6 +45,7 @@ export default function TeacherExams({
 }) {
   const [takers, setTakers] = useState<Record<string, number>>({});
   const [filter, setFilter] = useState("All exams");
+  const [view, setView] = useState<"cards" | "list">("cards");
   const [showCreate, setShowCreate] = useState(autoCreate);
   const [deleting, setDeleting] = useState<ExamCard | null>(null);
 
@@ -103,69 +103,127 @@ export default function TeacherExams({
   const drafts = cards.filter((c) => c.state === "Draft").length;
 
   return (
-    <div className="desk">
-      <header className="desk-hello">
-        <div>
-          <h1>My tests</h1>
-          <p>{live} live, {scheduled} scheduled, {drafts} still in draft.</p>
+    <div>
+      <PageHeading
+        eyebrow="Faculty console / Exams"
+        title="My tests"
+        detail="Create exam papers, add questions, set schedules, and publish — every test card below is a live assessment."
+        action={<Button primary icon={<PlusIcon />} onClick={() => setShowCreate(true)}>Create new test</Button>}
+      />
+
+      <div className="mt-8 grid gap-4 sm:grid-cols-3">
+        <MiniStat label="Published" value={String(live)} detail="Currently live" tone="text-forest" onClick={() => setFilter("Live")} />
+        <MiniStat label="Scheduled" value={String(scheduled)} detail="Upcoming assessments" tone="text-amber" onClick={() => setFilter("Scheduled")} />
+        <MiniStat label="Drafts" value={String(drafts)} detail="Need your attention" tone="text-ink" onClick={() => setFilter("Draft")} />
+      </div>
+
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-1 border border-line bg-paper-raised p-1">
+          {["All exams", "Live", "Scheduled", "Draft"].map((item) => (
+            <button key={item} onClick={() => setFilter(item)} className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider ${filter === item ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}>
+              {item}
+            </button>
+          ))}
         </div>
-        <Button primary icon={<PlusIcon />} onClick={() => setShowCreate(true)}>Create new test</Button>
-      </header>
+        <div className="flex border border-line bg-paper-raised p-1">
+          <button onClick={() => setView("cards")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${view === "cards" ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}><FiGrid aria-hidden /> Cards</button>
+          <button onClick={() => setView("list")} className={`inline-flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${view === "list" ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}><FiList aria-hidden /> List</button>
+        </div>
+      </div>
 
-      <nav className="desk-filters" aria-label="Filter tests">
-        {[
-          ["All exams", cards.length],
-          ["Live", live],
-          ["Scheduled", scheduled],
-          ["Draft", drafts],
-        ].map(([item, count]) => (
-          <button key={String(item)} type="button" onClick={() => setFilter(String(item))} className={filter === item ? "is-on" : ""}>
-            {item === "Draft" ? "Drafts" : item} {count}
-          </button>
-        ))}
-      </nav>
-
-      {filtered.length === 0 ? (
-        <div>
-          <p className="desk-empty">Nothing in this view. Create a test and it will appear as a card.</p>
-          <div className="desk-actions">
-            <Button primary onClick={() => setShowCreate(true)}>Create a test</Button>
-          </div>
+      {view === "cards" ? (
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {filtered.map((exam) => (
+            <div key={exam.id} className="group relative flex flex-col border border-line bg-paper transition hover:-translate-y-0.5 hover:border-forest hover:shadow-md">
+              {/* dog-ear */}
+              <span className="absolute right-0 top-0 h-0 w-0 border-l-[22px] border-t-[22px] border-l-paper border-t-line" />
+              <div className="px-5 pt-5">
+                <div className="flex items-start justify-between gap-3 pr-3">
+                  <p className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">{exam.id}</p>
+                  <span className={`font-mono text-[9px] uppercase tracking-wider ${exam.tone}`}>{exam.state}</span>
+                </div>
+                <h3 className="mt-3 font-serif text-lg font-semibold leading-snug group-hover:text-forest">{exam.name}</h3>
+                <p className="mt-1 text-[11px] text-ink-soft">{exam.batch}</p>
+              </div>
+              <div className="mt-6 grid grid-cols-3 border-t border-line px-5 py-4">
+                <CardStat label="Questions" value={exam.questionCount ? String(exam.questionCount) : "—"} />
+                <CardStat label="Duration" value={exam.duration ? `${exam.duration}m` : "—"} />
+                <CardStat label="Test takers" value={String(exam.takers)} />
+              </div>
+              <div className="mt-auto border-t border-line p-3">
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
+                    iconRight={<ArrowRightIcon />}
+                    className="min-w-0 flex-1"
+                  >
+                    {exam.state === "Draft" ? "Continue setup" : "Open test"}
+                  </Button>
+                  <button
+                    onClick={() => setDeleting(exam)}
+                    aria-label={`Delete ${exam.name}`}
+                    title="Delete this test"
+                    className="shrink-0 border border-line-strong p-2.5 text-ink-soft transition hover:border-alert hover:bg-alert/10 hover:text-alert"
+                  >
+                    <FiTrash2 aria-hidden />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {filtered.length === 0 && (
+            <div className="col-span-full border border-dashed border-line-strong p-12 text-center sm:col-span-2 xl:col-span-4">
+              <p className="font-serif text-xl">No tests here yet</p>
+              <p className="mt-2 text-[13px] text-ink-soft">Create your first exam — it will appear as a card here.</p>
+              <button onClick={() => setShowCreate(true)} className="mt-5 border border-forest bg-forest px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
+                Create your first test
+              </button>
+            </div>
+          )}
         </div>
       ) : (
-        <div className="desk-cards">
-          {filtered.map((exam) => (
-            <article key={exam.id} className="desk-card" data-state={exam.state}>
-              <div className="desk-card-top">
-                <h3>{exam.name}</h3>
-                <span className={`desk-status ${exam.tone}`}>{exam.state}</span>
-              </div>
-              <p>{exam.batch}</p>
-              <p>
-                {exam.questionCount ? `${exam.questionCount} questions` : "No questions yet"}
-                {" · "}
-                {exam.duration ? `${exam.duration} min` : "Duration not set"}
-                {" · "}
-                {exam.takers} sitting
-              </p>
-              <div className="desk-card-actions">
-                <Button
-                  onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)}
-                  iconRight={<ArrowRightIcon />}
-                >
-                  {exam.state === "Draft" ? "Continue setup" : "Open test"}
-                </Button>
-                <button
-                  type="button"
-                  onClick={() => setDeleting(exam)}
-                  aria-label={`Delete ${exam.name}`}
-                  className="desk-icon"
-                >
-                  <FiTrash2 aria-hidden />
-                </button>
-              </div>
-            </article>
-          ))}
+        <div className="mt-5 overflow-x-auto border border-line bg-paper">
+          <table className="w-full min-w-[760px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-line bg-paper-raised font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                <th className="px-5 py-3">Test</th>
+                <th className="px-5 py-3">Course &amp; batch</th>
+                <th className="px-5 py-3">Questions</th>
+                <th className="px-5 py-3">Duration</th>
+                <th className="px-5 py-3">Test takers</th>
+                <th className="px-5 py-3">Status</th>
+                <th className="px-5 py-3 text-right"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((exam) => (
+                <tr key={exam.id} className="border-b border-line last:border-0 hover:bg-paper-raised">
+                  <td className="px-5 py-4">
+                    <p className="font-medium">{exam.name}</p>
+                    <p className="mt-1 font-mono text-[9px] text-ink-soft">{exam.id}</p>
+                  </td>
+                  <td className="px-5 py-4 text-ink-soft">{exam.batch}</td>
+                  <td className="px-5 py-4">{exam.questionCount}</td>
+                  <td className="px-5 py-4">{exam.duration ? `${exam.duration} min` : "—"}</td>
+                  <td className="px-5 py-4">{exam.takers}</td>
+                  <td className="px-5 py-4"><span className={`font-mono text-[10px] uppercase ${exam.tone}`}>{exam.state}</span></td>
+                  <td className="px-5 py-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button size="sm" onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)} iconRight={<ArrowRightIcon />}>{exam.state === "Draft" ? "Continue setup" : "Open"}</Button>
+                      <button
+                        onClick={() => setDeleting(exam)}
+                        aria-label={`Delete ${exam.name}`}
+                        title="Delete this test"
+                        className="border border-line-strong p-2 text-ink-soft transition hover:border-alert hover:bg-alert/10 hover:text-alert"
+                      >
+                        <FiTrash2 aria-hidden />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       {showCreate && (

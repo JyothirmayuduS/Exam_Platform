@@ -4,7 +4,6 @@ import { FiUpload, FiCheck } from "react-icons/fi";
 import { useLocation, useNavigate } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
 import QuestionEditorV4 from "@/features/teacher/pages/QuestionEditorV4";
-import "./teacherSurfaces.css";
 import ExaminerDashboard from "@/features/teacher/pages/ExaminerDashboard";
 import ExamStudio from "@/features/teacher/pages/ExamStudio";
 import TeacherExams from "@/features/teacher/pages/TeacherExams";
@@ -152,66 +151,13 @@ export function Button({ children, onClick, primary = false, disabled = false, i
 function Metric({ label, value, detail, tone, onClick }: { label: string; value: string; detail: string; tone: string; onClick?: () => void }) { return <div onClick={onClick} className={`border border-line bg-raised p-5 ${onClick ? "cursor-pointer hover:border-forest" : ""}`}><p className="font-mono text-[10px] uppercase tracking-widest text-soft">{label}</p><p className={`mt-2 font-serif text-3xl ${tone}`}>{value}</p><p className="mt-1 text-[12px] text-soft">{detail}</p></div>; }
 function Overview({ notify, navigate, examsList, loading, avgScore, scoredCount, stats }: { notify: (s: string) => void; navigate: (s: string) => void; examsList: any[]; loading: boolean; avgScore: string | null; scoredCount: number; stats: { live: number, submitted: number, flagged: number } }) {
   const { profile } = useCurrentProfile();
-  const first = profile?.full_name?.split(" ")[0] ?? "Faculty";
-  return (
-    <div className="desk">
-      <header className="desk-hello">
-        <div>
-          <h1>Good morning, {first}.</h1>
-          <p>Who is sitting, what still needs a mark, and which paper to open.</p>
-        </div>
-        <Button primary icon={<PlusIcon />} onClick={() => navigate("/teacher/exams/new")}>New exam</Button>
-      </header>
-
-      <button type="button" className="desk-hero" onClick={() => navigate("/teacher/submissions")}>
-        <span>
-          <span>Sitting right now</span>
-          <span style={{ marginTop: 8, opacity: 0.8 }}>Open the live list</span>
-        </span>
-        <strong>{stats.live}</strong>
-      </button>
-
-      <div className="desk-tasks">
-        <button type="button" className="desk-task" data-tone="alert" onClick={() => navigate("/teacher/submissions")}>
-          <strong>{stats.flagged}</strong>
-          <span>Flagged submissions</span>
-          <em>Review the recordings</em>
-        </button>
-        <button type="button" className="desk-task" data-tone="amber" onClick={() => navigate("/teacher/evaluate")}>
-          <strong>{stats.submitted}</strong>
-          <span>Answers to grade</span>
-          <em>Subjective work still open</em>
-        </button>
-        <button type="button" className="desk-task" data-tone="forest" onClick={() => navigate("/teacher/reports")}>
-          <strong>{avgScore != null ? `${avgScore}%` : "—"}</strong>
-          <span>Average score</span>
-          <em>{avgScore != null ? `${scoredCount} scored attempts` : "No scored attempts yet"}</em>
-        </button>
-      </div>
-
-      <section>
-        <div className="desk-section">
-          <h2>Papers on the desk</h2>
-          <button type="button" className="desk-link" onClick={() => navigate("/teacher/exams")}>All exams</button>
-        </div>
-        {loading ? <p className="desk-empty">Loading exams…</p> : examsList.length === 0 ? <p className="desk-empty">No exams yet. Create one and it will sit here.</p> : (
-          <div className="desk-cards">
-            {examsList.slice(0, 6).map((exam) => (
-              <button key={exam.id} type="button" className="desk-card" data-state={exam.state} onClick={() => navigate(`/teacher/exams/${exam.id}`)} style={{ cursor: "pointer", textAlign: "left" }}>
-                <span className="desk-card-top">
-                  <h3>{exam.name}</h3>
-                  <span className={`desk-status ${exam.tone}`}>{exam.state}</span>
-                </span>
-                <p>{exam.batch}</p>
-                <p>{exam.count}</p>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
-    </div>
-  );
+  return <><PageHeading eyebrow="Overview" title={`Good morning, ${profile?.full_name?.split(' ')[0] ?? 'Faculty'}.`} detail="Here is what needs your attention today." action={<Button primary icon={<PlusIcon />} onClick={() => navigate("/teacher/exams/new")}>New exam</Button>} /><div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Live candidates" value={String(stats.live)} detail="Currently active" tone="text-alert" onClick={() => navigate("/teacher/submissions")}/><Metric label="Needs review" value={String(stats.submitted)} detail={`${stats.flagged} flagged`} tone="text-amber" onClick={() => navigate("/teacher/evaluate")}/><Metric label="My questions" value={String(examsList.reduce((acc, e) => acc + (parseInt(e.count) || 0), 0))} detail="Questions across exams" tone="text-forest" onClick={() => navigate("/teacher/bank")}/><Metric label="Avg. score" value={avgScore != null ? `${avgScore}%` : "—"} detail={avgScore != null ? `Across ${scoredCount} scored attempt(s)` : "No scored attempts yet"} tone="text-ink" onClick={() => navigate("/teacher/reports")}/></div><div className="mt-9 grid gap-8 xl:grid-cols-[1fr_340px]"><section><div className="flex items-center justify-between"><h2 className="font-serif text-xl font-semibold">Exam activity</h2><button onClick={() => navigate("/teacher/exams")} className="font-mono text-[10px] uppercase tracking-wider text-soft hover:text-ink">Manage exams /</button></div><div className="mt-3 space-y-2">{loading ? <div className="p-5 text-center text-[12px] text-soft">Loading...</div> : examsList.length === 0 ? <div className="p-5 text-center text-[12px] text-soft">No exams found.</div> : examsList.slice(0, 5).map((exam) => <div key={exam.id} className="border border-line bg-paper p-5"><div className="flex flex-col justify-between gap-3 sm:flex-row"><div><p className="font-serif text-[16px] font-medium">{exam.name}</p><p className="mt-1 text-[12px] text-soft">{exam.batch}</p></div><span className={`font-mono text-[10px] uppercase tracking-wider ${exam.tone}`}>{exam.state}</span></div><div className="mt-5 flex items-center gap-4"><div className="h-1.5 flex-1 bg-line"><div className="h-full bg-forest" style={{ width: `${exam.progress}%` }}/></div><span className="min-w-[110px] text-right font-mono text-[10px] text-soft">{exam.count}</span></div></div>)}</div></section><aside><div className="flex items-center justify-between"><h2 className="font-serif text-xl font-semibold">Action queue</h2><span className="rounded-none bg-ink px-2 py-0.5 font-mono text-[9px] text-paper">{stats.flagged + stats.submitted}</span></div><div className="mt-3 divide-y divide-line border border-line">{[{ label: "Review flagged submissions", count: `${stats.flagged} pending`, to: "/teacher/submissions" }, { label: "Grade subjective answers", count: `${stats.submitted} remaining`, to: "/teacher/evaluate" }, { label: "Open performance reports", count: "Analytics", to: "/teacher/reports" }].map((item) => <button key={item.label} onClick={() => navigate(item.to)} className="flex w-full items-center justify-between gap-4 bg-raised p-4 text-left hover:bg-paper"><span className="text-[13px]">{item.label}</span><span className="whitespace-nowrap font-mono text-[10px] text-amber">{item.count} /</span></button>)}</div></aside></div></>;
 }
+
+
+
+
+
 
 function ExamWorkspace({ notify, navigate, examId, examsList }: { notify: (s: string) => void; navigate: (s: string) => void; examId: string; examsList: any[] }) {
   const exam = examsList.find(e => e.id === examId);
@@ -524,95 +470,78 @@ function Reports({ notify }: { notify: (s: string) => void }) {
   return (
     <>
       <JobBanner label={pdfProgress ?? (zipping ? "Packing evidence ZIP…" : null)} />
-      <div className="desk">
-      <header className="desk-hello">
-        <div>
-          <h1>Performance reports</h1>
-          <p>Scores for the paper you pick. Each PDF keeps every snapshot, the violations on that second, and the recording list.</p>
-        </div>
-      </header>
-      <section className="desk-panel">
-        <label className="desk-select">
-          Exam
-          <select value={examId} onChange={(e) => setExamId(e.target.value)} aria-label="Exam">
+      <PageHeading eyebrow="Reports" title="Performance reports" detail="Live stats, exports, and result publishing — straight from the database." action={
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={examId} onChange={(e) => setExamId(e.target.value)} className="border border-line bg-paper px-2 py-2.5 font-mono text-[10px] uppercase tracking-wider text-soft">
             {exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-            {exams.length === 0 && <option value="">No exams yet</option>}
+            {exams.length === 0 && <option value="">No exams yet — create one first</option>}
           </select>
-        </label>
-        <div className="desk-actions">
-          <Button onClick={() => void releaseResults()}>{busy ? "Releasing…" : resultsPublished ? "Results released" : "Release results"}</Button>
-          <Button onClick={() => void publishAnswerKey()}>{answerKeyPublished ? "Answer key published" : "Publish answer key"}</Button>
+          <Button onClick={() => void releaseResults()}>{busy ? "Releasing…" : resultsPublished ? "✓ Results Released" : "Release Results"}</Button>
+          <Button onClick={() => void publishAnswerKey()}>{answerKeyPublished ? "✓ Answer Key Published" : "Publish Answer Key"}</Button>
+          <Button onClick={() => void exportPdf()} disabled={!!pdfProgress}>{pdfProgress ? "Exporting…" : "Export PDF"}</Button>
           <Button onClick={exportCsv}>Export CSV</Button>
-          <Button primary onClick={() => void exportPdf()} disabled={!!pdfProgress}>{pdfProgress ? "Exporting…" : "Export PDF"}</Button>
         </div>
-      </section>
+      } />
       {pdfProgress && <p role="status" className="sr-only">{pdfProgress}</p>}
-      <nav className="desk-tabs" aria-label="Report sections">
+      <div className="mt-8 flex gap-2 border-b border-line pb-3 font-mono text-[10px] uppercase tracking-wider text-soft">
         {["Overview", "Item Analysis", "Student Reports", "Trends"].map(tab => (
-          <button key={tab} type="button" onClick={() => setActiveTab(tab)} className={activeTab === tab ? "is-on" : ""}>{tab}</button>
+          <button key={tab} onClick={() => setActiveTab(tab)} className={`px-3 py-1.5 hover:text-ink ${activeTab === tab ? "border-b-2 border-forest text-forest pb-3 -mb-[14px]" : ""}`}>{tab}</button>
         ))}
-      </nav>
+      </div>
 
       {activeTab === "Overview" && (
         <>
-          <div className="desk-scores">
-            <article className="desk-score"><em>Average</em><strong>{mean != null ? `${mean.toFixed(1)}%` : "—"}</strong><em>{scores.length} scored</em></article>
-            <article className="desk-score"><em>Median</em><strong>{median != null ? `${median.toFixed(1)}%` : "—"}</strong><em>Middle of the pack</em></article>
-            <article className="desk-score"><em>Spread</em><strong>{stdDev != null ? `${stdDev.toFixed(1)}%` : "—"}</strong><em>How far scores sit apart</em></article>
-            <article className="desk-score"><em>Highest</em><strong>{highest != null ? `${highest.toFixed(1)}%` : "—"}</strong><em>{submitted.length} submitted</em></article>
+          <div className="mt-8 grid gap-4 sm:grid-cols-4">
+            <Metric label="Average (Mean)" value={mean != null ? `${mean.toFixed(1)}%` : "—"} detail={`Across ${scores.length} scored attempt(s)`} tone="text-ink"/>
+            <Metric label="Median Score" value={median != null ? `${median.toFixed(1)}%` : "—"} detail={scores.length ? "Middle of the pack" : "No scores yet"} tone="text-forest"/>
+            <Metric label="Standard Dev" value={stdDev != null ? `${stdDev.toFixed(1)}%` : "—"} detail="Score spread" tone="text-amber"/>
+            <Metric label="Highest Score" value={highest != null ? `${highest.toFixed(1)}%` : "—"} detail={submitted.length ? `${submitted.length} submitted` : "No submissions"} tone="text-success"/>
           </div>
-          <section className="desk-panel">
-            <h2>How the scores spread</h2>
-            <ul className="desk-bars">
+          <div className="mt-8 border border-line p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="font-serif text-xl font-semibold">Score Distribution</h2>
+              <span className="font-mono text-[10px] text-soft">{scores.length} scored attempt(s)</span>
+            </div>
+            <div className="mt-8 flex h-44 items-end gap-3 border-b border-line px-4">
               {buckets.map((count, i) => (
-                <li key={i}>
-                  <span>{i * 10}–{i * 10 + 9}</span>
-                  <i style={{ width: `${Math.max(count ? 6 : 0, Math.round((count / maxBucket) * 100))}%` }} />
-                  <span>{count}</span>
-                </li>
+                <div key={i} className="group flex flex-1 flex-col items-center gap-2">
+                  <span className="font-mono text-[9px] text-soft">{count || ""}</span>
+                  <div className="w-full bg-forest/40 transition-colors group-hover:bg-forest/80" style={{ height: `${Math.round((count / maxBucket) * 100)}%` }}/>
+                  <span className="font-mono text-[9px] text-soft">{i * 10}</span>
+                </div>
               ))}
-            </ul>
-          </section>
-          {flagged.length > 0 && <p className="desk-note">{flagged.length} candidate{flagged.length === 1 ? " has" : "s have"} violation flags. Review the recordings before you finalise marks.</p>}
+            </div>
+            <p className="mt-4 text-center font-mono text-[10px] text-soft uppercase tracking-widest">Score Brackets (%)</p>
+          </div>
+          {flagged.length > 0 && <div className="mt-6 border border-alert/30 bg-alert/5 p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-alert">Proctoring flags</p><p className="mt-2 text-[13px]">{flagged.length} candidate(s) carry violation flags in this exam — review recordings before finalising marks.</p></div>}
         </>
       )}
 
       {activeTab === "Item Analysis" && <QuestionItemAnalysis examId={examId} />}
 
       {activeTab === "Student Reports" && (
-        <section>
-          <div className="desk-section">
-            <div>
-              <h2>One report per student</h2>
-              <p className="desk-lead">Each PDF includes every stored snapshot, the violations on that second, and the recording list.</p>
+        <div className="mt-8 border border-line bg-paper">
+          <div className="flex items-center justify-between border-b border-line bg-raised px-5 py-3">
+            <div><h2 className="font-serif text-lg font-semibold">Individual Student Reports</h2>
+            <p className="mt-1 font-mono text-[10px] text-soft">Per-candidate PDFs plus a ZIP of every student's recordings (recording/) and screenshots (ss/).</p></div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Download Evidence ZIP"}</Button>
+              <Button onClick={() => void exportPdf(submitted)} disabled={submitted.length === 0 || !!pdfProgress}>Generate All PDFs</Button>
             </div>
           </div>
-          <div className="desk-actions">
-            <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Download evidence ZIP"}</Button>
-            <Button primary onClick={() => void exportPdf(submitted)} disabled={submitted.length === 0 || !!pdfProgress}>Generate all PDFs</Button>
+          <div className="divide-y divide-line">
+            {submitted.map((a) => (
+              <div key={a.id} className="flex items-center justify-between gap-4 px-5 py-4">
+                <div><p className="text-[13px] font-medium">{a.name}</p><p className="mt-0.5 font-mono text-[10px] text-soft">{a.roll} · {a.answered}/{a.total} answered · score {a.score != null ? `${a.score}%` : "pending"}</p></div>
+                <Button onClick={() => void exportPdf([a])} disabled={!!pdfProgress}>PDF</Button>
+              </div>
+            ))}
+            {submitted.length === 0 && <p className="px-5 py-10 text-center text-[12px] text-soft">No submissions for this exam yet.</p>}
           </div>
-          {submitted.length === 0 ? <p className="desk-empty">No submissions for this exam yet.</p> : (
-            <div className="desk-cards">
-              {submitted.map((a) => (
-                <article key={a.id} className="desk-card">
-                  <div className="desk-card-top">
-                    <h3>{a.name}</h3>
-                    <span className="desk-status">{a.score != null ? `${a.score}%` : "Pending"}</span>
-                  </div>
-                  <p>{a.roll}</p>
-                  <p>{a.answered} of {a.total} answered</p>
-                  <div className="desk-card-actions">
-                    <Button onClick={() => void exportPdf([a])} disabled={!!pdfProgress}>Download PDF</Button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
+        </div>
       )}
 
       {activeTab === "Trends" && <ExamTrends exams={exams} />}
-      </div>
     </>
   );
 }

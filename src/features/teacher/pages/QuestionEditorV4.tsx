@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { FiUpload, FiArrowLeft, FiX, FiDownload, FiCheck } from "react-icons/fi";
 import { saveQuestion, type DBQuestion } from "@/shared/data/examApi";
-import "./teacherSurfaces.css";
 
 type Props = { notify: (message: string) => void; navigate: (path: string) => void };
 
+const inputClass = "mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest";
 const TYPES = ["MCQ", "MSQ", "True / False", "Numerical", "Subjective"];
 const DIFFICULTIES = ["Easy", "Medium", "Hard"];
 const UNITS = ["Trees & Graphs", "Normalization", "Sorting", "OS Scheduling", "Networking", "Databases", "Custom / Other"];
@@ -245,17 +245,18 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
   const isSubj = type === "Subjective";
 
   return (
-    <div className="desk">
-      <header className="desk-hello">
+    <div>
+      <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
         <div>
-          <h1>{editId ? "Edit question" : "Create a question"}</h1>
-          <p>{examId ? `Saved onto ${examId}.` : "Saved into the general bank."}</p>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question bank / {editId ? `Edit ${editId}` : "New question"}{examId ? ` · ${examId}` : ""}</p>
+          <h1 className="mt-2 font-serif text-3xl font-semibold">{editId ? "Edit question" : "Create a question"}</h1>
+          <p className="mt-2 text-[13px] text-ink-soft">Saved straight to the database — difficulty, unit and marks are part of the question, so they show up in the pool and the paper.</p>
         </div>
-        <div className="desk-tools">
-          <button type="button" onClick={() => setBulkOpen((o) => !o)}><FiUpload aria-hidden /> Bulk upload CSV</button>
-          <button type="button" onClick={() => navigate(exitPath)}><FiArrowLeft aria-hidden /> Back</button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button onClick={() => setBulkOpen((o) => !o)} className="inline-flex items-center gap-2 border border-forest px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest"><FiUpload /> Bulk upload CSV/Excel</button>
+          <button onClick={() => navigate(exitPath)} className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft"><FiArrowLeft /> Back</button>
         </div>
-      </header>
+      </div>
 
       {bulkOpen && (
         <section className="mt-6 border border-forest bg-success/5 p-5 sm:p-6">
@@ -325,96 +326,120 @@ export default function QuestionEditorV4({ notify, navigate }: Props) {
         </section>
       )}
 
-      <form className="desk-form" onSubmit={(e) => { e.preventDefault(); void saveOne(); }}>
-        <div className="desk-types" role="radiogroup" aria-label="Question format">
-          {TYPES.map((item) => (
-            <button key={item} type="button" role="radio" aria-checked={type === item} className={`desk-type ${type === item ? "is-on" : ""}`} onClick={() => setType(item)}>
-              {item}
-            </button>
-          ))}
+      <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-6">
+          <section className="border border-line bg-paper p-6">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">1 · Question format</p>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {TYPES.map((item) => (
+                <button key={item} onClick={() => setType(item)} className={`border px-3 py-3 text-left text-[12px] ${type === item ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft hover:border-forest"}`}>
+                  <span className="block font-medium">{item}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="border border-line bg-paper p-6 sm:p-8">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">2 · Student content</p>
+            <label className="mt-4 block text-[12px] text-ink-soft">
+              Question title / prompt <span className="text-alert">*</span>
+              <textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={4} placeholder="Write the complete question…" className={`${inputClass} resize-y text-[14px]`} />
+            </label>
+
+            {(isMcq || isMsq) && (
+              <div className="mt-6">
+                <p className="text-[12px] font-medium">{isMsq ? "Options (pick every correct one)" : "Options"}</p>
+                {options.map((opt, i) => {
+                  const picked = isMsq ? correctSet.includes(i) : correct === i;
+                  return (
+                    <div key={i} className={`mt-3 border px-3 py-2.5 ${picked ? "border-forest bg-success/5" : "border-line-strong"}`}>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Option {String.fromCharCode(65 + i)}</span>
+                        <button
+                          type="button"
+                          onClick={() => (isMsq
+                            ? setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]))
+                            : setCorrect(i))}
+                          className={`font-mono text-[9px] uppercase tracking-wider ${picked ? "text-forest" : "text-ink-soft hover:text-forest"}`}
+                        >
+                          {picked ? "✓ correct" : "mark correct"}
+                        </button>
+                      </div>
+                      <input value={opt} onChange={(e) => setOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))} placeholder={`Enter option ${String.fromCharCode(65 + i)}`} className={inputClass} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {isTf && (
+              <div className="mt-6 grid grid-cols-2 gap-3">
+                {["True", "False"].map((label, i) => (
+                  <button key={label} type="button" onClick={() => setCorrect(i)} className={`border p-4 text-left text-[13px] ${correct === i ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft"}`}>
+                    {correct === i ? "● " : "○ "}{label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {isNum && (
+              <div className="mt-6">
+                <label className="block text-[12px] text-ink-soft">
+                  Expected numerical answer
+                  <input value={expected} onChange={(e) => setExpected(e.target.value)} placeholder="e.g. 42 or 3.14" className={inputClass} />
+                </label>
+              </div>
+            )}
+
+            {isSubj && (
+              <div className="mt-6 grid gap-2 sm:grid-cols-3">
+                {([["both", "QR + Answer box"], ["qr", "QR upload only"], ["textbox", "Answer box only"]] as const).map(([mode, label]) => (
+                  <button key={mode} type="button" onClick={() => setSubjectiveMode(mode)} className={`border px-3 py-3 text-[12px] ${subjectiveMode === mode ? "border-forest bg-success/5 text-forest" : "border-line-strong text-ink-soft"}`}>
+                    {subjectiveMode === mode ? "● " : "○ "}{label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="border border-line bg-paper p-6 sm:p-8">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">3 · Scoring and organization</p>
+            <div className="mt-5 grid gap-5 sm:grid-cols-2">
+              <label className="block text-[12px] text-ink-soft">
+                Unit
+                <select value={unit} onChange={(e) => setUnit(e.target.value)} className={inputClass}>
+                  {UNITS.map((u) => <option key={u}>{u}</option>)}
+                </select>
+              </label>
+              <label className="block text-[12px] text-ink-soft">
+                Difficulty
+                <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} className={inputClass}>
+                  {DIFFICULTIES.map((d) => <option key={d}>{d}</option>)}
+                </select>
+              </label>
+              <label className="block text-[12px] text-ink-soft">
+                Marks
+                <input type="number" min={0} step={0.5} value={marks} onChange={(e) => setMarks(Number(e.target.value) || 0)} className={inputClass} />
+              </label>
+            </div>
+          </section>
         </div>
 
-        <section className="desk-panel">
-          <label className="desk-field">
-            Question
-            <textarea value={title} onChange={(e) => setTitle(e.target.value)} rows={4} placeholder="Write the complete question…" name="question" autoComplete="off" />
-          </label>
-
-          {(isMcq || isMsq) && (
-            <fieldset className="desk-field">
-              <legend>{isMsq ? "Mark every correct option" : "Mark the correct option"}</legend>
-              {options.map((opt, i) => {
-                const picked = isMsq ? correctSet.includes(i) : correct === i;
-                return (
-                  <div key={i} className={`desk-option ${picked ? "is-on" : ""}`}>
-                    <span>{String.fromCharCode(65 + i)}</span>
-                    <input value={opt} onChange={(e) => setOptions((cur) => cur.map((o, j) => (j === i ? e.target.value : o)))} placeholder={`Option ${String.fromCharCode(65 + i)}`} aria-label={`Option ${String.fromCharCode(65 + i)}`} autoComplete="off" />
-                    <button
-                      type="button"
-                      onClick={() => (isMsq
-                        ? setCorrectSet((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]))
-                        : setCorrect(i))}
-                    >
-                      {picked ? "Correct" : "Mark correct"}
-                    </button>
-                  </div>
-                );
-              })}
-            </fieldset>
-          )}
-
-          {isTf && (
-            <div className="desk-field">
-              Answer
-              {["True", "False"].map((label, i) => (
-                <button key={label} type="button" onClick={() => setCorrect(i)} className={`desk-choice ${correct === i ? "is-on" : ""}`}>
-                  {label}
-                </button>
-              ))}
+        <aside>
+          <section className="border border-line p-5">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Save question</p>
+            <div className="mt-3 space-y-1.5 text-[12px] text-ink-soft">
+              <p><span className="text-ink">Type:</span> {type}{examId ? ` · exam ${examId}` : " · general bank"}</p>
+              <p><span className="text-ink">Difficulty:</span> {difficulty}</p>
+              <p><span className="text-ink">Marks:</span> {marks}</p>
+              <p className="text-[11px]">Saved questions appear in the pool picker on the exam setup page.</p>
             </div>
-          )}
-
-          {isNum && (
-            <label className="desk-field">
-              Expected answer
-              <input value={expected} onChange={(e) => setExpected(e.target.value)} placeholder="42 or 3.14" name="expected" inputMode="decimal" autoComplete="off" />
-            </label>
-          )}
-
-          {isSubj && (
-            <div className="desk-field">
-              How the student answers
-              {([["both", "QR and an answer box"], ["qr", "QR upload only"], ["textbox", "Answer box only"]] as const).map(([mode, label]) => (
-                <button key={mode} type="button" onClick={() => setSubjectiveMode(mode)} className={`desk-choice ${subjectiveMode === mode ? "is-on" : ""}`}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <label className="desk-field">
-            Unit
-            <select value={unit} onChange={(e) => setUnit(e.target.value)} name="unit">
-              {UNITS.map((u) => <option key={u}>{u}</option>)}
-            </select>
-          </label>
-          <label className="desk-field">
-            Difficulty
-            <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} name="difficulty">
-              {DIFFICULTIES.map((d) => <option key={d}>{d}</option>)}
-            </select>
-          </label>
-          <label className="desk-field">
-            Marks
-            <input type="number" min={0} step={0.5} value={marks} onChange={(e) => setMarks(Number(e.target.value) || 0)} name="marks" inputMode="decimal" />
-          </label>
-
-          <button type="submit" disabled={saving || !title.trim()} className="desk-save">
-            {saving ? "Saving…" : editId ? "Update question" : "Save to question bank"}
-          </button>
-          <p className="desk-quiet" style={{ marginTop: 10 }}>{type}, {difficulty}, {marks} mark{marks === 1 ? "" : "s"}</p>
-        </section>
-      </form>
+            <button onClick={() => void saveOne()} disabled={saving || !title.trim()} className="mt-4 w-full border border-forest bg-forest py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:cursor-not-allowed disabled:opacity-50">
+              {saving ? "Saving…" : editId ? "Update question" : "Save to question bank"}
+            </button>
+          </section>
+        </aside>
+      </div>
     </div>
   );
 }
