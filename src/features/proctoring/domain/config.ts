@@ -31,10 +31,9 @@ export const PHONE_ACK_MS = 25_000;
 export const GAZE = {
   // Deviation (nose/eye-ratio units) from the student's OWN calibrated neutral
   // that counts as "looking away". 0.14 ≈ a clear head turn — 0.10 flagged
-  // students who merely read the top of a tall monitor or shifted in their
-  // seat (the classic "[AI] Looking up" false positive on a webcam mounted
-  // below eye level).
-  DEVIATION: 0.14,
+  // students who merely read the top of a tall monitor. We set it to 0.08
+  // to ensure looking down at a phone is reliably detected.
+  DEVIATION: 0.08,
   // A condition must persist this many consecutive samples before it is
   // reported (one jitter frame never fires). 6 samples @250 ms ≈ 1.5 s.
   SUSTAIN_SAMPLES: 4,

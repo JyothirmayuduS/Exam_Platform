@@ -97,30 +97,28 @@ export default function QuestionDisplay({
   const isSubjective = question.type === "subjective" || question.options.length === 0;
   return (
     <>
-      <div className="mb-3.5 flex items-center justify-between border-b border-line pb-2.5">
-        <h2 className="m-0 font-sans text-[18px] font-semibold text-ink">Question {questionIndex} of {examId ? "N/A" : "N/A"}</h2>
+      <div className="exam-qh">
+        <h2>Question {questionIndex} of {examId ? "N/A" : "N/A"}</h2>
         {showMarks && typeof question.marks === "number" && (
-          <span className="rounded-[4px] border border-line px-2 py-0.5 text-[12px] text-soft">
+          <span className="exam-badge">
             {question.marks} {question.marks === 1 ? "mark" : "marks"}
           </span>
         )}
       </div>
 
-      <p className="m-0 mb-1.5 font-serif text-[19px] font-semibold text-ink leading-relaxed">{question.text}</p>
+      <p className="exam-qt">{question.text}</p>
       
       {/* MCQ options */}
       {question.options.length > 0 && (
         <>
-          <p className="mb-4 mt-0 font-sans text-[12px] text-soft">Select one answer.</p>
-          <div className="space-y-2">
+          <p className="exam-hint exam-mute exam-sm">Select one answer.</p>
+          <div>
             {question.options.map((opt, i) => {
               const selected = answer === i;
               return (
                 <label
                   key={i}
-                  className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3.5 py-3 transition-colors hover:bg-bg ${
-                    selected ? "border-pri bg-paper-raised" : "border-line"
-                  }`}
+                  className={`exam-opt ${selected ? "selected" : ""}`}
                 >
                   <input
                     type="radio"
@@ -128,17 +126,16 @@ export default function QuestionDisplay({
                     value={i}
                     checked={selected}
                     onChange={() => onSelectOption(i)}
-                    className="mt-1 h-3.5 w-3.5 accent-pri"
                   />
-                  <span className="text-[14px] leading-snug">{opt}</span>
+                  <span>{opt}</span>
                 </label>
               );
             })}
           </div>
           {/* Keyboard hint for T/F */}
           {question.options.length === 2 && (
-            <p className="mt-2 text-center font-sans text-[11px] text-soft">
-              Tip: Press <kbd className="rounded border border-line bg-paper px-1 py-0.5 font-mono text-[10px]">Space</kbd> to toggle T/F
+            <p className="exam-hint exam-mute exam-sm" style={{ textAlign: "center" }}>
+              Tip: Press <kbd style={{ padding: "0 4px", border: "1px solid var(--line)", borderRadius: "4px" }}>Space</kbd> to toggle T/F
             </p>
           )}
         </>
@@ -171,7 +168,7 @@ export default function QuestionDisplay({
                     {question.subjective_mode === "both" ? "Option 1: Type your answer" : "Type your answer"}
                   </label>
                   <textarea
-                    className="h-40 w-full rounded-md border border-line bg-white p-3.5 text-[14px] outline-none focus:border-pri"
+                    className="exam-textarea"
                     placeholder="Type your response here..."
                     value={typeof answer === "string" ? answer : ""}
                     onChange={(e) => onSelectOption(e.target.value as unknown as number)}
@@ -216,13 +213,12 @@ export default function QuestionDisplay({
       )}
 
       {/* Revisit later / clear response */}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-2.5 border-t border-line pt-3.5">
-        <label className="flex cursor-pointer items-center gap-2 font-sans text-[13px] text-ink hover:opacity-80">
+      <div className="exam-ft">
+        <label>
           <input
             type="checkbox"
             checked={isReviewed}
             onChange={onToggleReview}
-            className="h-3.5 w-3.5 accent-pri"
           />
           Mark for review
         </label>
@@ -230,11 +226,7 @@ export default function QuestionDisplay({
           <button
             onClick={onClear}
             disabled={answer === undefined}
-            className={`rounded-md border border-line bg-paper px-3 py-1.5 font-sans text-[12px] font-medium transition-colors ${
-              answer === undefined
-                ? "cursor-not-allowed opacity-50"
-                : "text-alert hover:bg-bg"
-            }`}
+            className="exam-btn"
           >
             Clear response
           </button>

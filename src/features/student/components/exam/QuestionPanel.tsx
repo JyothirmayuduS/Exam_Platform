@@ -43,38 +43,45 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
   }, [questions, search]);
 
   return (
-    <aside className="rounded-lg border border-line bg-paper p-3.5 space-y-3">
-      <h2 className="font-sans text-[12px] font-semibold tracking-wider text-soft">Question Navigator</h2>
+    <section className="exam-panel">
+      <h2>Question Navigator</h2>
       <input
+        type="search"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Search by #, text, type..."
-        className="w-full rounded-md border border-line bg-paper px-2.5 py-1.5 text-[13px] outline-none focus:border-pri"
+        className="exam-search"
         aria-label="Search questions"
       />
-      <div className="grid max-h-[230px] grid-cols-5 gap-1.5 overflow-auto p-0.5">
+      <div className="exam-grid">
         {visible.map(({ q, index }) => {
           const state = getStatus(q.id);
           const isCurrent = index === currentIndex;
+          
+          let classes = "exam-n";
+          if (isCurrent) classes += " c";
+          if (state.status === "answered") classes += " a";
+          else if (state.status === "visited") classes += " v";
+          if (state.marked) classes += " m";
+
           return (
             <button
               key={q.id}
               onClick={() => onJump(index)}
-              className={`relative flex aspect-square items-center justify-center rounded-md border text-[13px] font-semibold transition-colors ${statusClassMap[state.status]} ${isCurrent ? "ring-2 ring-pri ring-offset-1" : "hover:bg-line/40"}`}
+              className={classes}
               aria-label={`Go to question ${index + 1}`}
             >
-              {state.marked && <div className="absolute right-1 top-1 h-2 w-2 rounded-full border border-paper bg-amber" />}
               {index + 1}
             </button>
           );
         })}
       </div>
-      <div className="grid grid-cols-2 gap-1.5 border-t border-line pt-3 font-sans text-[11px] text-soft">
-        <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-[3px] border border-line bg-success" />Answered</span>
-        <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-[3px] border border-line bg-amber" />Marked</span>
-        <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-[3px] border border-line bg-paper-raised" />Visited</span>
-        <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-[3px] border border-line bg-paper" />Not visited</span>
+      <div className="exam-leg">
+        <span><i style={{ background: "var(--ok)" }} />Answered</span>
+        <span><i style={{ background: "var(--warn)" }} />Marked</span>
+        <span><i style={{ background: "var(--ps)" }} />Visited</span>
+        <span><i />Not visited</span>
       </div>
-    </aside>
+    </section>
   );
 }

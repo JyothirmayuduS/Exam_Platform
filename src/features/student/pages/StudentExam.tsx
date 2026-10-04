@@ -1487,7 +1487,7 @@ function StudentExamSession() {
 
   // ---------- Step: exam (kiosk mode) ----------
   return (
-    <div className="min-h-screen bg-bg text-ink font-sans">
+    <div className="exam-body">
       {/* Watermark */}
       <svg aria-hidden className="pointer-events-none fixed inset-0 z-0 h-full w-full" >
         <defs>
@@ -1500,47 +1500,45 @@ function StudentExamSession() {
         <rect width="100%" height="100%" fill="url(#exam-watermark)" className="text-ink" />
       </svg>
       {proctorPaused && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-ink/95 p-6">
-          <div className="w-full max-w-md border border-amber bg-paper p-8 text-center shadow-2xl">
-            <span className="mx-auto block h-3 w-3 animate-pulse rounded-none bg-amber" />
-            <p className="mt-4 font-mono text-[10px] uppercase tracking-widest text-amber">Session paused</p>
-            <h2 className="mt-2 font-serif text-2xl font-semibold">The invigilator has paused your exam</h2>
-            <p className="mt-3 text-[13px] leading-relaxed text-soft">Your timer is frozen and your answers are safe. Keep this window open.</p>
-            <p className="mt-5 font-mono text-[10px] text-soft/70">● Time frozen · {timeString}</p>
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-6" style={{ background: "rgba(22, 32, 46, 0.95)" }}>
+          <div className="exam-panel" style={{ textAlign: "center", maxWidth: "400px", padding: "32px", borderColor: "var(--warn)" }}>
+            <h2 style={{ fontSize: "16px", textTransform: "none", color: "var(--warn)" }}>The invigilator has paused your exam</h2>
+            <p style={{ fontSize: "13px", marginTop: "12px" }}>Your timer is frozen and your answers are safe. Keep this window open.</p>
+            <p style={{ marginTop: "20px", fontSize: "11px", color: "var(--mute)" }}>● Time frozen · {timeString}</p>
           </div>
         </div>
       )}
       {(broadcast || flagThresholdWarning || activeViolation) && (
-        <div className="pointer-events-none fixed inset-x-0 top-0 z-[65] flex flex-col items-center gap-2 px-4 py-3">
+        <div id="exam-banner" style={{ display: "flex" }}>
           {broadcast && (
-            <div className="pointer-events-auto flex w-full max-w-xl items-start gap-3 border border-amber bg-amber px-4 py-3 text-paper shadow-2xl">
-              <span className="mt-1 h-2.5 w-2.5 shrink-0 animate-pulse rounded-none bg-paper" />
-              <div className="flex-1">
-                <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">{broadcast.sender} · broadcast</p>
-                <p className="mt-0.5 text-[14px] font-medium">{broadcast.body}</p>
+            <div className="exam-alert">
+              <i>i</i>
+              <div>
+                <h3>{broadcast.sender} · broadcast</h3>
+                <p>{broadcast.body}</p>
               </div>
-              <button onClick={() => setBroadcast(null)} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
+              <button onClick={() => setBroadcast(null)}>×</button>
             </div>
           )}
           {flagThresholdWarning && (
-            <div className="pointer-events-auto flex w-full max-w-xl items-start gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl">
-              <FiAlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
-              <div className="flex-1">
-                <p className="font-mono text-[10px] uppercase tracking-widest text-paper/80">Proctoring warning</p>
-                <p className="mt-0.5 text-[14px] font-medium">{flagThresholdWarning}</p>
+            <div className="exam-alert">
+              <i>!</i>
+              <div>
+                <h3>Proctoring warning</h3>
+                <p>{flagThresholdWarning}</p>
               </div>
-              <button onClick={() => setFlagThresholdWarning("")} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
+              <button onClick={() => setFlagThresholdWarning("")}>×</button>
             </div>
           )}
           {activeViolation && (
-            <div className="pointer-events-auto flex w-full max-w-xl items-center gap-3 border border-alert bg-alert px-4 py-3 text-paper shadow-2xl">
-              <span className="h-2.5 w-2.5 shrink-0 animate-pulse bg-paper" />
-              <div className="flex-1">
-                <p className="font-mono text-[10px] uppercase tracking-widest text-paper/75">Proctor alert · logged</p>
-                <p className="mt-0.5 text-[14px] font-medium">{activeViolation.kind}</p>
-                <p className="mt-0.5 font-mono text-[10px] text-paper/70">{activeViolation.at} · {violations.length} violation(s) this session</p>
+            <div className="exam-alert">
+              <i>!</i>
+              <div>
+                <h3>Proctor alert · logged</h3>
+                <p>{activeViolation.kind}</p>
+                <p style={{ fontSize: "11px", marginTop: "4px", opacity: 0.8 }}>{activeViolation.at} · {violations.length} violation(s) this session</p>
               </div>
-              <button onClick={() => setActiveViolation(null)} className="font-mono text-[15px] leading-none text-paper/80 hover:text-paper">×</button>
+              <button onClick={() => setActiveViolation(null)}>×</button>
             </div>
           )}
         </div>
@@ -1567,32 +1565,32 @@ function StudentExamSession() {
         }}
       />
 
-      <div className="mx-auto grid max-w-[1440px] gap-4 px-5 py-4 lg:grid-cols-[250px_minmax(0,1fr)_290px] items-start">
+      <div className="exam-main">
         {/* LEFT */}
-        <aside className="space-y-4 lg:sticky lg:top-[84px]">
-          <div className="rounded-lg border border-line bg-paper p-3.5">
-            <h2 className="mb-2.5 font-sans text-[12px] font-semibold text-soft tracking-wider">Progress</h2>
-            <div className="grid grid-cols-2 gap-2 text-center">
-              <div className="rounded-md border border-line p-1.5"><b className="block text-[18px] text-ink">{answeredCount}</b><span className="text-[11px] text-soft">Answered</span></div>
-              <div className="rounded-md border border-line p-1.5"><b className="block text-[18px] text-ink">{remainingCount}</b><span className="text-[11px] text-soft">Remaining</span></div>
-              <div className="rounded-md border border-line p-1.5"><b className="block text-[18px] text-ink">{markedCount}</b><span className="text-[11px] text-soft">Marked</span></div>
-              <div className="rounded-md border border-line p-1.5"><b className="block text-[18px] text-ink">{visitedCount}</b><span className="text-[11px] text-soft">Visited</span></div>
+        <div className="exam-aside">
+          <section className="exam-panel">
+            <h2>Progress</h2>
+            <div className="exam-stats">
+              <div className="exam-stat"><b>{answeredCount}</b><span>Answered</span></div>
+              <div className="exam-stat"><b>{remainingCount}</b><span>Remaining</span></div>
+              <div className="exam-stat"><b>{markedCount}</b><span>Marked</span></div>
+              <div className="exam-stat"><b>{visitedCount}</b><span>Visited</span></div>
             </div>
-            <div className="mt-2.5 mb-1 h-1.5 w-full overflow-hidden rounded-full bg-line">
-              <div className="h-full bg-forest transition-all duration-200" style={{ width: `${(answeredCount / questions.length) * 100}%` }} />
+            <div className="exam-bar">
+              <div style={{ width: `${(answeredCount / questions.length) * 100}%` }} />
             </div>
-            <div className="text-[11px] text-soft">{answeredCount}/{questions.length} complete</div>
-          </div>
+            <div style={{ fontSize: "11px", color: "var(--mute)" }}>{answeredCount}/{questions.length} complete</div>
+          </section>
           <QuestionPanel
             questions={questions}
             currentIndex={current}
             getStatus={getQuestionStatus}
             onJump={goTo}
           />
-        </aside>
+        </div>
 
         {/* CENTER */}
-        <main className="rounded-lg border border-line bg-paper p-3.5">
+        <main className="exam-panel">
 
           <QuestionDisplay
             question={q}
@@ -1634,11 +1632,11 @@ function StudentExamSession() {
         </main>
 
         {/* RIGHT */}
-        <aside className="space-y-4 lg:sticky lg:top-[84px] lg:self-start">
-          <section className="rounded-lg border border-line bg-paper p-3.5">
-            <h2 className="mb-2.5 font-sans text-[12px] font-semibold text-soft tracking-wider">Proctoring</h2>
+        <div className="exam-aside" style={{ alignSelf: "start" }}>
+          <section className="exam-panel">
+            <h2>Proctoring</h2>
             
-            <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden rounded-md border border-line bg-gradient-to-br from-[#3b4756] to-[#1f2832]">
+            <div className="exam-cam">
               <div className="absolute inset-0 flex items-center justify-center">
                 <ProctorCamera
                   room={ROOM}
@@ -1652,42 +1650,42 @@ function StudentExamSession() {
                   proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
                 />
               </div>
-              <span className="absolute right-1.5 top-1.5 rounded-sm bg-black/60 px-2 py-0.5 text-[11px] text-white">● Recording</span>
+              <span className="exam-rec">Recording</span>
             </div>
 
-            <div className="mt-2.5 grid gap-1.5">
-              <div className="flex justify-between rounded-md bg-[#E4F1E9] px-2.5 py-1.5 font-medium text-success">
+            <div className="exam-chips">
+              <div className="exam-chip">
                 <span>Camera</span><span>Connected</span>
               </div>
-              <div className={`flex justify-between rounded-md px-2.5 py-1.5 font-medium ${aiStatus?.faceCount === 0 ? "bg-amber/20 text-amber" : "bg-[#E4F1E9] text-success"}`}>
+              <div className={`exam-chip ${aiStatus?.faceCount === 0 ? "w" : ""}`}>
                 <span>Face</span><span>{aiStatus?.faceCount === 0 ? "Not visible" : "Visible"}</span>
               </div>
-              <div className={`flex justify-between rounded-md px-2.5 py-1.5 font-medium ${aiStatus?.voiceSpeaking ? "bg-alert/20 text-alert" : "bg-[#E4F1E9] text-success"}`}>
+              <div className={`exam-chip ${aiStatus?.voiceSpeaking ? "b" : ""}`}>
                 <span>Audio</span><span>{aiStatus?.voiceSpeaking ? "Speaking" : "Quiet"}</span>
               </div>
             </div>
 
             {(aiStatus?.faceCount === 0 || aiStatus?.voiceSpeaking) && (
-              <div className="mt-2.5 rounded-md bg-raised p-2.5 text-[13px]">
+              <div className="exam-warn">
                 <b>Move into frame.</b> Face the camera and keep it uncovered. Your invigilator has been notified.
               </div>
             )}
 
-            <h2 className="mt-3.5 mb-2.5 font-sans text-[12px] font-semibold text-soft tracking-wider">Session log</h2>
-            <ul className="m-0 list-none p-0 text-[12px]">
+            <h2 style={{ marginTop: "14px" }}>Session log</h2>
+            <ul className="exam-log">
               {violations.length === 0 ? (
-                <li className="border-t border-line py-1.5 text-soft">No violations</li>
+                <li><span>No violations</span><span></span></li>
               ) : (
                 violations.slice(-5).map((v, i) => (
-                  <li key={i} className="flex justify-between gap-2 border-t border-line py-1.5">
+                  <li key={i}>
                     <span>{v.kind}</span>
-                    <span className="text-soft">{v.at}</span>
+                    <span>{v.at}</span>
                   </li>
                 ))
               )}
             </ul>
             
-            <div className="mt-4">
+            <div className="exam-up">
               <MonitorQRPanel attemptId={attemptId} onSubmitConsumed={() => setEndMonitor(true)} />
             </div>
             
