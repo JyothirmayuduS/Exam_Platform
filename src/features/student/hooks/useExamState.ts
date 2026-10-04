@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 
-export type QuestionStatus = "unvisited" | "visited" | "answered" | "marked";
+export type QuestionStatus = "unvisited" | "visited" | "answered";
+export type QuestionState = { status: QuestionStatus; marked: boolean };
 
 export type ExamQuestionLike = {
   id: string;
@@ -90,11 +91,12 @@ export default function useExamState(questions: ExamQuestionLike[]) {
 
   const isReviewed = useCallback((questionId: string) => markedForReview.has(questionId), [markedForReview]);
 
-  const getQuestionStatus = useCallback((questionId: string): QuestionStatus => {
-    if (markedForReview.has(questionId)) return "marked";
-    if (hasAnswer(answers[questionId])) return "answered";
-    if (visited.has(questionId)) return "visited";
-    return "unvisited";
+  const getQuestionStatus = useCallback((questionId: string): QuestionState => {
+    const marked = markedForReview.has(questionId);
+    let status: QuestionStatus = "unvisited";
+    if (hasAnswer(answers[questionId])) status = "answered";
+    else if (visited.has(questionId)) status = "visited";
+    return { status, marked };
   }, [answers, markedForReview, visited]);
 
   const counts = useMemo(() => {
@@ -103,10 +105,10 @@ export default function useExamState(questions: ExamQuestionLike[]) {
     let visitedCount = 0;
 
     for (const q of questions) {
-      const status = getQuestionStatus(q.id);
-      if (status === "answered") answered += 1;
-      if (status === "marked") marked += 1;
-      if (status === "visited" || status === "answered" || status === "marked") visitedCount += 1;
+      const state = getQuestionStatus(q.id);
+      if (state.status === "answered") answered += 1;
+      if (state.marked) marked += 1;
+      if (state.status === "visited" || state.status === "answered" || state.marked) visitedCount += 1;
     }
 
     return {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { QuestionStatus } from "@/features/student/hooks/useExamState";
+import type { QuestionState, QuestionStatus } from "@/features/student/hooks/useExamState";
 
 type Question = {
   id: string;
@@ -12,13 +12,12 @@ type Question = {
 type QuestionPanelProps = {
   questions: Question[];
   currentIndex: number;
-  getStatus: (questionId: string) => QuestionStatus;
+  getStatus: (questionId: string) => QuestionState;
   onJump: (index: number) => void;
 };
 
 const statusClassMap: Record<QuestionStatus, string> = {
   answered: "bg-success border-success text-white",
-  marked: "bg-amber border-amber text-white",
   visited: "bg-paper-raised border-line text-ink",
   unvisited: "bg-paper border-line text-ink",
 };
@@ -55,15 +54,16 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
       />
       <div className="grid max-h-[230px] grid-cols-5 gap-1.5 overflow-auto p-0.5">
         {visible.map(({ q, index }) => {
-          const status = getStatus(q.id);
+          const state = getStatus(q.id);
           const isCurrent = index === currentIndex;
           return (
             <button
               key={q.id}
               onClick={() => onJump(index)}
-              className={`flex aspect-square items-center justify-center rounded-md border text-[13px] font-semibold transition-colors ${statusClassMap[status]} ${isCurrent ? "ring-2 ring-pri ring-offset-1" : "hover:bg-line/40"}`}
+              className={`relative flex aspect-square items-center justify-center rounded-md border text-[13px] font-semibold transition-colors ${statusClassMap[state.status]} ${isCurrent ? "ring-2 ring-pri ring-offset-1" : "hover:bg-line/40"}`}
               aria-label={`Go to question ${index + 1}`}
             >
+              {state.marked && <div className="absolute right-1 top-1 h-2 w-2 rounded-full border border-paper bg-amber" />}
               {index + 1}
             </button>
           );
