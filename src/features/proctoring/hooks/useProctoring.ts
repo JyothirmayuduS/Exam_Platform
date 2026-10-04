@@ -54,9 +54,11 @@ export default function useProctoring(active: boolean, attemptId?: string, examI
     };
   }, [active, flag]);
 
+  // BANNER_MS — how long the on-screen alert stays. Not a detection cooldown.
+  const BANNER_MS = 5_000;
   useEffect(() => {
     if (!activeViolation) return;
-    const id = window.setTimeout(() => setActiveViolation(null), 5000);
+    const id = window.setTimeout(() => setActiveViolation(null), BANNER_MS);
     return () => window.clearTimeout(id);
   }, [activeViolation]);
 

@@ -1,20 +1,21 @@
 :root {
-  --bg: #EDF0F4;
+  /* Forest + paper (teacher console palette) */
+  --bg: #F7F5F0;
   --card: #fff;
-  --ink: #16202E;
-  --mute: #556176;
-  --line: #C9D1DC;
-  --pri: #0F3D75;
-  --ps: #E4ECF6;
-  --ok: #1E6B45;
+  --ink: #1A1814;
+  --mute: #6E6B63;
+  --line: #C8C3B8;
+  --pri: #284B34;
+  --ps: #E4EDE6;
+  --ok: #2F6844;
   --oks: #E4F1E9;
   --warn: #935500;
   --ws: #FAEFD6;
-  --bad: #A61E1E;
+  --bad: #9B2C2C;
   --bs: #F9E8E8;
   --bl: #E2AFAF;
   --on: #fff;
-  --hd: #0B2545;
+  --hd: #284B34;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -221,7 +222,7 @@
 }
 .exam-bar div {
   height: 100%;
-  background: var(--ok);
+  background: var(--pri);
   transition: width 0.3s;
 }
 
@@ -359,6 +360,10 @@
   justify-content: center;
 }
 .exam-cam video { width: 100%; height: 100%; object-fit: cover; }
+/* ProctorCamera fills the template tile without nested absolute wrappers. */
+.exam-cam-live > div { width: 100%; height: 100%; }
+.exam-cam-live > div > div:first-child { height: 100%; border: 0 !important; }
+.exam-cam-live video { aspect-ratio: auto !important; height: 100% !important; }
 .exam-rec {
   position: absolute;
   top: 6px;

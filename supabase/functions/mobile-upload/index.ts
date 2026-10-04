@@ -1,12 +1,36 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
+import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
+
+/** Put bytes into Cloudflare R2. Returns the object key or throws. */
+async function putR2Object(key: string, body: ArrayBuffer | Uint8Array, contentType: string): Promise<string> {
+  const accessKeyId = Deno.env.get("R2_ACCESS_KEY_ID");
+  const secretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY");
+  const endpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "").replace(/\/+$/, "");
+  const bucket = Deno.env.get("R2_BUCKET") ?? "exam-records";
+  if (!accessKeyId || !secretAccessKey || !endpoint) {
+    throw new Error("R2 secrets not configured (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_S3_ENDPOINT)");
+  }
+  const aws = new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" });
+  const bytes = body instanceof Uint8Array ? body : new Uint8Array(body);
+  const signed = await aws.sign(
+    new Request(`${endpoint}/${bucket}/${key}`, {
+      method: "PUT",
+      headers: { "Content-Type": contentType, "Content-Length": String(bytes.byteLength) },
+      body: bytes,
+    }),
+  );
+  const res = await fetch(signed);
+  if (!res.ok) throw new Error(`R2 PUT failed: ${res.status} ${await res.text()}`);
+  return key;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -116,7 +140,6 @@ serve(async (req) => {
     }
     if (!examId && formExamId) examId = formExamId;
     const examFolder = examId ?? "no-exam"; // upload still succeeds when the attempt is still pending
-    const bucketName = Deno.env.get("SUPABASE_BUCKET_NAME") || "exam-records";
     const ts = Date.now();
 
     // The submission row needs a REAL attempt uuid (FK to attempts). Sessions
@@ -163,13 +186,11 @@ serve(async (req) => {
         const imageFile = imageFiles[i];
         const imageArrayBuffer = await imageFile.arrayBuffer();
         
-        // 3. Store Original Image
+        // 3. Store Original Image in Cloudflare R2
         const originalPath = `${examFolder}/${session.student_id}/subjective/q${session.question_id}_${ts}_p${i+1}_original.jpg`;
         if (i === 0) firstOriginalPath = originalPath;
         
-        await supabaseAdmin.storage.from(bucketName).upload(originalPath, imageArrayBuffer, {
-          contentType: imageFile.type || "image/jpeg",
-        });
+        await putR2Object(originalPath, imageArrayBuffer, imageFile.type || "image/jpeg");
 
         // 4. Generate PDF Page
         let pdfImage;
@@ -270,9 +291,7 @@ serve(async (req) => {
       const pdfBytes = await pdfDoc.save();
       pdfPath = `${examFolder}/${session.student_id}/subjective/q${session.question_id}_${ts}.pdf`;
       
-      await supabaseAdmin.storage.from(bucketName).upload(pdfPath, pdfBytes, {
-        contentType: "application/pdf",
-      });
+      await putR2Object(pdfPath, pdfBytes, "application/pdf");
     } catch (e) {
       console.error("PDF generation failed:", e);
       // Fallback: If PDF fails, we at least have the original image.

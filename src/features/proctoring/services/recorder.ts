@@ -6,11 +6,8 @@
 //   ${examFolder}/${roll}/recordings/${kind}_${timestamp}.webm
 //
 // where ${examFolder} is the slug of the exam NAME (fallback: exam id).
-//
-// R2 primary; falls back to Supabase Storage when R2 is unavailable.
+// R2 only — no Supabase Storage fallback.
 
-import { getSupabase } from "@/shared/data/supabase";
-import { supabaseConfigured } from "@/shared/data/env";
 import { r2PutBlob } from "@/shared/services/r2Function";
 import { storageFolderSegment } from "@/shared/services/examStorage";
 
@@ -25,40 +22,23 @@ async function putRecording(opts: {
 }): Promise<string | null> {
   const { examId, examName, roll, kind, blob } = opts;
   const folder = storageFolderSegment(examId, examName);
-  const key = `${folder}/${roll}/recordings/${kind}_${Date.now()}.webm`;
+  const name = `${kind}_${Date.now()}.webm`;
 
-  // Primary: Cloudflare R2 via the server-signed PUT path.
   try {
     const r2key = await r2PutBlob({
       examId: folder,
       ownerSegment: roll,
       kind: "recordings",
-      name: `${kind}_${Date.now()}.webm`,
+      name,
       blob,
     });
     if (r2key) {
       console.log(`[recorder] [ok] ${kind} uploaded to R2: ${r2key} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
       return r2key;
     }
-    console.error(`[recorder] [fail] ${kind} R2 upload failed — trying Supabase backup`);
+    console.error(`[recorder] [fail] ${kind} R2 upload failed`);
   } catch (err) {
-    console.error(`[recorder] [fail] ${kind} R2 upload failed — trying Supabase backup:`, err);
-  }
-
-  if (supabaseConfigured) {
-    const db = getSupabase();
-    if (db) {
-      const bucket = import.meta.env.VITE_SUPABASE_BUCKET_NAME || "exam-records";
-      const { error } = await db.storage.from(bucket).upload(key, blob, {
-        contentType: "video/webm",
-        upsert: true,
-      });
-      if (!error) {
-        console.log(`[recorder] [ok] ${kind} uploaded to Supabase (backup): ${key}`);
-        return key;
-      }
-      console.error(`[recorder] [fail] ${kind} Supabase backup upload failed:`, error.message);
-    }
+    console.error(`[recorder] [fail] ${kind} R2 upload failed:`, err);
   }
   return null;
 }

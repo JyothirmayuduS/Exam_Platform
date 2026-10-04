@@ -11,8 +11,8 @@ describe("ViolationGate", () => {
   it("blocks a repeat of the same category inside the cooldown", () => {
     const gate = new ViolationGate();
     gate.markFired("gaze_away", 1_000);
-    expect(gate.allows("gaze_away", 1_000 + 5_000)).toBe(false); // 10 s cooldown
-    expect(gate.allows("gaze_away", 1_000 + 11_000)).toBe(true); // after
+    expect(gate.allows("gaze_away", 1_000 + 400)).toBe(false); // inside 800ms
+    expect(gate.allows("gaze_away", 1_000 + 900)).toBe(true); // after short window
   });
 
   it("never blocks a DIFFERENT category", () => {

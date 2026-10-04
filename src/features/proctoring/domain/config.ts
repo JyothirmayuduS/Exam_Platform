@@ -30,12 +30,17 @@ export const PHONE_ACK_MS = 25_000;
 // ── Gaze / head pose ─────────────────────────────────────────────────────────
 export const GAZE = {
   // Deviation (nose/eye-ratio units) from the student's OWN calibrated neutral
-  // that counts as "looking away". 0.14 ≈ a clear head turn — 0.10 flagged
-  // students who merely read the top of a tall monitor. We set it to 0.08
-  // to ensure looking down at a phone is reliably detected.
+  // that counts as "looking away". Pitch (look-down) uses a slightly lower
+  // gate because desk/phone glances are smaller than left/right head turns.
   DEVIATION: 0.08,
+  /** Pitch-only threshold — looking down at a desk/phone. */
+  PITCH_DOWN: 0.055,
+  // Samples of near-neutral pose required before the baseline is locked.
+  // Instant first-frame calibration made "looking down" disappear when the
+  // student started the exam already glancing at papers.
+  CALIBRATE_SAMPLES: 12,
   // A condition must persist this many consecutive samples before it is
-  // reported (one jitter frame never fires). 6 samples @250 ms ≈ 1.5 s.
+  // reported (one jitter frame never fires). ~0.6 s at GAZE_MS=150.
   SUSTAIN_SAMPLES: 4,
   // Samples back inside neutral before a flag can re-arm.
   CLEAR_SAMPLES: 4,
@@ -123,16 +128,19 @@ export const AUDIO = {
 // Minimum ms between two back-to-back violations of the SAME category. This is
 // the dedupe layer — a genuine incident is logged once and repeated only after
 // the cooldown elapses, never spammed every frame.
+// Same-category anti-spam only. Kept short so a second look-down / phone /
+// face event a few seconds later is still logged — the old 8–15s windows
+// dropped everything that happened while the banner was up.
 export const COOLDOWN_MS: Record<ProctorCategory, number> = {
-  no_face:         8_000,
-  multiple_faces:  8_000,
-  partial_face:    8_000,
-  gaze_away:      10_000,
-  possible_phone_use: 12_000,
-  phone_detected: 10_000,
-  earbuds_detected: 15_000,
-  laptop_detected: 10_000,
-  audio_detected:  8_000,
+  no_face:         800,
+  multiple_faces:  800,
+  partial_face:    800,
+  gaze_away:       800,
+  possible_phone_use: 800,
+  phone_detected:  800,
+  earbuds_detected: 800,
+  laptop_detected: 800,
+  audio_detected:  800,
 };
 
 // ── Risk engine ──────────────────────────────────────────────────────────────

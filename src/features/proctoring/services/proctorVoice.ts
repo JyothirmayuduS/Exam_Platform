@@ -82,8 +82,8 @@ export async function startVoiceBroadcast(
     }
   };
 
-  return {
-    speaking,
+  const handle: VoiceBroadcastHandle = {
+    get speaking() { return speaking; },
     setSpeaking: async (on: boolean) => {
       if (on === speaking) return;
       if (on) {
@@ -92,14 +92,20 @@ export async function startVoiceBroadcast(
           return;
         }
         try {
-          await lk.localParticipant.publishTrack(localTrack, { source: "microphone", name: "proctor-voice" });
+          // Prefer LocalTrack.publish path; fall back to mediaStreamTrack.
+          const media = (localTrack as { mediaStreamTrack?: MediaStreamTrack }).mediaStreamTrack ?? localTrack;
+          await lk.localParticipant.publishTrack(media as MediaStreamTrack, {
+            source: "microphone",
+            name: "proctor-voice",
+          });
           speaking = true;
         } catch (err) {
           onError?.(err instanceof Error ? err.message : String(err));
         }
       } else if (localTrack) {
         try {
-          await lk.localParticipant.unpublishTrack(localTrack, true);
+          const media = (localTrack as { mediaStreamTrack?: MediaStreamTrack }).mediaStreamTrack ?? localTrack;
+          await lk.localParticipant.unpublishTrack(media as MediaStreamTrack, true);
         } catch { /* already gone */ }
         speaking = false;
       }
@@ -111,6 +117,7 @@ export async function startVoiceBroadcast(
       void lk.disconnect();
     },
   };
+  return handle;
 }
 
 // ── Student side: listener for the invigilator's voice ───────────────────────
@@ -136,29 +143,40 @@ export async function startVoiceListen(opts: {
   const lk = new Room({ adaptiveStream: false, dynacast: false });
   let attached: HTMLAudioElement | null = null;
 
-  lk.on(RoomEvent.TrackSubscribed, (track: any) => {
+  const attachAudio = (track: { kind?: string; attach: () => HTMLMediaElement; detach?: () => void }) => {
     if (track?.kind !== "audio") return;
     try {
+      attached?.remove();
       attached = track.attach() as HTMLAudioElement;
       attached.autoplay = true;
       attached.volume = 1;
-      void attached.play().catch(() => { /* browser autoplay policy — a click usually follows */ });
+      // Keep the element in the document so autoplay / unmute policies work.
+      attached.style.display = "none";
+      document.body.appendChild(attached);
+      void attached.play().catch(() => { /* click usually follows */ });
       opts.onSpeaking?.(true);
     } catch (err) {
       opts.onError?.(err instanceof Error ? err.message : String(err));
     }
-  });
+  };
+
+  lk.on(RoomEvent.TrackSubscribed, (track: any) => attachAudio(track));
   lk.on(RoomEvent.TrackUnsubscribed, (track: any) => {
     if (track?.kind !== "audio") return;
-    try {
-      track.detach();
-    } catch { /* ignore */ }
+    try { track.detach(); } catch { /* ignore */ }
+    try { attached?.remove(); } catch { /* ignore */ }
     attached = null;
     opts.onSpeaking?.(false);
   });
 
   try {
     await lk.connect(creds.url, creds.token);
+    // Attach any tracks already published before we joined.
+    for (const p of lk.remoteParticipants.values()) {
+      for (const pub of p.audioTrackPublications.values()) {
+        if (pub.track) attachAudio(pub.track as { kind?: string; attach: () => HTMLMediaElement; detach?: () => void });
+      }
+    }
   } catch {
     void lk.disconnect();
     return null;

@@ -258,8 +258,9 @@ export default function TeacherProctoring() {
     const byId = new Map<string, RemoteFeed>();
     const byRoll = new Map<string, RemoteFeed>();
     for (const f of feeds) {
-      // Case-insensitive: the LiveKit token function may resolve a student's
-      // roll from their email (lowercased) while the DB stores it uppercase.
+      // Phone monitor and staff identities share the roll suffix — they must
+      // not overwrite the desktop student: camera tile.
+      if (f.identity.startsWith("mobile:") || f.identity.startsWith("proctor:")) continue;
       const key = identityLabel(f.identity).toLowerCase();
       byId.set(key, f);
       byRoll.set(key, f);
@@ -1000,6 +1001,7 @@ function FeedView({ feed, initials }: { feed: RemoteFeed | null; initials: strin
     const video = videoRef.current;
     if (!video || !feed?.cameraTrack) return;
     feed.cameraTrack.attach(video);
+    void video.play().catch(() => {});
     return () => { feed?.cameraTrack?.detach?.(video); };
   }, [feed?.cameraTrack]);
   return (
@@ -1021,6 +1023,7 @@ function ScreenFeedView({ feed }: { feed: RemoteFeed | null }) {
     const video = videoRef.current;
     if (!video || !feed?.screenTrack) return;
     feed.screenTrack.attach(video);
+    void video.play().catch(() => {});
     return () => { feed?.screenTrack?.detach?.(video); };
   }, [feed?.screenTrack]);
   return (

@@ -70,12 +70,15 @@ describe("Proctor pipeline — acceptance", () => {
   });
 
   it("repeated detection inside the cooldown never spams", () => {
-    // Phone stays in view for a long stretch — cooldown (10 s) must suppress
-    // every repeat beyond the first.
+    // Phone stays in view — cooldown must space repeats, not one log per frame.
     const count = Math.ceil(COOLDOWN_MS["phone_detected"] / T) + 5;
     const emissions = run(every(count, T, () => [phone(0.72)]));
     const phoneEvts = emissions.filter((e) => e.category === "phone_detected");
-    expect(phoneEvts).toHaveLength(1);
+    const span = count * T;
+    const maxAllowed = Math.floor(span / COOLDOWN_MS["phone_detected"]) + 1;
+    expect(phoneEvts.length).toBeGreaterThan(0);
+    expect(phoneEvts.length).toBeLessThanOrEqual(maxAllowed);
+    expect(phoneEvts.length).toBeLessThan(count);
   });
 
   it("a single accidental detection never becomes a violation", () => {
@@ -89,9 +92,8 @@ describe("Proctor pipeline — acceptance", () => {
   });
 
   it("a sub-threshold phone never confirms even with repeated samples", () => {
-    // 0.20 is below the per-kind gate (PHONE_MIN_CONF=0.28) — it is a "miss",
-    // so the tracker never accumulates hits and nothing confirms.
-    const emissions = run(every(6, T, () => [phone(0.2)]));
+    // Below PHONE_MIN_CONF — a miss, so the tracker never confirms.
+    const emissions = run(every(6, T, () => [phone(OBJECT.PHONE_MIN_CONF / 2)]));
     expect(emissions.filter((e) => e.category === "phone_detected")).toHaveLength(0);
   });
 

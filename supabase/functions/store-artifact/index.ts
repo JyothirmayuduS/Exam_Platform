@@ -36,7 +36,7 @@ const CORS = {
   "Vary": "Origin",
 };
 
-const KINDS = new Set(["screenshots", "recordings", "violations", "report", "ai_evidence"]);
+const KINDS = new Set(["screenshots", "recordings", "violations", "report", "ai_evidence", "subjective", "monitor"]);
 
 // Allow a safe leaf filename or one-level subfolder (e.g. "parts/seg_01.webm").
 // No path traversal, no leading/trailing slashes, no double slashes.

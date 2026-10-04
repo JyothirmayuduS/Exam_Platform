@@ -35,7 +35,7 @@ export async function uploadSubjectiveAnswer(opts: {
     const key = await r2PutBlob({
       examId,
       ownerSegment: studentId,
-      kind: "screenshots", // We use the "screenshots" folder for subjective uploads as well, or we could add "subjective" to R2Kind. Let's use screenshots for now as it's an image capture.
+      kind: "subjective",
       name: filename,
       blob,
     });

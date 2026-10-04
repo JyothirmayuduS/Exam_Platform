@@ -17,7 +17,7 @@ import { getSupabase } from "@/shared/data/supabase";
 import { supabaseConfigured } from "@/shared/data/env";
 
 /** Folder names used in the R2 key layout. */
-export type R2Kind = "screenshots" | "recordings" | "violations" | "report" | "ai_evidence";
+export type R2Kind = "screenshots" | "recordings" | "violations" | "report" | "ai_evidence" | "subjective" | "monitor";
 
 export type R2ListedObject = {
   key: string;

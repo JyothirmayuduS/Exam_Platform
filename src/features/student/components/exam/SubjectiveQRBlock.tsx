@@ -103,12 +103,12 @@ export default function SubjectiveQRBlock({
     }
     const path = subData?.pdf_storage_path as string | undefined;
     if (!path) return;
-    // Fresh signed URL on EVERY mount — the previous code signed once and
-    // handed the 1-hour URL to the answer store, so revisiting the question
-    // after an hour rendered a dead link.
-    const { data: urlData } = await db.storage.from("exam-records").createSignedUrl(path, 3600);
-    if (urlData?.signedUrl) {
-      setPdfUrl(urlData.signedUrl);
+    // Fresh signed URL on EVERY mount from Cloudflare R2 — never store the
+    // short-lived URL in the answer; keep the storage PATH instead.
+    const { getArtifactObjectUrl } = await import("@/shared/services/examStorage");
+    const signedUrl = await getArtifactObjectUrl(path, 3600);
+    if (signedUrl) {
+      setPdfUrl(signedUrl);
       setUploadIsImage((subData?.mime_type ?? "").startsWith("image/") || !path.endsWith(".pdf"));
       setStatus("COMPLETED");
       // The ANSWER store gets the storage PATH, not this signed URL.

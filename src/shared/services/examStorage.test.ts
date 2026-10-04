@@ -1,19 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startScreenshotCapture, listStudentArtifacts, getArtifactBlob } from "@/shared/services/examStorage";
-import { getSupabase } from "@/shared/data/supabase";
 import { getStudentIdByRoll } from "@/shared/data/api/students";
-import { r2List, r2FetchData, r2PresignGet } from "@/shared/services/r2Function";
+import { r2List, r2FetchData, r2PresignGet, r2PutBlob } from "@/shared/services/r2Function";
 
 const outbox = vi.hoisted(() => ({ enqueue: vi.fn(), retry: vi.fn(), flush: vi.fn().mockResolvedValue(true) }));
 vi.mock("@/shared/services/snapshotOutbox", () => ({ createSnapshotOutbox: vi.fn(() => outbox) }));
-vi.mock("@/shared/data/supabase", () => ({ getSupabase: vi.fn() }));
 vi.mock("@/shared/data/env", () => ({ supabaseConfigured: true }));
-vi.mock("@/shared/services/r2Function", () => ({ r2List: vi.fn(), r2FetchData: vi.fn(), r2PresignGet: vi.fn(), r2ListFolders: vi.fn(), r2PutBlob: vi.fn() }));
+vi.mock("@/shared/services/r2Function", () => ({
+  r2List: vi.fn(),
+  r2FetchData: vi.fn(),
+  r2PresignGet: vi.fn(),
+  r2ListFolders: vi.fn(),
+  r2PutBlob: vi.fn(),
+}));
 vi.mock("@/shared/data/api/exams", () => ({ listExams: vi.fn().mockResolvedValue([{ id: "EXAM", name: "Exam" }]) }));
 vi.mock("@/shared/data/api/students", () => ({ getStudentIdByRoll: vi.fn().mockResolvedValue(null) }));
 
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
 describe("per-second camera capture", () => {
   function video() {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
@@ -39,36 +44,39 @@ describe("per-second camera capture", () => {
 });
 
 describe("complete evidence listing", () => {
-  it("merges R2 with recursively paginated backup frames beyond 1000", async () => {
-    const file = (name: string) => ({ id: name, name, metadata: { size: 100 }, created_at: null });
-    const list = vi.fn(async (path: string, options: { offset: number }) => {
-      if (path.endsWith("screenshots")) return { error: null, data: options.offset === 0
-        ? Array.from({ length: 1000 }, (_, i) => file(`snap_${i}.jpg`)) : [file("snap_1000.jpg")] };
-      return { error: null, data: path.startsWith("Exam/") ? [{ id: null, name: "screenshots" }] : [] };
-    });
-    vi.mocked(getSupabase).mockReturnValue({ storage: { from: () => ({ list }) } } as unknown as ReturnType<typeof getSupabase>);
-    vi.mocked(r2List).mockResolvedValue([{ key: "Exam/R1/screenshots/r2.jpg", name: "r2.jpg", size: 100, lastModified: null }]);
+  it("lists R2 artifacts only (no Supabase Storage)", async () => {
+    vi.mocked(r2List).mockResolvedValue([
+      { key: "Exam/R1/screenshots/r2.jpg", name: "r2.jpg", size: 100, lastModified: null },
+      { key: "Exam/R1/screenshots/snap_1000.jpg", name: "snap_1000.jpg", size: 100, lastModified: null },
+    ]);
     const result = await listStudentArtifacts("EXAM", "R1");
-    expect(result).toHaveLength(1002);
+    expect(result).toHaveLength(2);
     expect(result?.some((f) => f.key === "Exam/R1/screenshots/snap_1000.jpg")).toBe(true);
-    expect(list).toHaveBeenCalledWith("Exam/R1/screenshots", expect.objectContaining({ offset: 1000 }));
   });
+
   it("also finds legacy UUID-owned frames when a report supplies a roll", async () => {
     vi.mocked(getStudentIdByRoll).mockResolvedValueOnce("student-uuid");
-    vi.mocked(r2List).mockImplementation(async (prefix) => prefix === "Exam/student-uuid" ? [{ key: `${prefix}/screenshots/legacy.jpg`, name: "legacy.jpg", size: 10, lastModified: null }] : []);
-    vi.mocked(getSupabase).mockReturnValue(null);
+    vi.mocked(r2List).mockImplementation(async (prefix) =>
+      prefix === "Exam/student-uuid"
+        ? [{ key: `${prefix}/screenshots/legacy.jpg`, name: "legacy.jpg", size: 10, lastModified: null }]
+        : [],
+    );
     const result = await listStudentArtifacts("EXAM", "R1");
     expect(result?.map((r) => r.key)).toEqual(["Exam/student-uuid/screenshots/legacy.jpg"]);
   });
 
-  it("reads backup bytes when a valid R2 presign points to a nonexistent object", async () => {
-    const blob = new Blob(["backup frame"]);
+  it("returns null when R2 cannot serve the object", async () => {
     vi.mocked(r2FetchData).mockResolvedValue(null);
     vi.mocked(r2PresignGet).mockResolvedValue("https://example.invalid/missing");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404 }));
-    const download = vi.fn().mockResolvedValue({ data: blob, error: null });
-    vi.mocked(getSupabase).mockReturnValue({ storage: { from: () => ({ download }) } } as unknown as ReturnType<typeof getSupabase>);
-    expect(await getArtifactBlob("Exam/R1/screenshots/backup.jpg")).toBe(blob);
-    expect(download).toHaveBeenCalledWith("Exam/R1/screenshots/backup.jpg");
+    expect(await getArtifactBlob("Exam/R1/screenshots/backup.jpg")).toBeNull();
+  });
+
+  it("reads bytes via R2 fetch-data relay", async () => {
+    const bytes = new TextEncoder().encode("frame");
+    vi.mocked(r2FetchData).mockResolvedValue({ bytes, contentType: "image/jpeg" });
+    const blob = await getArtifactBlob("Exam/R1/screenshots/ok.jpg");
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob?.type).toBe("image/jpeg");
   });
 });

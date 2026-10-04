@@ -1,6 +1,28 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { severityFor, isKnownEventType, type EventType } from "./severity.ts";
+
+async function putR2Object(key: string, body: Uint8Array, contentType: string): Promise<string> {
+  const accessKeyId = Deno.env.get("R2_ACCESS_KEY_ID");
+  const secretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY");
+  const endpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "").replace(/\/+$/, "");
+  const bucket = Deno.env.get("R2_BUCKET") ?? "exam-records";
+  if (!accessKeyId || !secretAccessKey || !endpoint) {
+    throw new Error("R2 secrets not configured");
+  }
+  const aws = new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" });
+  const signed = await aws.sign(
+    new Request(`${endpoint}/${bucket}/${key}`, {
+      method: "PUT",
+      headers: { "Content-Type": contentType, "Content-Length": String(body.byteLength) },
+      body,
+    }),
+  );
+  const res = await fetch(signed);
+  if (!res.ok) throw new Error(`R2 PUT failed: ${res.status}`);
+  return key;
+}
 
 /**
  * mobile-monitor-session — server-authoritative lifecycle for the phone-based
@@ -374,8 +396,8 @@ serve(async (req) => {
 
   // ─────────────────────────── snapshot-data (phone, anonymous upload)
   // Snapshot-fallback mode: the phone posts a base64 JPEG; the function writes
-  // it into the private exam-records bucket under the session's own verified
-  // namespace — the phone never gets storage credentials.
+  // it into Cloudflare R2 under the session's own verified namespace — the
+  // phone never gets storage credentials.
   if (action === "snapshot-data") {
     const dataUrl = String(body.dataUrl ?? "");
     const match = /^data:image\/(jpeg|jpg|png);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
@@ -384,7 +406,6 @@ serve(async (req) => {
     const bytes = Uint8Array.from(atob(match[2]), (c) => c.charCodeAt(0));
     if (bytes.length > 3_000_000) return json({ error: "Snapshot too large" }, 413);
 
-    const bucket = Deno.env.get("SUPABASE_BUCKET_NAME") || "exam-records";
     // Resolve examId from the attempt when it is a real uuid.
     const UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     let examFolder = "no-exam";
@@ -395,8 +416,12 @@ serve(async (req) => {
       examFolder = String(session.exam_id);
     }
     const path = `${examFolder}/${session.student_id}/monitor/${Date.now()}.jpg`;
-    const { error: upErr } = await supabase.storage.from(bucket).upload(path, bytes, { contentType: mime });
-    if (upErr) return json({ error: `Snapshot upload failed: ${upErr.message}` }, 500);
+    try {
+      await putR2Object(path, bytes, mime);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return json({ error: `Snapshot upload failed: ${msg}` }, 500);
+    }
     await logEvent(supabase, session.id, "SNAPSHOT_FALLBACK_ACTIVE", { path }, "minor");
     return json({ ok: true, path });
   }

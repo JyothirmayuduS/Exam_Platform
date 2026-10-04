@@ -80,7 +80,9 @@ export async function startProctorViewing(opts: {
   }
   console.warn("[proctor-viewer] [ok] token received — identity:", creds.identity, "url:", creds.url, "| token starts with:", creds.token.slice(0, 30) + "...");
 
-  const room = new Room({ adaptiveStream: true, dynacast: true });
+  // adaptiveStream pauses tracks attached to off-screen elements. Viewers only
+  // attach inside visible tiles, so keep full resolution.
+  const room = new Room({ adaptiveStream: false, dynacast: false });
   const feeds = new Map<string, RemoteFeed>();
 
   const emit = () => opts.onFeeds?.([...feeds.values()]);
@@ -97,18 +99,15 @@ export async function startProctorViewing(opts: {
 
   room.on(RoomEvent.ParticipantConnected, (p: any) => console.debug("[proctor-viewer] participant joined:", p?.identity));
 
-  // A remote track became available — attach it to a fresh media element and
-  // route it to the camera or screen slot depending on its source.
+  // Store the track only. Tiles attach it to their own <video> — an extra
+  // off-DOM attach() with adaptiveStream left feeds paused/black.
   room.on(RoomEvent.TrackSubscribed, (track: any, _pub: any, participant: any) => {
     console.debug("[proctor-viewer] track subscribed:", track?.kind, "source:", track?.source, "from:", participant?.identity);
     const feed = ensure(String(participant?.identity ?? "unknown"));
     if (track?.kind === "video") {
-      const el = track.attach() as HTMLVideoElement;
-      el.muted = true;
-      el.playsInline = true;
       const isScreen = String(track?.source ?? "").includes("screen");
-      if (isScreen) { feed.screen = el; feed.screenTrack = track; }
-      else { feed.camera = el; feed.cameraTrack = track; }
+      if (isScreen) { feed.screenTrack = track; }
+      else { feed.cameraTrack = track; }
       emit();
     } else if (track?.kind === "audio") {
       feed.audioTrack = track;
@@ -133,11 +132,40 @@ export async function startProctorViewing(opts: {
     emit();
   });
 
+  const attachExisting = () => {
+    // Tracks published before we joined don't always re-fire TrackSubscribed
+    // depending on livekit-client version — walk remote participants once.
+    const remotes =
+      (room as unknown as { remoteParticipants?: Map<string, any> }).remoteParticipants ??
+      new Map<string, any>();
+    for (const participant of remotes.values()) {
+      const pubs =
+        participant?.trackPublications ??
+        participant?.videoTrackPublications ??
+        new Map();
+      const list = pubs instanceof Map ? [...pubs.values()] : Object.values(pubs ?? {});
+      for (const pub of list as any[]) {
+        const track = pub?.track;
+        if (!track || pub?.isSubscribed === false) continue;
+        const feed = ensure(String(participant?.identity ?? "unknown"));
+        if (track.kind === "video") {
+          const isScreen = String(track?.source ?? pub?.source ?? "").includes("screen");
+          if (isScreen) { feed.screenTrack = track; }
+          else { feed.cameraTrack = track; }
+        } else if (track.kind === "audio") {
+          feed.audioTrack = track;
+        }
+      }
+    }
+    emit();
+  };
+
   try {
     console.warn("[proctor-viewer] Attempting room.connect() to", creds.url, "...");
     await room.connect(creds.url, creds.token);
     console.warn("[proctor-viewer] [ok] room.connect() succeeded! room:", opts.room);
     opts.onState?.("connected");
+    attachExisting();
   } catch (err) {
     void room.disconnect();
     console.error("[proctor-viewer] [fail] room.connect() FAILED:", err);

@@ -1,4 +1,4 @@
-// Proctoring artifact storage — Cloudflare R2 PRIMARY, Supabase Storage backup.
+// Proctoring artifact storage — Cloudflare R2 ONLY.
 //
 // Recordings, per-second screenshots, violation snapshots, AI evidence and the
 // PDF report live in Cloudflare R2 under an exam/owner folder layout. Supabase
@@ -7,9 +7,7 @@
 //
 // The browser NEVER holds R2 credentials. Every upload / read / list is signed
 // server-side by the `store-artifact` Edge Function (see lib/r2Function.ts),
-// so no secret ever reaches the client bundle. When R2 is unreachable the same
-// object falls back to the Supabase bucket, so an outage never loses a
-// recording or snapshot.
+// so no secret ever reaches the client bundle.
 //
 // Folder layout (kept identical between the exam side and the review side):
 //   ${examFolder}/${owner}/recordings/${name}.webm
@@ -25,25 +23,18 @@
 // checks both prefixes and merges the results.
 
 import { jsPDF } from "jspdf";
-import { getSupabase } from "@/shared/data/supabase";
 import { createSnapshotOutbox } from "@/shared/services/snapshotOutbox";
 import type { ReportRow } from "@/shared/services/sessionReport";
 import { supabaseConfigured } from "@/shared/data/env";
 import { r2FetchData, r2List, r2ListFolders, r2PresignGet, r2PutBlob, type R2Kind } from "@/shared/services/r2Function";
 
-// Storage policy: Cloudflare R2 is PRIMARY, Supabase Storage is the BACKUP.
-// Every artifact is written to R2 first; only when the R2 write fails (auth,
-// network, bucket CORS) does the same object fall back to the Supabase bucket.
-export type StorageProvider = "r2" | "supabase";
+// Storage policy: Cloudflare R2 only. No Supabase Storage writes.
+export type StorageProvider = "r2";
 
 export type StoredArtifact = {
   key: string;
   provider: StorageProvider;
 };
-
-function supabaseBucketName(): string {
-  return import.meta.env.VITE_SUPABASE_BUCKET_NAME || "exam-records";
-}
 
 /** Server-signed R2 is available whenever the Supabase backend is configured. */
 export const r2Configured = supabaseConfigured;
@@ -146,30 +137,16 @@ export async function listR2Artifacts(prefix: string): Promise<R2Artifact[] | nu
 }
 
 /**
- * List artifacts under ANY stored prefix (R2 first, Supabase backup second).
+ * List artifacts under ANY stored prefix in Cloudflare R2.
  * The prefix is the STORED folder — never resolved through the DB — so the
  * evidence archive can read exactly what the bucket holds, even when an exam
  * was renamed after the exam or the DB is unreachable. Returns null only when
- * EVERY tier fails; an empty array means nothing is stored.
+ * R2 is unreachable; an empty array means nothing is stored.
  */
 export async function listArtifactsByPrefix(prefix: string): Promise<R2Artifact[] | null> {
   const clean = prefix.replace(/\/$/, "");
-  const merged = new Map<string, R2Artifact>();
-  let anyTierWorked = false;
-
-  if (r2Configured) {
-    const r2 = await listR2Artifacts(clean);
-    if (r2) {
-      anyTierWorked = true;
-      for (const a of r2) merged.set(a.key, a);
-    }
-  }
-  const sb = await listSupabaseArtifacts(clean);
-  if (sb) {
-    anyTierWorked = true;
-    for (const a of sb) if (!merged.has(a.key)) merged.set(a.key, a);
-  }
-  return anyTierWorked ? Array.from(merged.values()) : null;
+  if (!r2Configured) return null;
+  return listR2Artifacts(clean);
 }
 
 /**
@@ -235,7 +212,6 @@ export async function listStudentArtifacts(
   const merged = new Map<string, R2Artifact>();
   let anyTierWorked = false;
 
-  // Merge both tiers: frames may have gone to backup during an R2 outage.
   if (r2Configured) {
     for (const prefix of prefixes) {
       const r2 = await listR2Artifacts(prefix);
@@ -245,50 +221,10 @@ export async function listStudentArtifacts(
       }
     }
   }
-  for (const prefix of prefixes) {
-    const sb = await listSupabaseArtifacts(prefix);
-    if (sb) {
-      anyTierWorked = true;
-      for (const a of sb) if (!merged.has(a.key)) merged.set(a.key, a);
-    }
-  }
   return anyTierWorked ? Array.from(merged.values()) : null;
 }
 
-/** Backup tier listing: objects stored in Supabase Storage for a prefix. */
-async function listSupabaseArtifacts(prefix: string): Promise<R2Artifact[] | null> {
-  if (!supabaseConfigured) return null;
-  const db = getSupabase();
-  if (!db) return null;
-  try {
-    const objects: R2Artifact[] = [];
-    const folders = [prefix.replace(/\/+$/, "")];
-    while (folders.length) {
-      const folder = folders.pop()!;
-      for (let offset = 0; ; offset += 1000) {
-        const { data, error } = await db.storage.from(supabaseBucketName()).list(folder, {
-          limit: 1000, offset, sortBy: { column: "name", order: "asc" },
-        });
-        if (error || !data) return null;
-        for (const object of data) {
-          const key = `${folder}/${object.name}`;
-          if (!object.id) { folders.push(key); continue; }
-          objects.push({
-            key, kind: key.split("/")[2] as ArtifactKind, name: object.name,
-            size: object.metadata?.size ?? 0, lastModified: object.created_at ?? null,
-          });
-        }
-        if (data.length < 1000) break;
-      }
-    }
-    return objects;
-  } catch (err) {
-    console.warn(`[examStorage] Supabase backup list error (${prefix}):`, err);
-    return null;
-  }
-}
-
-/** Read private evidence bytes, including frames written only to backup. */
+/** Read private evidence bytes from Cloudflare R2. */
 export async function getArtifactBlob(key: string): Promise<Blob | null> {
   const relayed = await r2FetchData(key);
   if (relayed) return new Blob([relayed.bytes as BlobPart], { type: relayed.contentType });
@@ -298,31 +234,13 @@ export async function getArtifactBlob(key: string): Promise<Blob | null> {
       const response = await fetch(url);
       if (response.ok) return await response.blob();
     }
-  } catch { /* backup below, also on R2 CORS failure */ }
-  const db = supabaseConfigured ? getSupabase() : null;
-  if (!db) return null;
-  try {
-    const { data, error } = await db.storage.from(supabaseBucketName()).download(key);
-    return error ? null : data;
-  } catch { return null; }
+  } catch { /* R2 unreachable */ }
+  return null;
 }
 
-/**
- * Playable/embeddable URL for an artifact, from whichever provider holds it:
- * server-signed R2 GET first, then a short-lived Supabase SIGNED url (the
- * bucket is private — never a public URL).
- */
+/** Playable/embeddable URL for an R2 artifact (server-signed GET). */
 export async function getArtifactObjectUrl(key: string, expiresIn = 3600): Promise<string | null> {
-  const r2 = await getR2ObjectUrl(key, expiresIn);
-  if (r2) return r2;
-  if (supabaseConfigured) {
-    const db = getSupabase();
-    if (db) {
-      const { data, error } = await db.storage.from(supabaseBucketName()).createSignedUrl(key, expiresIn);
-      if (!error && data?.signedUrl) return data.signedUrl;
-    }
-  }
-  return null;
+  return getR2ObjectUrl(key, expiresIn);
 }
 
 /**
@@ -340,7 +258,7 @@ export async function getR2ObjectUrl(key: string, expiresIn = 3600): Promise<str
   }
 }
 
-/** Upload one blob to R2 (primary) via the server-signed PUT path. */
+/** Upload one blob to R2 via the server-signed PUT path. */
 async function uploadToR2(path: string, blob: Blob): Promise<string | null> {
   const parts = splitPath(path);
   if (!parts) {
@@ -358,7 +276,7 @@ async function uploadToR2(path: string, blob: Blob): Promise<string | null> {
       blob,
     });
     if (!key) {
-      console.warn(`[examStorage] R2 upload failed (${path}) — Supabase backup will be used`);
+      console.warn(`[examStorage] R2 upload failed (${path})`);
       return null;
     }
     console.log(`[examStorage] R2 ✓ ${key} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
@@ -369,38 +287,10 @@ async function uploadToR2(path: string, blob: Blob): Promise<string | null> {
   }
 }
 
-/** Backup tier: Supabase Storage (only used when the R2 write fails). */
-async function uploadToSupabase(path: string, blob: Blob, contentType: string): Promise<string | null> {
-  if (!supabaseConfigured) {
-    console.warn(`[examStorage] Supabase backup not configured — ${path} could not be stored`);
-    return null;
-  }
-  const db = getSupabase();
-  if (!db) return null;
-  try {
-    const { error } = await db.storage.from(supabaseBucketName()).upload(path, blob, {
-      contentType,
-      upsert: true,
-    });
-    if (error) {
-      console.warn(`[examStorage] Supabase backup failed (${path}):`, error.message);
-      return null;
-    }
-    console.log(`[examStorage] Supabase ✓ (backup) ${path}`);
-    return path;
-  } catch (err) {
-    console.warn(`[examStorage] Supabase backup error (${path}):`, err);
-    return null;
-  }
-}
-
-/** Write R2 first, fall back to Supabase. Returns where the object landed. */
-async function storeArtifact(path: string, blob: Blob, contentType: string): Promise<StoredArtifact | null> {
+/** Write to Cloudflare R2 only. Returns null when the upload fails. */
+async function storeArtifact(path: string, blob: Blob, _contentType: string): Promise<StoredArtifact | null> {
   const r2key = await uploadToR2(path, blob);
   if (r2key) return { key: r2key, provider: "r2" };
-  // Fall back to Supabase Storage if R2 is unavailable.
-  const sbKey = await uploadToSupabase(path, blob, contentType);
-  if (sbKey) return { key: sbKey, provider: "supabase" };
   return null;
 }
 
@@ -425,7 +315,7 @@ async function storeArtifactWithRetry(
   return last;
 }
 
-/** Store an arbitrary blob (R2 primary / Supabase backup). */
+/** Store an arbitrary blob in Cloudflare R2. */
 export async function uploadArtifactBlob(
   key: string,
   blob: Blob,
@@ -629,8 +519,7 @@ export async function uploadExamRecords(opts: {
   const folder = storageFolderSegment(examId, examName);
   const uploaded = { recordingKey: null as string | null, pdfKey: null as string | null, snapshotKeys: [] as string[] };
 
-  // 1. Recording / Cloudflare R2 (primary), Supabase Storage (backup).
-  //    Retried — the merged video is the artifact the teacher reviews first.
+  // 1. Recording → Cloudflare R2 (retried — teacher reviews this first).
   const recFilename = `recording_${Date.now()}.webm`;
   const rec = await storeArtifactWithRetry(
     buildR2Path(folder, roll, "recordings", recFilename),

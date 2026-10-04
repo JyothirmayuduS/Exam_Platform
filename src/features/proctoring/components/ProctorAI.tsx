@@ -187,28 +187,33 @@ type GazeTracker = {
   pitch: number;   // slow EMA of the student's own neutral pose
   yaw: number;
   calibrated: boolean;
+  calibSamples: number; // samples accumulated before baseline locks
   awayStreak: number;  // consecutive off-neutral samples (decays on neutral)
   clearStreak: number; // consecutive neutral samples since last flag
 };
 
 function freshGaze(): GazeTracker {
-  return { pitch: 0, yaw: 0, calibrated: false, awayStreak: 0, clearStreak: 0 };
+  return { pitch: 0, yaw: 0, calibrated: false, calibSamples: 0, awayStreak: 0, clearStreak: 0 };
 }
 
-// Calibrate from the first ~2 s of samples so the baseline is valid before the
-// loop can flag, and update it only while the head is plausibly neutral.
+// Calibrate from ~GAZE.CALIBRATE_SAMPLES near-neutral frames (~2 s) so a
+// glance-down at start doesn't become the "looking at screen" baseline.
+// After lock, only adapt while clearly neutral AND not mid-away streak.
 function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number): void {
   if (t.calibrated) {
-    if (dev < GAZE.DEVIATION * 0.8) {
-      const k = 0.05;
+    if (dev < GAZE.DEVIATION * 0.6 && t.awayStreak === 0) {
+      const k = 0.03;
       t.pitch += k * (g.pitch - t.pitch);
       t.yaw   += k * (g.yaw - t.yaw);
     }
-  } else {
-    t.pitch = g.pitch;
-    t.yaw = g.yaw;
-    t.calibrated = true;
+    return;
   }
+  // Running average during calibration window.
+  t.calibSamples += 1;
+  const n = t.calibSamples;
+  t.pitch += (g.pitch - t.pitch) / n;
+  t.yaw += (g.yaw - t.yaw) / n;
+  if (n >= GAZE.CALIBRATE_SAMPLES) t.calibrated = true;
 }
 
 /** Raw MediaPipe detection / normalized, confidence-gated engine Detections.
@@ -754,13 +759,18 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
             }
 
             const g = estimateGaze(lms);
-            const devPitch = Math.abs(g.pitch - gaze.pitch);
-            const devYaw   = Math.abs(g.yaw - gaze.yaw);
-            const dev      = Math.max(devPitch, devYaw);
-            updateGazeBaseline(gaze, g, dev);
+            const pitchDelta = g.pitch - gaze.pitch; // + = looking down (nose lower)
+            const yawDelta = g.yaw - gaze.yaw;
+            const devPitch = Math.abs(pitchDelta);
+            const devYaw   = Math.abs(yawDelta);
+            const lookingDown = pitchDelta >= GAZE.PITCH_DOWN;
+            const lookingAwayYaw = devYaw >= GAZE.DEVIATION;
+            const lookingAwayPitch = lookingDown || pitchDelta <= -GAZE.DEVIATION;
+            const dev = Math.max(devPitch, devYaw);
+            updateGazeBaseline(gaze, g, lookingDown ? Math.max(dev, GAZE.DEVIATION) : dev);
 
             if (gaze.calibrated) {
-              const neutral = dev < GAZE.DEVIATION;
+              const neutral = !lookingAwayYaw && !lookingAwayPitch;
               if (neutral) {
                 gaze.awayStreak = Math.max(0, gaze.awayStreak - 1);
                 gaze.clearStreak += 1;
@@ -772,10 +782,19 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
 
               let dir: AIStatus["gazeDirection"] = "center";
               if (gaze.awayStreak >= GAZE.SUSTAIN_SAMPLES) {
-                if (devYaw >= devPitch) dir = g.yaw < gaze.yaw ? "left" : "right";
-                else dir = g.pitch < gaze.pitch ? "up" : "down";
-                const conf = Math.min(1, dev / (GAZE.DEVIATION * 3));
-                if (gaze.awayStreak === GAZE.SUSTAIN_SAMPLES || gaze.awayStreak % 24 === 0) {
+                // Prefer pitch-down when the head tilts toward the desk/phone —
+                // that is the signal students report as "not detecting look down".
+                if (lookingDown) {
+                  dir = "down";
+                } else if (devYaw >= devPitch) {
+                  dir = yawDelta < 0 ? "left" : "right";
+                } else {
+                  dir = pitchDelta < 0 ? "up" : "down";
+                }
+                const conf = Math.min(1, (lookingDown ? Math.max(devPitch, GAZE.PITCH_DOWN) : dev) / (GAZE.DEVIATION * 3));
+                // Re-emit whenever the short gate allows — continuous look-down /
+                // look-away logging, not one flag then a long silent window.
+                if (gaze.awayStreak === GAZE.SUSTAIN_SAMPLES || gaze.awayStreak % 2 === 0) {
                   emit("gaze_away", gazeLabel(dir), conf);
                 }
               }

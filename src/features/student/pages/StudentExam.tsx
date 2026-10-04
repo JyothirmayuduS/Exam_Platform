@@ -10,9 +10,7 @@ import ExamHeader from "@/features/student/components/exam/ExamHeader";
 import QuestionPanel from "@/features/student/components/exam/QuestionPanel";
 import QuestionDisplay from "@/features/student/components/exam/QuestionDisplay";
 import QuestionNavigationButtons from "@/features/student/components/exam/QuestionNavigationButtons";
-import AnswerPanel from "@/features/student/components/exam/AnswerPanel";
 import MonitorQRPanel from "@/features/student/components/exam/MonitorQRPanel";
-import ExamSidebar from "@/features/student/components/exam/ExamSidebar";
 import SubmitDialog from "@/features/student/components/exam/SubmitDialog";
 import { supabaseConfigured } from "@/shared/data/env";
 import { useAuth } from "@/features/auth/auth";
@@ -1531,7 +1529,7 @@ function StudentExamSession() {
             </div>
           )}
           {activeViolation && (
-            <div className="exam-alert">
+            <div className="exam-alert" key={activeViolation.id}>
               <i>!</i>
               <div>
                 <h3>Proctor alert · logged</h3>
@@ -1612,6 +1610,7 @@ function StudentExamSession() {
             examName={examName}
             studentName={studentName}
             questionIndex={current + 1}
+            totalQuestions={questions.length}
             onAnswerUploaded={handleAnswerUploaded}
           />
           <QuestionNavigationButtons
@@ -1636,38 +1635,52 @@ function StudentExamSession() {
           <section className="exam-panel">
             <h2>Proctoring</h2>
             
-            <div className="exam-cam">
-              <div className="absolute inset-0 flex items-center justify-center">
-                <ProctorCamera
-                  room={ROOM}
-                  identity={STUDENT_ROLL}
-                  examId={EXAM_ID}
-                  examName={examName}
-                  studentId={STUDENT_ROLL}
-                  screenStream={screenStream}
-                  initialStream={cameraStream}
-                  violationActive={!!activeViolation}
-                  proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
-                />
-              </div>
+            <div className="exam-cam exam-cam-live">
+              <ProctorCamera
+                room={ROOM}
+                identity={STUDENT_ROLL}
+                examId={EXAM_ID}
+                examName={examName}
+                studentId={STUDENT_ROLL}
+                screenStream={screenStream}
+                initialStream={cameraStream}
+                violationActive={!!activeViolation}
+                proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
+              />
               <span className="exam-rec">Recording</span>
             </div>
 
             <div className="exam-chips">
-              <div className="exam-chip">
-                <span>Camera</span><span>Connected</span>
+              <div className={`exam-chip ${!cameraStream ? "w" : ""}`}>
+                <span>Camera</span><span>{cameraStream ? "Connected" : "Waiting"}</span>
               </div>
               <div className={`exam-chip ${aiStatus?.faceCount === 0 ? "w" : ""}`}>
                 <span>Face</span><span>{aiStatus?.faceCount === 0 ? "Not visible" : "Visible"}</span>
+              </div>
+              <div className={`exam-chip ${aiStatus?.gazeDirection && aiStatus.gazeDirection !== "center" ? "b" : ""}`}>
+                <span>Gaze</span>
+                <span>
+                  {aiStatus?.gazeDirection === "down"
+                    ? "Looking down"
+                    : aiStatus?.gazeDirection === "left" || aiStatus?.gazeDirection === "right"
+                      ? "Looking away"
+                      : aiStatus?.gazeDirection === "up"
+                        ? "Looking up"
+                        : "On screen"}
+                </span>
               </div>
               <div className={`exam-chip ${aiStatus?.voiceSpeaking ? "b" : ""}`}>
                 <span>Audio</span><span>{aiStatus?.voiceSpeaking ? "Speaking" : "Quiet"}</span>
               </div>
             </div>
 
-            {(aiStatus?.faceCount === 0 || aiStatus?.voiceSpeaking) && (
+            {(aiStatus?.faceCount === 0 || aiStatus?.voiceSpeaking || aiStatus?.gazeDirection === "down") && (
               <div className="exam-warn">
-                <b>Move into frame.</b> Face the camera and keep it uncovered. Your invigilator has been notified.
+                {aiStatus?.gazeDirection === "down" ? (
+                  <><b>Look at the screen.</b> Looking down has been logged. Your invigilator has been notified.</>
+                ) : (
+                  <><b>Move into frame.</b> Face the camera and keep it uncovered. Your invigilator has been notified.</>
+                )}
               </div>
             )}
 
@@ -1735,15 +1748,6 @@ function StudentExamSession() {
         }}
       />
       </div>
-    </div>
-  );
-}
-
-function Stat({ n, label, tone }: { n: number; label: string; tone: string }) {
-  return (
-    <div className="border border-line bg-paper py-2 text-center">
-      <p className={`font-serif text-2xl leading-none ${tone}`}>{n}</p>
-      <p className="mt-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft">{label}</p>
     </div>
   );
 }

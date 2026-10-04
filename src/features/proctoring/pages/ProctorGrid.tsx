@@ -255,6 +255,7 @@ export default function ProctorGrid() {
     const byId = new Map<string, RemoteFeed>();
     const byRoll = new Map<string, RemoteFeed>();
     for (const f of feeds) {
+      if (f.identity.startsWith("mobile:") || f.identity.startsWith("proctor:")) continue;
       const key = identityLabel(f.identity).toLowerCase();
       byId.set(key, f);
       byRoll.set(key, f);
@@ -269,8 +270,8 @@ export default function ProctorGrid() {
   const flaggedCount = tiles.filter((t) => t.severity !== "none").length;
   const submittedCount = tiles.filter((t) => t.status === "Submitted").length;
   const activeCount = tiles.filter((t) => t.status !== "Submitted" && t.status !== "Not started").length;
-  const screenCount = feeds.filter((f) => f.screen).length;
-  const cameraCount = feeds.filter((f) => f.camera).length;
+  const screenCount = feeds.filter((f) => f.screenTrack).length;
+  const cameraCount = feeds.filter((f) => f.cameraTrack).length;
 
   const visible = useMemo(() => {
     let list = filter === "flagged" ? tiles.filter((t) => t.severity !== "none")
@@ -371,8 +372,16 @@ export default function ProctorGrid() {
 
   const takeScreenshot = async () => {
     if (!selected || !selected.studentId) return;
-    const camEl = feedFor(selected)?.camera;
-    const blob = camEl ? captureFrame(camEl, 0.85) : null;
+    const track = feedFor(selected)?.cameraTrack;
+    let blob: Blob | null = null;
+    if (track) {
+      const camEl = document.createElement("video");
+      camEl.muted = true;
+      track.attach(camEl);
+      try { await camEl.play(); } catch { /* frame may still be ready */ }
+      blob = captureFrame(camEl, 0.85);
+      try { track.detach(camEl); } catch { /* ignore */ }
+    }
     if (!blob) {
       pushLog(`Screenshot of ${selected.name} failed — no live feed`);
       return;
@@ -601,22 +610,45 @@ function StatCard({ label, value, sub, alert = false, tone }: { label: string; v
   );
 }
 
-// Renders a live <video> element (from LiveKit) into a holder, or an initials
-// placeholder when that feed isn't available yet.
-function FeedVideo({ el, initials, label, isScreen = false }: { el: HTMLVideoElement | null; initials: string; label: string; isScreen?: boolean }) {
-  const holderRef = useRef<HTMLDivElement | null>(null);
+// Renders a live feed by attaching the LiveKit track to a LOCAL <video>.
+// Never move the shared RemoteFeed HTMLVideoElement into the DOM — a single
+// element can only live in one place, so tile + detail panel previously stole
+// the same node from each other and left blank feeds.
+function FeedVideo({
+  track,
+  initials,
+  label,
+  isScreen = false,
+}: {
+  track: { attach: (el: HTMLMediaElement) => void; detach?: (el?: HTMLMediaElement) => void } | null;
+  initials: string;
+  label: string;
+  isScreen?: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
-    const holder = holderRef.current;
-    if (!holder) return;
-    holder.replaceChildren();
-    if (el) { el.className = "h-full w-full object-cover"; holder.appendChild(el); }
-    return () => { if (holder) holder.replaceChildren(); };
-  }, [el]);
+    const video = videoRef.current;
+    if (!video || !track) return;
+    track.attach(video);
+    void video.play().catch(() => {});
+    return () => {
+      try { track.detach?.(video); } catch { /* ignore */ }
+    };
+  }, [track]);
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-[#1F231D]">
-      <div ref={holderRef} className="absolute inset-0" />
-      {!el && (isScreen ? <FiMonitor aria-hidden className="h-7 w-7 text-paper/30" /> : <span className="font-serif text-2xl text-paper/30">{initials}</span>)}
-      {el && <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 bg-ink/75 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper"><span className="h-1 w-1 rounded-none bg-alert" /> {label}</span>}
+      {track ? (
+        <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        isScreen
+          ? <FiMonitor aria-hidden className="h-7 w-7 text-paper/30" />
+          : <span className="font-serif text-2xl text-paper/30">{initials}</span>
+      )}
+      {track && (
+        <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 bg-ink/75 px-1 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper">
+          <span className="h-1 w-1 rounded-none bg-alert" /> {label}
+        </span>
+      )}
     </div>
   );
 }
@@ -634,11 +666,11 @@ function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; fee
         <div className="min-w-0 flex-1">
           {view === "split" ? (
             <div className="grid grid-cols-2 gap-px bg-line">
-              <div className="aspect-[4/3]"><FeedVideo el={feed?.camera ?? null} initials={tile.initials} label="CAM" /></div>
-              <div className="aspect-[4/3]"><FeedVideo el={feed?.screen ?? null} initials="" label="SCREEN" isScreen /></div>
+              <div className="aspect-[4/3]"><FeedVideo track={feed?.cameraTrack ?? null} initials={tile.initials} label="CAM" /></div>
+              <div className="aspect-[4/3]"><FeedVideo track={feed?.screenTrack ?? null} initials="" label="SCREEN" isScreen /></div>
             </div>
           ) : (
-            <div className="aspect-video"><FeedVideo el={view === "screen" ? feed?.screen ?? null : feed?.camera ?? null} initials={view === "screen" ? "" : tile.initials} label={view === "screen" ? "SCREEN" : "CAM"} isScreen={view === "screen"} /></div>
+            <div className="aspect-video"><FeedVideo track={view === "screen" ? feed?.screenTrack ?? null : feed?.cameraTrack ?? null} initials={view === "screen" ? "" : tile.initials} label={view === "screen" ? "SCREEN" : "CAM"} isScreen={view === "screen"} /></div>
           )}
           <div className="flex items-center justify-between gap-2 border-t border-line px-2.5 py-2">
             <div className="min-w-0">
@@ -682,8 +714,8 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
           </div>
         </div>
         <div ref={feedRef} className="space-y-px bg-line p-px relative group">
-          <div className="aspect-video bg-paper relative"><FeedVideo el={feed?.camera ?? null} initials={selected.initials} label="CAMERA" /></div>
-          <div className="aspect-video bg-paper relative"><FeedVideo el={feed?.screen ?? null} initials="" label="SCREEN SHARE" isScreen /></div>
+          <div className="aspect-video bg-paper relative"><FeedVideo track={feed?.cameraTrack ?? null} initials={selected.initials} label="CAMERA" /></div>
+          <div className="aspect-video bg-paper relative"><FeedVideo track={feed?.screenTrack ?? null} initials="" label="SCREEN SHARE" isScreen /></div>
           <div className="absolute top-2 right-2 flex gap-2">
             <button
               onClick={() => {

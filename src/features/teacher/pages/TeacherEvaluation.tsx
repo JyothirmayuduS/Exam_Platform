@@ -788,11 +788,9 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
   // missing — older sessions never stored it in the answer).
   useEffect(() => {
     if (!uploadRef || uploadRef.startsWith("http") || uploadRef.startsWith("blob:")) return;
-    const db = getSupabase();
-    if (!db) return;
     let alive = true;
-    void db.storage.from("exam-records").createSignedUrl(uploadRef, 3600).then(({ data }: { data: { signedUrl?: string } | null }) => {
-      if (alive && data?.signedUrl) setUploadedUrl(data.signedUrl);
+    void getArtifactObjectUrl(uploadRef, 3600).then((signed) => {
+      if (alive && signed) setUploadedUrl(signed);
     });
     return () => { alive = false; };
   }, [uploadRef]);
@@ -893,8 +891,8 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
       if (path.startsWith("http")) {
         setUploadedUrl(path);
       } else {
-        const { data: urlData } = await db.storage.from("exam-records").createSignedUrl(path, 3600);
-        if (urlData?.signedUrl) setUploadedUrl(urlData.signedUrl);
+        const signed = await getArtifactObjectUrl(path, 3600);
+        if (signed) setUploadedUrl(signed);
       }
     };
 

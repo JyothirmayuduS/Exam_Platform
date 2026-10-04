@@ -87,10 +87,14 @@ Deno.serve(async (req: Request) => {
 
   // Role resolution order:
   //   1. app_metadata.role (set directly on auth.users)
-  //   2. teachers table by auth_id
-  //   3. teachers table by email (fallback for unlinked accounts)
+  //   2. teachers table by auth_id (user JWT)
+  //   3. teachers table by email via service role (RLS can hide unlinked rows)
   //   4. Email pattern heuristic (catches demo accounts not yet in teachers table)
   //   5. Default to "student"
+  //
+  // If a teacher is mis-classified as student they get canPublish=true /
+  // canSubscribe=false on the exam room and see ZERO feeds — the main cause of
+  // "teacher side not connected" with a valid LiveKit session.
   let role = String((user.app_metadata as Record<string, unknown> | undefined)?.role ?? "");
 
   if (!role) {
@@ -103,12 +107,24 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!role && user.email) {
-    const { data: teacherByEmail } = await supabase
-      .from("teachers")
-      .select("role")
-      .eq("email", user.email.toLowerCase())
-      .maybeSingle();
-    if (teacherByEmail?.role) role = String(teacherByEmail.role);
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (serviceKey) {
+      const admin = createClient(supabaseUrl, serviceKey);
+      const email = user.email.toLowerCase();
+      const { data: teacherByEmail } = await admin
+        .from("teachers")
+        .select("role")
+        .eq("email", email)
+        .maybeSingle();
+      if (teacherByEmail?.role) role = String(teacherByEmail.role);
+    } else {
+      const { data: teacherByEmail } = await supabase
+        .from("teachers")
+        .select("role")
+        .eq("email", user.email.toLowerCase())
+        .maybeSingle();
+      if (teacherByEmail?.role) role = String(teacherByEmail.role);
+    }
   }
 
   if (!role && user.email) {

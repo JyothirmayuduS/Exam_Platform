@@ -49,8 +49,10 @@ export default function ProctorCamera({
 
   // Keep a stable ref to the latest `connect` so the cleanup effect
   // always calls the most-recent version without being a dependency itself.
-  const connectRef = useRef(async () => {});
+  const connectRef = useRef<() => Promise<void>>(async () => {});
+  const connectGen = useRef(0);
   const connect = useCallback(async () => {
+    const gen = ++connectGen.current;
     // Clean up any prior LiveKit session before attempting a new one — but
     // NEVER stop the caller's shared camera stream (it keeps feeding the AI
     // and the on-page recording between reconnect attempts).
@@ -87,6 +89,7 @@ export default function ProctorCamera({
         timeoutPromise,
       ]);
     } catch (err) {
+      if (gen !== connectGen.current) return;
       // Classify the error so the logs are actionable.
       const message = err instanceof Error ? err.message : String(err);
       const isAuth    = message.toLowerCase().includes("auth") || message.toLowerCase().includes("permission");
@@ -119,6 +122,10 @@ export default function ProctorCamera({
       return; // done — skip the handle assignment below
     }
 
+    if (gen !== connectGen.current) {
+      handle?.stop();
+      return;
+    }
     handleRef.current = handle;
 
     if (handle?.stream) {
@@ -145,6 +152,12 @@ export default function ProctorCamera({
     }
   }, [room, identity, screenStream, initialStream]);
 
+  // CRITICAL: keep connectRef pointing at the latest connect closure. Without
+  // this assignment the mount effect called an empty stub forever — students
+  // never published to LiveKit, so teacher/proctor consoles showed blank feeds.
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   // `initialStream` is often set by the parent AFTER this component mounted
   // (the camera stream is captured in beginExam() right before step="exam").
@@ -166,15 +179,18 @@ export default function ProctorCamera({
   // this cleanup MUST NOT touch the caller-owned shared camera stream — it
   // feeds the AI engine, the recorder and the on-page preview. Only tracks the
   // component itself created (the local fallback getUserMedia) are stopped.
-  // (The previous duplicated second copy of this effect stopped localStreamRef
-  // unconditionally, which killed the shared camera + screen feeds and the
-  // recorder the moment React remounted — the "camera and screenshare lost" bug.)
+  // Re-run when the shared camera stream arrives so we publish the real tracks
+  // instead of connecting once with no media and staying local-only.
   useEffect(() => {
     let cancelled = false;
     void connectRef.current().catch(() => { if (!cancelled) setState("disconnected"); });
     return () => {
       cancelled = true;
+      // Invalidate any in-flight connect so a late completion cannot publish
+      // into a room the cleanup already stopped.
+      connectGen.current += 1;
       handleRef.current?.stop();
+      handleRef.current = null;
       if (ownsStreamRef.current) {
         localStreamRef.current?.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
@@ -185,7 +201,7 @@ export default function ProctorCamera({
       screenRecordRef.current?.stop();
       screenRecordRef.current = null;
     };
-  }, [room, identity]); // [ok] No eslint-disable needed — connectRef is stable
+  }, [room, identity, initialStream, screenStream]);
 
   // Auto-reconnect when camera dies
   useEffect(() => {
