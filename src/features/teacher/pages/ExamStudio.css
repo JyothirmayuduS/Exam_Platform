@@ -118,7 +118,8 @@
 }
 
 .exam-build-select,
-.exam-build-bar > button {
+.exam-build-bar > button,
+.exam-build-menu > button {
   height: var(--eb-h) !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
