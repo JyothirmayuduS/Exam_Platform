@@ -172,7 +172,10 @@ export async function startVoiceListen(opts: {
   try {
     await lk.connect(creds.url, creds.token);
     // Attach any tracks already published before we joined.
-    for (const p of lk.remoteParticipants.values()) {
+    const remote =
+      (lk as unknown as { remoteParticipants?: Map<string, { audioTrackPublications: Map<string, { track?: unknown }> }> })
+        .remoteParticipants;
+    for (const p of remote?.values() ?? []) {
       for (const pub of p.audioTrackPublications.values()) {
         if (pub.track) attachAudio(pub.track as { kind?: string; attach: () => HTMLMediaElement; detach?: () => void });
       }
