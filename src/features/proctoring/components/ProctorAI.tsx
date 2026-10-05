@@ -36,10 +36,11 @@ import {
   proctorDiag,
   faceGeometryFromLandmarks,
   refineDetections,
+  REFINE,
 } from "@/features/proctoring/domain";
 import type { BBox, Detection, FaceGeometry, ProctorCategory, RiskLevel } from "@/features/proctoring/domain";
 import { phoneLikelihood, PHONE_VERIFY_MIN, type PixelStats } from "@/features/proctoring/domain/phoneVerifier";
-import { blendshapeScores, HEAD_POSE, LOOK_DOWN, lookDownScore, poseFromMatrix, type HeadPose } from "@/features/proctoring/domain/headPose";
+import { blendshapeScores, HEAD_POSE, isLookingDown, LOOK_DOWN, lookDownScore, poseFromMatrix, type HeadPose } from "@/features/proctoring/domain/headPose";
 import { LipActivity, LIPS, mouthOpenRatio } from "@/features/proctoring/domain/lipActivity";
 import { ABSENCE_LABEL, AbsenceMonitor, classifyAbsence, frameStats } from "@/features/proctoring/domain/absence";
 import { DARK_BUD, earPatches, isDarkEarbud, type EarPatch } from "@/features/proctoring/domain/darkEarbud";
@@ -240,10 +241,20 @@ type GazeTracker = {
   poseYaw: number;     // neutral absolute head pose (degrees)
   posePitch: number;
   poseSamples: number;
+  calib: { pitch: number[]; yaw: number[]; posePitch: number[]; poseYaw: number[] };
 };
 
 function freshGaze(): GazeTracker {
-  return { pitch: 0, yaw: 0, calibrated: false, calibSamples: 0, awayStreak: 0, clearStreak: 0, poseYaw: 0, posePitch: 0, poseSamples: 0 };
+  return {
+    pitch: 0, yaw: 0, calibrated: false, calibSamples: 0, awayStreak: 0, clearStreak: 0, poseYaw: 0, posePitch: 0, poseSamples: 0,
+    calib: { pitch: [], yaw: [], posePitch: [], poseYaw: [] },
+  };
+}
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
 }
 
 // Calibrate from ~GAZE.CALIBRATE_SAMPLES near-neutral frames (~2 s) so a
@@ -262,17 +273,24 @@ function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number, pose: HeadP
     }
     return;
   }
-  // Running average during calibration window.
+  // Median over the calibration window: a mean let a start-of-exam fidget
+  // shift neutral pitch by 12°.
   t.calibSamples += 1;
-  const n = t.calibSamples;
-  t.pitch += (g.pitch - t.pitch) / n;
-  t.yaw += (g.yaw - t.yaw) / n;
+  t.calib.pitch.push(g.pitch);
+  t.calib.yaw.push(g.yaw);
+  t.pitch = median(t.calib.pitch);
+  t.yaw = median(t.calib.yaw);
   if (pose) {
     t.poseSamples += 1;
-    t.poseYaw += (pose.yaw - t.poseYaw) / t.poseSamples;
-    t.posePitch += (pose.pitch - t.posePitch) / t.poseSamples;
+    t.calib.posePitch.push(pose.pitch);
+    t.calib.poseYaw.push(pose.yaw);
+    t.posePitch = median(t.calib.posePitch);
+    t.poseYaw = median(t.calib.poseYaw);
   }
-  if (n >= GAZE.CALIBRATE_SAMPLES) t.calibrated = true;
+  if (t.calibSamples >= GAZE.CALIBRATE_SAMPLES) {
+    t.calibrated = true;
+    t.calib = { pitch: [], yaw: [], posePitch: [], poseYaw: [] };
+  }
 }
 
 /** Raw MediaPipe detection / normalized, confidence-gated engine Detections.
@@ -457,18 +475,23 @@ function whiteEarbudAt(video: HTMLVideoElement, ear: BBox, face: BBox): Detectio
     ctx.drawImage(video, ear.x * vw, ear.y * vh, ear.width * vw, ear.height * vh, 0, 0, S, S);
     const px = ctx.getImageData(0, 0, S, S).data;
     const gate = Math.max(195, skin + 70);
-    let bright = 0, sx = 0, sy = 0;
+    let bright = 0, sx = 0, sy = 0, edge = 0;
     for (let i = 0, n = 0; i < px.length; i += 4, n++) {
       const r = px[i], g = px[i + 1], b = px[i + 2];
       const lum = (r + g + b) / 3;
       if (lum >= gate && Math.max(r, g, b) - Math.min(r, g, b) < 38) {
         bright++;
-        sx += n % S;
-        sy += Math.floor(n / S);
+        const x = n % S, y = Math.floor(n / S);
+        sx += x;
+        sy += y;
+        if (x === 0 || y === 0 || x === S - 1 || y === S - 1) edge++;
       }
     }
     const frac = bright / (S * S);
     if (frac < 0.006 || frac > 0.07) return null; // none, or a lit wall/window
+    // A bud sits inside the ear; brightness reaching the crop edge is the wall
+    // or window behind the head (76/199 bud-free frames flagged before this).
+    if (edge > 0) return null;
     let spread = 0;
     const mx = sx / bright, my = sy / bright;
     for (let i = 0, n = 0; i < px.length; i += 4, n++) {
@@ -980,7 +1003,12 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
             const yawUnits = usePose
               ? (pose.yaw - gaze.poseYaw) / HEAD_POSE.TURN_DEG
               : (g.yaw - gaze.yaw) / GAZE.DEVIATION;
-            const lookingDown = pitchDelta >= GAZE.PITCH_DOWN || downScore >= LOOK_DOWN.MIN;
+            // With the pose model, the nose/eye ratio is not used for "down": on a
+            // low camera it moved more with posture than with real look-downs
+            // (0/14 caught, every false "head tilted down" flag in that session).
+            const lookingDown = usePose
+              ? isLookingDown(blend, posePitchRel) || posePitchRel >= HEAD_POSE.DOWN_DEG
+              : pitchDelta >= GAZE.PITCH_DOWN;
             const lookingAwayYaw = Math.abs(yawUnits) >= 1;
             const lookingUp = usePose ? posePitchRel <= -HEAD_POSE.UP_DEG : pitchDelta <= -GAZE.DEVIATION;
             const dev = Math.max(devPitch, Math.abs(yawUnits) * GAZE.DEVIATION);
@@ -1018,7 +1046,9 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
                   dir = "up";
                 }
                 const conf = lookingDown
-                  ? Math.min(1, Math.max(downScore / (LOOK_DOWN.MIN * 1.5), Math.max(devPitch, GAZE.PITCH_DOWN) / (GAZE.DEVIATION * 3)))
+                  ? usePose
+                    ? Math.min(1, Math.max(downScore / (LOOK_DOWN.MIN * 1.3), posePitchRel / (HEAD_POSE.DOWN_DEG * 1.5)))
+                    : Math.min(1, Math.max(devPitch, GAZE.PITCH_DOWN) / (GAZE.DEVIATION * 3))
                   : Math.min(1, dev / (GAZE.DEVIATION * 3));
                 // Re-emit whenever the short gate allows — continuous look-down /
                 // look-away logging, not one flag then a long silent window.
@@ -1177,15 +1207,16 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
             const face = faceGeoRef.current && now - faceGeoRef.current.at <= 700 ? faceGeoRef.current : null;
             // Ears every other tick (earbuds are tiny); desk and edges share the rest.
             const turn = cropTurn.current++ % 6;
+            const shownEars = face ? face.ears.filter((_, i) => (face.earVisible[i] ?? 0) >= REFINE.EAR_MIN_VISIBLE) : [];
             if ((turn === 1 || turn === 3 || turn === 5) && face) {
-              for (const ear of face.ears) {
+              for (const ear of shownEars) {
                 dets.push(...detectRegion(ear, video, objDetRoiRef.current, true));
               }
             } else if (turn === 2) dets.push(...detectRegion(EDGE_LEFT, video, objDetRoiRef.current));
             else if (turn === 4) dets.push(...detectRegion(EDGE_RIGHT, video, objDetRoiRef.current));
             else dets.push(...detectRegion(lowerRegion(OBJECT.PHONE_ROI_FRACTION), video, objDetRoiRef.current));
             if (face) {
-              for (const ear of face.ears) {
+              for (const ear of shownEars) {
                 const white = whiteEarbudAt(video, ear, face.face);
                 if (white) dets.push(white);
               }

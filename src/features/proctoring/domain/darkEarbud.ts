@@ -17,7 +17,8 @@ export const DARK_BUD = {
   MAX_TOUCH: 1,
   MAX_ELONGATION: 3,
   MIN_RING: 0.7,
-  MIN_FILL: 0.45,
+  // 0.35 adds bud crops seen at an angle (blob less square) without new false hits.
+  MIN_FILL: 0.35,
 } as const;
 
 export type EarPatch = { box: BBox; visible: number };

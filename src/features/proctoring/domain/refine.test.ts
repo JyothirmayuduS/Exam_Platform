@@ -5,7 +5,7 @@ import type { Detection } from "@/features/proctoring/domain/types";
 function landmarks() {
   const lms = Array.from({ length: 468 }, () => ({ x: 0.5, y: 0.4 }));
   lms[0] = { x: 0.35, y: 0.15 };
-  lms[1] = { x: 0.65, y: 0.65 };
+  lms[1] = { x: 0.5, y: 0.65 };
   lms[234] = { x: 0.35, y: 0.38 };
   lms[454] = { x: 0.65, y: 0.38 };
   return lms;
@@ -21,6 +21,13 @@ describe("refineDetections", () => {
     const out = refineDetections([det("phone", 0.66, 0.38, 0.06, 0.06)], face, 1100);
     expect(out).toHaveLength(1);
     expect(out[0].kind).toBe("earbuds");
+  });
+
+  it("drops a small box at an ear turned away from the camera", () => {
+    const turned = landmarks();
+    turned[1] = { x: 0.62, y: 0.65 };
+    const g = faceGeometryFromLandmarks(turned, 1000)!;
+    expect(refineDetections([det("phone", 0.66, 0.38, 0.06, 0.06)], g, 1100)).toHaveLength(0);
   });
 
   it("drops a small phone box on the chin (finger artefact)", () => {

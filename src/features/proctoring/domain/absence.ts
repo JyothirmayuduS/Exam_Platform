@@ -1,7 +1,7 @@
 // Why the camera shows no face: covered (hand / object over the lens, or
-// blacked out) versus the student out of frame. In a real session a hand
-// over the camera filled ~50% of the frame with skin tones, while an empty
-// seat or a camera turned away showed 11–23%.
+// blacked out) versus the student out of frame. In real sessions a hand
+// over the camera filled ~50% of the frame with skin tones and a hand over
+// the face 34–38%, while an empty seat or a camera turned away showed 11–23%.
 
 export type AbsenceKind = "covered" | "out_of_frame";
 export type FrameStats = { lum: number; std: number; skin: number };
@@ -12,7 +12,7 @@ export const ABSENCE = {
   REPEAT_MS: 3_000,
   DARK_LUM: 0.1,
   FLAT_STD: 0.05,
-  SKIN_COVERED: 0.4,
+  SKIN_COVERED: 0.3,
 } as const;
 
 export const ABSENCE_LABEL: Record<AbsenceKind, { start: string; repeat: string }> = {

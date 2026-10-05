@@ -71,7 +71,9 @@ export const OBJECT = {
   // inside CONFIRM_WINDOW_MS) still filters one-frame flukes, so a lower
   // per-sample gate is safe and necessary for consistent detection.
   PHONE_MIN_CONF: 0.10,
-  EARBUDS_MIN_CONF: 0.08,
+  // 0.08 flagged 23/199 bud-free frames from ear-crop noise; 0.15 plus the
+  // ear-visibility gate keeps the real bud hits.
+  EARBUDS_MIN_CONF: 0.15,
   LAPTOP_MIN_CONF: 0.30,
   // MediaPipe object detector only sees a phone when it's big enough in the
   // frame. Small phones slip through — candidates keep track of the lower

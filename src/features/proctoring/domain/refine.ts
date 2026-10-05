@@ -20,6 +20,8 @@ export interface FaceGeometry {
   face: BBox;
   /** Square search zones around each ear (normalized, clamped to frame). */
   ears: BBox[];
+  /** Per ear (same order as `ears`): face width on that side of the nose over the other side. */
+  earVisible: number[];
   at: number;
 }
 
@@ -47,9 +49,15 @@ export function faceGeometryFromLandmarks(lms: ReadonlyArray<Pt>, at: number): F
   const cx = (minX + maxX) / 2;
   const size = Math.max(fw, fh) * 0.42;
   const ears: BBox[] = [];
+  const earVisible: number[] = [];
+  const nose = lms[1];
+  const [l, r] = EAR_LANDMARKS.map((i) => lms[i]);
+  const dl = nose && l ? Math.abs(nose.x - l.x) : 1;
+  const dr = nose && r ? Math.abs(r.x - nose.x) : 1;
   for (const idx of EAR_LANDMARKS) {
     const p = lms[idx];
     if (!p) continue;
+    earVisible.push(idx === EAR_LANDMARKS[0] ? dl / Math.max(dr, 1e-6) : dr / Math.max(dl, 1e-6));
     // Push the zone outward from the face centre: the ear sits just past the
     // cheek-edge landmark, slightly below eye level.
     const out = p.x < cx ? -1 : 1;
@@ -57,7 +65,7 @@ export function faceGeometryFromLandmarks(lms: ReadonlyArray<Pt>, at: number): F
     const ey = p.y + size * 0.1;
     ears.push(clampBox({ x: ex - size / 2, y: ey - size / 2, width: size, height: size }));
   }
-  return { face: { x: minX, y: minY, width: fw, height: fh }, ears, at };
+  return { face: { x: minX, y: minY, width: fw, height: fh }, ears, earVisible, at };
 }
 
 function centre(b: BBox): Pt {
@@ -79,6 +87,12 @@ const area = (b: BBox) => b.width * b.height;
 export const REFINE = {
   /** A "phone" smaller than this beside an ear is treated as an earbud. */
   EARBUD_MAX_AREA: 0.02,
+  /**
+   * An ear facing away from the camera (visibility below this) can't show a
+   * bud. Across two sessions, ungated ear checks flagged 92/199 frames with
+   * no buds worn (hair, a lit wall, a hand near the face).
+   */
+  EAR_MIN_VISIBLE: 1.0,
   /** A "phone" smaller than this centred on the face is a finger/chin artefact. */
   FACE_ARTEFACT_MAX_AREA: 0.025,
   /** Face geometry older than this is ignored (head moved / left frame). */
@@ -99,7 +113,10 @@ export function refineDetections(dets: Detection[], face: FaceGeometry | null, n
       continue;
     }
     if (d.kind === "phone" && fresh) {
-      if (a <= REFINE.EARBUD_MAX_AREA && fresh.ears.some((e) => contains(e, c, 0.01))) {
+      const ear = a <= REFINE.EARBUD_MAX_AREA ? fresh.ears.findIndex((e) => contains(e, c, 0.01)) : -1;
+      if (ear >= 0) {
+        // Small box at a hidden ear: hair or fingers, neither phone nor bud.
+        if ((fresh.earVisible[ear] ?? 0) < REFINE.EAR_MIN_VISIBLE) continue;
         out.push({ ...d, kind: "earbuds", label: `${d.label} (at ear)` });
         continue;
       }

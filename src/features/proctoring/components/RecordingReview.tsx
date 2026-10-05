@@ -191,16 +191,22 @@ function sortViolations(violations: ViolationEvent[]): ViolationEvent[] {
   });
 }
 
-const WEBM_TYPES = [
-  'video/webm; codecs="vp9,opus"',
-  'video/webm; codecs="vp8,opus"',
-  'video/webm; codecs="vp9"',
-  'video/webm; codecs="vp8"',
-];
-
 function isWebm(buf: ArrayBuffer): boolean {
   const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
   return b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3;
+}
+
+/**
+ * MSE type matching the tracks actually in the WebM header. Chrome rejects the
+ * init segment when the declared codecs list a track the file lacks (screen
+ * recordings carry no audio, so "vp9,opus" failed every time).
+ */
+function webmTypeFromHeader(buf: ArrayBuffer): string | undefined {
+  const head = new TextDecoder("latin1").decode(new Uint8Array(buf, 0, Math.min(65_536, buf.byteLength)));
+  const video = head.includes("V_VP9") ? "vp9" : head.includes("V_VP8") ? "vp8" : null;
+  if (!video) return undefined;
+  const audio = head.includes("A_OPUS") ? "opus" : head.includes("A_VORBIS") ? "vorbis" : null;
+  return `video/webm; codecs="${audio ? `${video},${audio}` : video}"`;
 }
 
 function sbWait(sb: SourceBuffer, op: () => void): Promise<void> {
@@ -224,7 +230,11 @@ type Stitched = { url: string | null; loaded: number; done: boolean; error: stri
  * Source Extensions (playback starts after the first segment, memory stays
  * bounded); other containers, or a MediaSource failure, fall back to one Blob.
  */
-function useStitchedParts(parts: PartItem[] | null, getCurrentTime: () => number): Stitched {
+function useStitchedParts(
+  parts: PartItem[] | null,
+  getCurrentTime: () => number,
+  forceBlob: boolean,
+): Stitched {
   const [state, setState] = useState<Stitched>({ url: null, loaded: 0, done: false, error: null });
   const timeRef = useRef(getCurrentTime);
   timeRef.current = getCurrentTime;
@@ -241,6 +251,8 @@ function useStitchedParts(parts: PartItem[] | null, getCurrentTime: () => number
     };
 
     const asBlob = async (first: ArrayBuffer) => {
+      // Drop any failed stream URL so the player shows join progress, not its error.
+      setState({ url: null, loaded: 1, done: false, error: null });
       const bufs = [first];
       for (let i = 1; i < parts.length; i++) {
         if (cancelled) return;
@@ -290,9 +302,8 @@ function useStitchedParts(parts: PartItem[] | null, getCurrentTime: () => number
       try {
         first = await fetchPart(0);
         if (cancelled) return;
-        const type = isWebm(first) && typeof MediaSource !== "undefined"
-          ? WEBM_TYPES.find((t) => MediaSource.isTypeSupported(t))
-          : undefined;
+        const sniffed = !forceBlob && isWebm(first) && typeof MediaSource !== "undefined" ? webmTypeFromHeader(first) : undefined;
+        const type = sniffed && MediaSource.isTypeSupported(sniffed) ? sniffed : undefined;
         if (type) await viaMediaSource(first, type);
         else await asBlob(first);
       } catch (err) {
@@ -308,7 +319,7 @@ function useStitchedParts(parts: PartItem[] | null, getCurrentTime: () => number
       cancelled = true;
       objectUrls.forEach((u) => URL.revokeObjectURL(u));
     };
-  }, [parts]);
+  }, [parts, forceBlob]);
 
   return state;
 }
@@ -340,7 +351,11 @@ export default function RecordingReviewer({
   // carries the container header, so they must be joined into one stream —
   // playing them one by one fails from the second segment on.
   const partMode = !artifacts.recordingUrl && artifacts.parts.length > 0;
-  const stitched = useStitchedParts(partMode ? artifacts.parts : null, () => videoRef.current?.currentTime ?? 0);
+  // A stream that fails mid-playback (e.g. a recorder restart changed the
+  // track layout) is retried once as a single Blob before showing an error.
+  const [forceBlob, setForceBlob] = useState(false);
+  useEffect(() => setForceBlob(false), [artifacts.parts]);
+  const stitched = useStitchedParts(partMode ? artifacts.parts : null, () => videoRef.current?.currentTime ?? 0, forceBlob);
   const videoSrc = partMode ? stitched.url : artifacts.recordingUrl;
 
   // Re-apply the source explicitly when it changes: React will not re-write an
@@ -500,7 +515,10 @@ export default function RecordingReviewer({
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onEnded={() => setPlaying(false)}
-            onError={() => setLoadError(true)}
+            onError={() => {
+              if (partMode && !forceBlob) setForceBlob(true);
+              else setLoadError(true);
+            }}
           />
         )}
         {artifacts.status === "ready" && !videoSrc && !loadError && (
