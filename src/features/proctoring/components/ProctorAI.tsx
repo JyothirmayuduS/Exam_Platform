@@ -38,6 +38,7 @@ import {
   refineDetections,
 } from "@/features/proctoring/domain";
 import type { BBox, Detection, FaceGeometry, ProctorCategory, RiskLevel } from "@/features/proctoring/domain";
+import { phoneLikelihood, PHONE_VERIFY_MIN, type PixelStats } from "@/features/proctoring/domain/phoneVerifier";
 import { env } from "@/shared/data/env";
 import ProctorDebugOverlay from "@/features/proctoring/components/ProctorDebugOverlay";
 
@@ -373,6 +374,46 @@ function detectRegion(
   } catch {
     return []; // crop pass is best-effort — never crash the detection loop
   }
+}
+
+let statsCanvas: HTMLCanvasElement | null = null;
+
+/** Mean brightness / colourfulness of one normalized box of the video frame. */
+function boxPixelStats(video: HTMLVideoElement, box: BBox): PixelStats | null {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const sw = box.width * vw, sh = box.height * vh;
+  if (sw < 2 || sh < 2) return null;
+  statsCanvas ??= document.createElement("canvas");
+  statsCanvas.width = 24;
+  statsCanvas.height = 24;
+  const ctx = statsCanvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(video, box.x * vw, box.y * vh, sw, sh, 0, 0, 24, 24);
+  const px = ctx.getImageData(0, 0, 24, 24).data;
+  let lum = 0, sat = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    const r = px[i], g = px[i + 1], b = px[i + 2];
+    lum += (r + g + b) / 3;
+    sat += Math.max(r, g, b) - Math.min(r, g, b);
+  }
+  const n = px.length / 4;
+  return { lum: lum / n / 255, sat: sat / n / 255 };
+}
+
+/** Drop detector "phones" the trained verifier rejects (hands at the chin, beards, shirt folds). */
+function verifyPhones(dets: Detection[], video: HTMLVideoElement, face: BBox | null): Detection[] {
+  return dets.filter((d) => {
+    if (d.kind !== "phone") return true;
+    try {
+      const px = boxPixelStats(video, d.bbox);
+      if (!px) return true;
+      const p = phoneLikelihood(d.score, d.bbox, face, px);
+      pushObjectSample(`verify ${d.label} ${Math.round(d.score * 100)}% → ${Math.round(p * 100)}%${p < PHONE_VERIFY_MIN ? " rejected" : ""}`);
+      return p >= PHONE_VERIFY_MIN;
+    } catch {
+      return true;
+    }
+  });
 }
 
 /**
@@ -1076,6 +1117,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
             }
             dets = refineDetections(dets, face, now);
           }
+          dets = verifyPhones(dets, video, faceGeoRef.current && now - faceGeoRef.current.at <= 700 ? faceGeoRef.current.face : null);
 
           // Diagnostics: log EVERY raw detection the model returns — benign
           // objects, sub-threshold phones, low scores included — plus the
