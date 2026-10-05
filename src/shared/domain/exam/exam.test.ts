@@ -93,7 +93,33 @@ describe("scoring", () => {
   it("describes the rule", () => {
     expect(describeNegative({ negative: false })).toBeNull();
     expect(describeNegative({ negative: true, negativeMode: "fraction", negativeFraction: 0.25 })).toBe(
-      "Wrong answers on objective questions deduct ¼ of the question's marks. Unanswered questions are not penalised.",
+      "Wrong answers on objective questions deduct 1/4 of the question's marks. Unanswered questions are not penalised.",
     );
+  });
+});
+
+import { releaseTiming, visibilityFor } from "./release";
+
+describe("result release", () => {
+  const graded = { examClosed: false, graded: true };
+  it("hides everything until the teacher releases (default manual)", () => {
+    expect(visibilityFor({}, graded)).toEqual({ score: false, answerKey: false, note: "Your teacher hasn't released results yet." });
+  });
+  it("releases results and the answer key independently", () => {
+    expect(visibilityFor({ results_published: true }, graded)).toMatchObject({ score: true, answerKey: false });
+    expect(visibilityFor({ answer_key_published: true }, graded)).toMatchObject({ score: true, answerKey: true });
+  });
+  it("never shows an ungraded score", () => {
+    expect(visibilityFor({ results_published: true }, { examClosed: true, graded: false })).toMatchObject({ score: false, note: "Your paper is still being evaluated." });
+  });
+  it("auto-releases on submit or when the exam closes", () => {
+    expect(visibilityFor({ release_timing: "on_submit" }, graded).score).toBe(true);
+    expect(visibilityFor({ release_timing: "on_close" }, graded).score).toBe(false);
+    expect(visibilityFor({ release_timing: "on_close" }, { examClosed: true, graded: true }).answerKey).toBe(true);
+  });
+  it("reads the legacy settings", () => {
+    expect(releaseTiming({ showReportToTaker: true })).toBe("on_submit");
+    expect(releaseTiming({ release_mode: "auto", release_timing: "submit" })).toBe("on_submit");
+    expect(releaseTiming({ release_mode: "manual", release_timing: "close" })).toBe("manual");
   });
 });

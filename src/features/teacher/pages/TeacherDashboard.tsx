@@ -34,6 +34,7 @@ function toExamCard(exam: ExamRecord) {
     duration: exam.duration_minutes,
     duration_minutes: exam.duration_minutes,
     mode: exam.mode,
+    settings: exam.settings ?? {},
   };
 }
 

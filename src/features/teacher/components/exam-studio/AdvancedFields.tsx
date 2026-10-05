@@ -15,9 +15,9 @@ const segCls = (on: boolean) =>
   `border px-3 py-2 text-[12px] transition ${on ? "border-forest bg-forest text-paper" : "border-line text-ink hover:border-forest"}`;
 
 const FRACTIONS: { value: number; label: string }[] = [
-  { value: 0.25, label: "¼" },
-  { value: 0.33, label: "⅓" },
-  { value: 0.5, label: "½" },
+  { value: 0.25, label: "1/4" },
+  { value: 0.33, label: "1/3" },
+  { value: 0.5, label: "1/2" },
   { value: 1, label: "Full" },
 ];
 
@@ -50,7 +50,7 @@ export function NegativeMarkingFields({ value, onChange }: {
         {value.negativeMode === "fraction" ? (
           <div className="mt-3 flex flex-wrap gap-2" role="radiogroup" aria-label="Share of marks">
             {FRACTIONS.map((f) => (
-              <button key={f.value} type="button" role="radio" aria-checked={value.negativeFraction === f.value} onClick={() => onChange({ negativeFraction: f.value })} className={`${segCls(value.negativeFraction === f.value)} min-w-[52px] font-mono`}>{f.label}</button>
+              <button key={f.value} type="button" role="radio" aria-checked={value.negativeFraction === f.value} onClick={() => onChange({ negativeFraction: f.value })} className={`${segCls(value.negativeFraction === f.value)} min-w-[60px] tabular-nums`}>{f.label}</button>
             ))}
           </div>
         ) : (
@@ -113,7 +113,14 @@ export function SectionTimingFields({ sections, minutes, duration, onChange }: {
   duration: number;
   onChange: (next: Record<string, number>) => void;
 }) {
-  if (sections.length === 0) return null;
+  if (sections.length === 0) {
+    return (
+      <div className="mt-3 border-l-2 border-amber bg-amber/5 px-4 py-3 text-[12px] leading-relaxed">
+        <p className="font-medium">No sections to time yet</p>
+        <p className="mt-1 text-soft">Sections are made from the question types in this test's pool, and the pool is empty. Add questions in the builder, then come back here to set minutes for each section.</p>
+      </div>
+    );
+  }
   const total = sections.reduce((t, sec) => t + (Number(minutes[sec.name]) || 0), 0);
   const unset = sections.filter((sec) => !(Number(minutes[sec.name]) > 0));
   const over = total > duration;

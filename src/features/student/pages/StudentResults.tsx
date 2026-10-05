@@ -5,6 +5,7 @@ import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/navigation";
 import { useAuth } from "@/features/auth/auth";
 import { getSupabase } from "@/shared/data/supabase";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
+import { examClosed, visibilityFor, type ReleaseSettings } from "@/shared/domain/exam";
 
 type Result = {
   name: string;
@@ -12,7 +13,8 @@ type Result = {
   date: string;
   score: number;
   outOf: number;
-  status: "published" | "under-review";
+  status: "published" | "under-review" | "withheld";
+  note: string | null;
 };
 
 function grade(pct: number) {
@@ -43,13 +45,18 @@ export default function StudentResults() {
 
       const { data, error } = await db
         .from("attempts")
-        .select("state, score, submitted_at, exam:exams(id, name, total_marks)")
+        .select("state, score, submitted_at, exam:exams(id, name, total_marks, settings, status, scheduled_at, duration_minutes)")
         .eq("student_id", student.id)
         .eq("state", "submitted");
 
       if (error || !data) return [];
 
-      return data.map((a: any) => ({
+      return data.map((a: any) => {
+        const v = visibilityFor((a.exam?.settings ?? {}) as ReleaseSettings, {
+          examClosed: a.exam ? examClosed(a.exam) : false,
+          graded: a.score !== null,
+        });
+        return {
         name: a.exam?.name || "Unknown Exam",
         code: a.exam?.id || "N/A",
         date: a.submitted_at
@@ -57,8 +64,10 @@ export default function StudentResults() {
           : "N/A",
         score: a.score ?? 0,
         outOf: a.exam?.total_marks ?? 100,
-        status: a.score === null ? "under-review" : "published",
-      })) as Result[];
+        status: v.score ? "published" : a.score === null ? "under-review" : "withheld",
+        note: v.note,
+      };
+      }) as Result[];
     },
     enabled: !!user?.id,
   });
@@ -74,13 +83,13 @@ export default function StudentResults() {
         <div className="border-b border-line px-5 py-5">
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Performance</p>
           <h1 className="mt-2 font-serif text-3xl font-semibold">Results</h1>
-          <p className="mt-2 text-[13px] text-ink-soft">Published scores and papers still under evaluation.</p>
+          <p className="mt-2 text-[13px] text-ink-soft">Scores appear here once your teacher releases them.</p>
         </div>
         <div className="grid gap-0 sm:grid-cols-3">
           {[
             [String(published.length), "Published"],
             [avg ? `${avg}%` : "—", "Average score"],
-            [String(results.length - published.length), "Awaiting review"],
+            [String(results.length - published.length), "Not released yet"],
           ].map(([value, label], i) => (
             <div key={label} className={`px-5 py-4 ${i > 0 ? "border-t border-line sm:border-t-0 sm:border-l" : ""}`}>
               <p className="font-serif text-3xl font-semibold">{value}</p>
@@ -137,7 +146,10 @@ export default function StudentResults() {
                         <span className="text-ink-soft">/{r.outOf}</span>
                       </span>
                     ) : (
-                      <span className="font-mono text-[10px] uppercase tracking-wider text-amber">Under review</span>
+                      <span className="block max-w-[220px]">
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-amber">{r.status === "under-review" ? "Being evaluated" : "Not released"}</span>
+                        {r.note && <span className="mt-0.5 block text-[11px] text-ink-soft">{r.note}</span>}
+                      </span>
                     )}
                   </td>
                   <td className="px-5 py-4">

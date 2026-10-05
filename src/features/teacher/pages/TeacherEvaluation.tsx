@@ -156,6 +156,30 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     enabled: !!effectiveExamId,
   });
 
+  // Phone/desktop uploads of handwritten answers, keyed attempt → question →
+  // storage path. Fills in answers that never synced back from the exam
+  // screen, so the scan is always gradeable.
+  const submittedIds = liveAttempts.filter((a) => a.state === "Submitted").map((a) => a.id).sort().join(",");
+  const { data: uploads } = useQuery({
+    queryKey: ["questionUploads", submittedIds],
+    enabled: submittedIds.length > 0,
+    queryFn: async () => {
+      const db = getSupabase();
+      const out: Record<string, Record<string, string>> = {};
+      if (!db) return out;
+      const { data } = await db
+        .from("question_submissions")
+        .select("attempt_id, question_id, pdf_storage_path, created_at")
+        .in("attempt_id", submittedIds.split(","))
+        .order("created_at", { ascending: true });
+      for (const row of data ?? []) {
+        if (!row.pdf_storage_path) continue;
+        (out[String(row.attempt_id)] ??= {})[String(row.question_id)] = String(row.pdf_storage_path);
+      }
+      return out;
+    },
+  });
+
   const [roster, setRoster] = useState<Candidate[]>([]);
   
   useEffect(() => {
@@ -168,7 +192,12 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
       .filter((a) => a.state === "Submitted") // We only grade submitted
       .map((a, i) => {
         // Grade the student's OWN paper: filter the pool to their snapshot.
-        const paper = buildPaper(questionsForPaper(a.paper, questions), a.answers || {}, a.paper, settings);
+        const answers: Record<string, unknown> = { ...(a.answers || {}) };
+        for (const [qid, path] of Object.entries(uploads?.[a.id] ?? {})) {
+          const cur = answers[qid];
+          if (cur == null || (typeof cur === "string" && cur.trim() === "")) answers[qid] = `[Uploaded answer: ${path}]`;
+        }
+        const paper = buildPaper(questionsForPaper(a.paper, questions), answers, a.paper, settings);
         return {
           ...a,
           order: i + 1,
@@ -182,7 +211,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     const deepLink = searchParams.get("review");
     setRoster(mapped.map((c) => (c.id === deepLink && c.status === "To grade" ? { ...c, status: "In review" } : c)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveAttempts, examBundle]);
+  }, [liveAttempts, examBundle, uploads]);
 
   const [statusFilter, setStatusFilter] = useState<"All" | Status>("All");
   const [flaggedOnly, setFlaggedOnly] = useState(false);

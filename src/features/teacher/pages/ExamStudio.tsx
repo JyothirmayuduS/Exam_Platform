@@ -12,10 +12,12 @@ import "./ExamStudio.css";
 import { Button, NumberField } from "@/shared/components/ui";
 import {
   NEGATIVE_DEFAULTS,
+  releaseTiming,
   sectionOf,
   summarizeSections,
   type NegativeMode,
   type QuestionKind,
+  type ReleaseSettings,
   type SectionSummary,
 } from "@/shared/domain/exam";
 import { NegativeMarkingFields, SectionList, SectionTimingFields } from "@/features/teacher/components/exam-studio/AdvancedFields";
@@ -41,7 +43,7 @@ type S = {
   releaseDate: string; ipWhitelist: string; sections: boolean; sectionTiming: boolean;
   autoClose: boolean; durationLock: boolean;
   language?: string; purpose?: string; assessmentType?: "timed" | "deadline"; deadline?: string;
-  showReportToTaker?: boolean; commentsMandatory?: boolean; skipFeedback?: boolean; redirectAfter?: string;
+  showReportToTaker?: boolean; release_timing?: string; release_mode?: string | null; commentsMandatory?: boolean; skipFeedback?: boolean; redirectAfter?: string;
   watermarkText?: string; fixedSectionOrder?: boolean; scratchpad?: boolean;
   allowQrUpload?: boolean; showMarksInTest?: boolean; showMarks?: boolean;
   regEmail?: boolean; regName?: boolean; regUsn?: boolean; regTerms?: boolean;
@@ -519,7 +521,7 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, sec
                 <Check label="Auto-close at deadline" detail="Force-submit when the scheduled window ends." checked={!!s.autoClose} onChange={(v) => patch("autoClose", v)} />
               </Group>
               <Group label="Results & watermark">
-                <Check label="Show report to test-taker after test finishes" detail="Auto-release the score + answer key once submitted (overrides manual release)." checked={!!s.showReportToTaker} onChange={(v) => patch("showReportToTaker", v)} />
+                <Check label="Show report to test-taker after test finishes" detail="Graded score and answer key appear as soon as each student submits. Fine-tune this later under Reports → Release." checked={releaseTiming(s as ReleaseSettings) === "on_submit"} onChange={(v) => { patch("showReportToTaker", v); patch("release_timing", v ? "on_submit" : "manual"); patch("release_mode", null); }} />
                 <Check label="Make comments mandatory for manual evaluation" detail="Evaluators must leave a comment when grading descriptive answers." checked={!!s.commentsMandatory} onChange={(v) => patch("commentsMandatory", v)} />
                 <Check label="Don't ask for feedback post test completion" checked={!!s.skipFeedback} onChange={(v) => patch("skipFeedback", v)} />
                 <label className="mt-3 block text-[12px] text-soft">Custom watermark text (optional)

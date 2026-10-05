@@ -1,7 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
 import { PageHeading, Button, Metric } from "@/features/teacher/components/PageChrome";
 import useLiveAttempts from "@/features/teacher/hooks/useLiveAttempts";
-import { listExamsForTeacher, listLiveAttempts, updateExam, type ExamRecord } from "@/shared/data/examApi";
+import { useQuery } from "@tanstack/react-query";
+import { listExamsForTeacher, listLiveAttempts, loadExamBundle, type ExamRecord } from "@/shared/data/examApi";
+import { examClosed, visibilityFor, type ReleaseSettings } from "@/shared/domain/exam";
+import ResultReleasePanel from "@/features/teacher/components/ResultReleasePanel";
+import { PASS_PERCENT, buildExamReport, type ItemRow } from "@/features/teacher/services/reportStats";
 import JobBanner from "@/shared/components/JobBanner";
 import {
   downloadSessionReportPdf,
@@ -13,10 +17,9 @@ import {
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 
 export function Reports({ notify }: { notify: (s: string) => void }) {
-  const [activeTab, setActiveTab] = useState("Overview");
+  const [activeTab, setActiveTab] = useState<Tab>("Overview");
   const [exams, setExams] = useState<ExamRecord[]>([]);
   const [examId, setExamId] = useState<string>("");
-  const [busy, setBusy] = useState(false);
   const { data: liveAttempts = [] } = useLiveAttempts(examId || "");
 
   useEffect(() => {
@@ -31,21 +34,15 @@ export function Reports({ notify }: { notify: (s: string) => void }) {
   }, []);
 
   const selectedExam = exams.find((e) => e.id === examId);
-  const settings = (selectedExam?.settings ?? {}) as Record<string, unknown>;
-  const resultsPublished = settings.results_published === true;
-  const answerKeyPublished = settings.answer_key_published === true;
-
-  // Real stats from scored attempts of the selected exam.
-  const scores = liveAttempts
-    .filter((a): a is typeof a & { score: number } => typeof a.score === "number")
-    .map((a) => a.score)
-    .sort((x, y) => x - y);
-  const mean = scores.length ? scores.reduce((s, v) => s + v, 0) / scores.length : null;
-  const median = scores.length ? (scores.length % 2 ? scores[Math.floor(scores.length / 2)] : (scores[scores.length / 2 - 1] + scores[scores.length / 2]) / 2) : null;
-  const stdDev = scores.length > 1 && mean != null ? Math.sqrt(scores.reduce((s, v) => s + (v - mean) ** 2, 0) / scores.length) : null;
-  const highest = scores.length ? scores[scores.length - 1] : null;
+  const { data: pool = [] } = useQuery({
+    queryKey: ["examPool", examId],
+    queryFn: async () => (await loadExamBundle(examId)).questions,
+    enabled: !!examId,
+  });
+  const report = useMemo(() => buildExamReport(liveAttempts, pool), [liveAttempts, pool]);
   const flagged = liveAttempts.filter((a) => a.flags.length > 0);
   const submitted = liveAttempts.filter((a) => a.state === "Submitted");
+  const releaseState = releaseSummary(selectedExam);
 
   const toReportRow = (a: (typeof liveAttempts)[number]): ReportRow => ({
     name: a.name,
@@ -110,148 +107,198 @@ export function Reports({ notify }: { notify: (s: string) => void }) {
       setZipping(false);
     }
   };
-  const releaseResults = async () => {
-    if (!examId) return;
-    setBusy(true);
-    const ok = await updateExam(examId, { settings: { results_published: true } });
-    setBusy(false);
-    notify(ok ? "Results released to students" : "Could not release results — database unavailable");
-  };
-  const publishAnswerKey = async () => {
-    if (!examId) return;
-    setBusy(true);
-    const ok = await updateExam(examId, { settings: { answer_key_published: true } });
-    setBusy(false);
-    notify(ok ? "Answer key published to students" : "Could not publish answer key — database unavailable");
-  };
-
-  // Score distribution buckets (0-100 in steps of 10).
-  const buckets = useMemo(() => {
-    const out = Array.from({ length: 10 }, () => 0);
-    for (const s of scores) {
-      const idx = Math.min(9, Math.max(0, Math.floor(s / 10)));
-      out[idx] += 1;
-    }
-    return out;
-  }, [scores]);
-  const maxBucket = Math.max(1, ...buckets);
+  const pct = (v: number | null) => (v != null ? `${v.toFixed(1)}%` : "—");
+  const maxBucket = Math.max(1, ...report.buckets);
 
   return (
     <>
       <JobBanner label={pdfProgress ?? (zipping ? zipStep ?? "Packing evidence ZIP…" : null)} />
-      <PageHeading eyebrow="Reports" title="Performance reports" detail="Live stats, exports, and result publishing — straight from the database." action={
+      <PageHeading eyebrow="Reports" title="Performance reports" detail="Scores, question analysis and result release for one exam at a time." action={
         <div className="flex flex-wrap items-center gap-2">
-          <select value={examId} onChange={(e) => setExamId(e.target.value)} className="border border-line bg-paper px-2 py-2.5 font-mono text-[10px] uppercase tracking-wider text-soft">
+          <select value={examId} onChange={(e) => setExamId(e.target.value)} aria-label="Exam" className="max-w-[260px] border border-line bg-paper px-2 py-2.5 font-mono text-[10px] uppercase tracking-wider text-soft">
             {exams.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
             {exams.length === 0 && <option value="">No exams yet — create one first</option>}
           </select>
-          <Button onClick={() => void releaseResults()}>{busy ? "Releasing…" : resultsPublished ? "✓ Results Released" : "Release Results"}</Button>
-          <Button onClick={() => void publishAnswerKey()}>{answerKeyPublished ? "✓ Answer Key Published" : "Publish Answer Key"}</Button>
-          <Button onClick={() => void exportPdf()} disabled={!!pdfProgress}>{pdfProgress ? "Exporting…" : "Export PDF"}</Button>
-          <Button onClick={exportCsv}>Export CSV</Button>
+          <Button onClick={() => void exportPdf()} disabled={!!pdfProgress || !examId}>{pdfProgress ? "Exporting…" : "Export PDF"}</Button>
+          <Button onClick={exportCsv} disabled={!examId}>Export CSV</Button>
         </div>
       } />
       {pdfProgress && <p role="status" className="sr-only">{pdfProgress}</p>}
-      <div className="mt-8 flex gap-2 border-b border-line pb-3 font-mono text-[10px] uppercase tracking-wider text-soft">
-        {["Overview", "Item Analysis", "Student Reports", "Trends"].map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)} className={`px-3 py-1.5 hover:text-ink ${activeTab === tab ? "border-b-2 border-forest text-forest pb-3 -mb-[14px]" : ""}`}>{tab}</button>
+
+      {selectedExam && (
+        <button onClick={() => setActiveTab("Release")} className="mt-6 flex w-full flex-wrap items-center justify-between gap-2 border border-line bg-raised px-4 py-3 text-left text-[12.5px] transition hover:border-forest">
+          <span><span className="font-medium">Students currently see: </span>{releaseState}</span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-forest">Manage release →</span>
+        </button>
+      )}
+
+      <div className="mt-6 flex gap-1 overflow-x-auto border-b border-line font-mono text-[10px] uppercase tracking-wider text-soft" role="tablist">
+        {TABS.map((tab) => (
+          <button key={tab} role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)} className={`-mb-px shrink-0 border-b-2 px-3 py-2.5 hover:text-ink ${activeTab === tab ? "border-forest text-forest" : "border-transparent"}`}>{tab}</button>
         ))}
       </div>
 
       {activeTab === "Overview" && (
         <>
-          <div className="mt-8 grid gap-4 sm:grid-cols-4">
-            <Metric label="Average (Mean)" value={mean != null ? `${mean.toFixed(1)}%` : "—"} detail={`Across ${scores.length} scored attempt(s)`} tone="text-ink"/>
-            <Metric label="Median Score" value={median != null ? `${median.toFixed(1)}%` : "—"} detail={scores.length ? "Middle of the pack" : "No scores yet"} tone="text-forest"/>
-            <Metric label="Standard Dev" value={stdDev != null ? `${stdDev.toFixed(1)}%` : "—"} detail="Score spread" tone="text-amber"/>
-            <Metric label="Highest Score" value={highest != null ? `${highest.toFixed(1)}%` : "—"} detail={submitted.length ? `${submitted.length} submitted` : "No submissions"} tone="text-success"/>
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Metric label="Submitted" value={String(report.submitted)} detail={`${report.graded} graded · ${Math.max(0, report.submitted - report.graded)} awaiting marks`} tone="text-ink" />
+            <Metric label="Average" value={pct(report.mean)} detail={report.median != null ? `Median ${pct(report.median)}` : "No graded papers yet"} tone="text-forest" />
+            <Metric label="Pass rate" value={pct(report.passRate)} detail={`Scoring ${PASS_PERCENT}% or more`} tone={report.passRate != null && report.passRate < 50 ? "text-alert" : "text-success"} />
+            <Metric label="Range" value={report.highest != null ? `${report.lowest!.toFixed(0)}–${report.highest.toFixed(0)}%` : "—"} detail="Lowest to highest" tone="text-ink" />
           </div>
-          <div className="mt-8 border border-line p-6">
-            <div className="flex items-center justify-between">
-              <h2 className="font-serif text-xl font-semibold">Score Distribution</h2>
-              <span className="font-mono text-[10px] text-soft">{scores.length} scored attempt(s)</span>
+
+          <div className="mt-6 border border-line bg-paper p-6">
+            <div className="flex items-baseline justify-between">
+              <h2 className="font-serif text-xl font-semibold">Score distribution</h2>
+              <span className="font-mono text-[10px] text-soft">{report.graded} graded paper(s) · % of each student's paper total</span>
             </div>
-            <div className="mt-8 flex h-44 items-end gap-3 border-b border-line px-4">
-              {buckets.map((count, i) => (
-                <div key={i} className="group flex flex-1 flex-col items-center gap-2">
-                  <span className="font-mono text-[9px] text-soft">{count || ""}</span>
-                  <div className="w-full bg-forest/40 transition-colors group-hover:bg-forest/80" style={{ height: `${Math.round((count / maxBucket) * 100)}%` }}/>
-                  <span className="font-mono text-[9px] text-soft">{i * 10}</span>
-                </div>
-              ))}
-            </div>
-            <p className="mt-4 text-center font-mono text-[10px] text-soft uppercase tracking-widest">Score Brackets (%)</p>
+            {report.graded === 0 ? (
+              <p className="py-12 text-center text-[12.5px] text-soft">The distribution appears once papers are graded in Evaluate.</p>
+            ) : (
+              <div className="mt-6 flex h-48 items-end gap-2 border-b border-line">
+                {report.buckets.map((count, i) => (
+                  <div key={i} className="flex h-full flex-1 flex-col items-center justify-end gap-1.5" title={`${count} student(s) scored ${i * 10}–${i === 9 ? 100 : i * 10 + 9}%`}>
+                    <span className="font-mono text-[10px] tabular-nums text-soft">{count || ""}</span>
+                    <div className={`w-full ${i * 10 < PASS_PERCENT ? "bg-alert/50" : "bg-forest/70"}`} style={{ height: `${(count / maxBucket) * 82}%`, minHeight: count ? 2 : 0 }} />
+                  </div>
+                ))}
+              </div>
+            )}
+            {report.graded > 0 && (
+              <div className="mt-2 flex gap-2">
+                {report.buckets.map((_, i) => <span key={i} className="flex-1 text-center font-mono text-[9px] tabular-nums text-soft">{i * 10}</span>)}
+              </div>
+            )}
           </div>
-          {flagged.length > 0 && <div className="mt-6 border border-alert/30 bg-alert/5 p-5"><p className="font-mono text-[10px] uppercase tracking-widest text-alert">Proctoring flags</p><p className="mt-2 text-[13px]">{flagged.length} candidate(s) carry violation flags in this exam — review recordings before finalising marks.</p></div>}
+
+          {flagged.length > 0 && (
+            <div className="mt-6 border-l-2 border-alert bg-alert/5 px-5 py-4">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-alert">Proctoring flags</p>
+              <p className="mt-1.5 text-[13px]">{flagged.length} candidate(s) have violation flags. Review their recordings before releasing results.</p>
+            </div>
+          )}
         </>
       )}
 
-      {activeTab === "Item Analysis" && <QuestionItemAnalysis examId={examId} />}
+      {activeTab === "Questions" && <QuestionItemAnalysis items={report.items} submitted={report.submitted} />}
 
-      {activeTab === "Student Reports" && (
-        <div className="mt-8 border border-line bg-paper">
-          <div className="flex items-center justify-between border-b border-line bg-raised px-5 py-3">
-            <div><h2 className="font-serif text-lg font-semibold">Individual Student Reports</h2>
-            <p className="mt-1 font-mono text-[10px] text-soft">Per-candidate PDFs plus a ZIP of every student's recordings (recording/) and screenshots (ss/).</p></div>
+      {activeTab === "Students" && (
+        <div className="mt-6 border border-line bg-paper">
+          <div className="flex flex-col justify-between gap-3 border-b border-line bg-raised px-5 py-3 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="font-serif text-lg font-semibold">Students</h2>
+              <p className="mt-0.5 text-[12px] text-soft">Ranked by percentage. PDF reports include proctoring evidence.</p>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Download Evidence ZIP"}</Button>
-              <Button onClick={() => void exportPdf(submitted)} disabled={submitted.length === 0 || !!pdfProgress}>Generate All PDFs</Button>
+              <Button onClick={() => void exportZip()} disabled={submitted.length === 0 || zipping}>{zipping ? "Zipping…" : "Evidence ZIP"}</Button>
+              <Button onClick={() => void exportPdf(submitted)} disabled={submitted.length === 0 || !!pdfProgress}>All PDFs</Button>
             </div>
           </div>
-          <div className="divide-y divide-line">
-            {submitted.map((a) => (
-              <div key={a.id} className="flex items-center justify-between gap-4 px-5 py-4">
-                <div><p className="text-[13px] font-medium">{a.name}</p><p className="mt-0.5 font-mono text-[10px] text-soft">{a.roll} · {a.answered}/{a.total} answered · score {a.score != null ? `${a.score}%` : "pending"}</p></div>
-                <Button onClick={() => void exportPdf([a])} disabled={!!pdfProgress}>PDF</Button>
-              </div>
-            ))}
-            {submitted.length === 0 && <p className="px-5 py-10 text-center text-[12px] text-soft">No submissions for this exam yet.</p>}
-          </div>
+          {report.rows.length === 0 ? (
+            <p className="px-5 py-12 text-center text-[12.5px] text-soft">No submissions for this exam yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left text-[13px]">
+                <thead>
+                  <tr className="border-b border-line font-mono text-[10px] uppercase tracking-wider text-soft">
+                    <th className="px-5 py-3 w-12">#</th><th className="px-3 py-3">Student</th><th className="px-3 py-3">Answered</th>
+                    <th className="px-3 py-3 text-right">Marks</th><th className="px-3 py-3 text-right">Percent</th><th className="px-3 py-3">Result</th><th className="px-3 py-3">Flags</th><th className="px-5 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.rows.map((r, i) => (
+                    <tr key={r.id} className="border-b border-line last:border-0 hover:bg-raised">
+                      <td className="px-5 py-3 font-mono text-[11px] tabular-nums text-soft">{r.pct != null ? i + 1 : "—"}</td>
+                      <td className="px-3 py-3"><p className="font-medium">{r.name}</p><p className="font-mono text-[10px] text-soft">{r.roll}</p></td>
+                      <td className="px-3 py-3 tabular-nums text-soft">{r.answered}/{r.total}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{r.score != null ? `${r.score} / ${r.max}` : "—"}</td>
+                      <td className="px-3 py-3 text-right font-medium tabular-nums">{pct(r.pct)}</td>
+                      <td className="px-3 py-3">
+                        {r.passed == null ? <span className="font-mono text-[10px] uppercase tracking-wider text-amber">Not graded</span>
+                          : <span className={`font-mono text-[10px] uppercase tracking-wider ${r.passed ? "text-success" : "text-alert"}`}>{r.passed ? "Pass" : "Below pass"}</span>}
+                      </td>
+                      <td className={`px-3 py-3 tabular-nums ${r.flags ? "text-alert" : "text-soft"}`}>{r.flags || "—"}</td>
+                      <td className="px-5 py-3 text-right">
+                        <Button onClick={() => { const a = submitted.find((s) => s.id === r.id); if (a) void exportPdf([a]); }} disabled={!!pdfProgress}>PDF</Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
-      {activeTab === "Trends" && <ExamTrends exams={exams} />}
+      {activeTab === "Release" && selectedExam && (
+        <div className="mt-6">
+          <ResultReleasePanel
+            exam={selectedExam}
+            submitted={report.submitted}
+            graded={report.graded}
+            notify={notify}
+            onSaved={(next) => setExams((list) => list.map((e) => (e.id === selectedExam.id ? { ...e, settings: next } : e)))}
+          />
+        </div>
+      )}
+
+      {activeTab === "Across exams" && <ExamTrends exams={exams} />}
     </>
   );
 }
 
-function QuestionItemAnalysis({ examId }: { examId: string }) {
-  const [questions, setQuestions] = useState<{ id: string; title: string; type: string; unit: string | null; difficulty: string | null; marks: number }[]>([]);
-  useEffect(() => {
-    let active = true;
-    if (!examId) return;
-    import("@/shared/data/examApi").then(({ loadExamBundle }) => {
-      loadExamBundle(examId).then((bundle) => { if (active && bundle.questions) setQuestions(bundle.questions as typeof questions); });
-    });
-    return () => { active = false; };
-  }, [examId]);
+const TABS = ["Overview", "Questions", "Students", "Release", "Across exams"] as const;
+type Tab = (typeof TABS)[number];
+
+function releaseSummary(exam: ExamRecord | undefined): string {
+  if (!exam) return "";
+  const v = visibilityFor((exam.settings ?? {}) as ReleaseSettings, { examClosed: examClosed(exam), graded: true });
+  if (v.answerKey) return "their score and the answer key.";
+  if (v.score) return "their score (answer key hidden).";
+  return "nothing yet — results and answer key are hidden.";
+}
+
+function QuestionItemAnalysis({ items, submitted }: { items: ItemRow[]; submitted: number }) {
+  if (items.length === 0) {
+    return <div className="mt-6 border border-line bg-paper p-10 text-center"><p className="font-serif text-lg">No questions in this exam</p><p className="mt-2 text-[12px] text-soft">Add questions in the paper builder, then come back for question stats.</p></div>;
+  }
   return (
-    <div className="mt-8 border border-line bg-paper">
+    <div className="mt-6 border border-line bg-paper">
       <div className="border-b border-line bg-raised px-5 py-3">
-        <h2 className="font-serif text-lg font-semibold">Question pool · Item Analysis</h2>
-        <p className="mt-1 font-mono text-[10px] text-soft">Real question pool for this exam — {questions.length} question(s).</p>
+        <h2 className="font-serif text-lg font-semibold">Question analysis</h2>
+        <p className="mt-0.5 text-[12px] text-soft">From {submitted} submitted paper(s). Questions answered correctly by under 40% are marked difficult — check the key and wording.</p>
       </div>
-      {questions.length === 0 ? (
-        <div className="p-10 text-center"><p className="font-serif text-lg">No questions in this exam's pool</p><p className="mt-2 text-[12px] text-soft">Add questions from My questions or the paper builder, then come back for item stats.</p></div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[700px] text-left text-[13px]">
-            <thead><tr className="border-b border-line font-mono text-[10px] uppercase tracking-wider text-soft"><th className="px-5 py-3">ID</th><th className="px-5 py-3">Question</th><th className="px-5 py-3">Type</th><th className="px-5 py-3">Unit</th><th className="px-5 py-3">Difficulty</th><th className="px-5 py-3">Marks</th></tr></thead>
-            <tbody>
-              {questions.map((q) => (
-                <tr key={q.id} className="border-b border-line last:border-0 hover:bg-raised">
-                  <td className="px-5 py-3 font-mono text-[11px] text-soft">{q.id}</td>
-                  <td className="max-w-[320px] truncate px-5 py-3">{q.title}</td>
-                  <td className="px-5 py-3">{q.type}</td>
-                  <td className="px-5 py-3 text-soft">{q.unit ?? "—"}</td>
-                  <td className="px-5 py-3">{q.difficulty ?? "—"}</td>
-                  <td className="px-5 py-3">{q.marks}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-left text-[13px]">
+          <thead>
+            <tr className="border-b border-line font-mono text-[10px] uppercase tracking-wider text-soft">
+              <th className="px-5 py-3 w-12">Q</th><th className="px-3 py-3">Question</th><th className="px-3 py-3">Type</th><th className="px-3 py-3 text-right">Marks</th>
+              <th className="px-3 py-3 text-right">Attempted</th><th className="px-3 py-3 w-56">Correct</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((q) => (
+              <tr key={q.id} className="border-b border-line last:border-0 hover:bg-raised">
+                <td className="px-5 py-3 font-mono text-[11px] tabular-nums text-soft">{q.no}</td>
+                <td className="max-w-[360px] truncate px-3 py-3" title={q.title}>{q.title}</td>
+                <td className="px-3 py-3 text-soft">{q.kindLabel}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{q.marks}</td>
+                <td className="px-3 py-3 text-right tabular-nums text-soft">{q.served ? `${q.attempted}/${q.served}` : "—"}</td>
+                <td className="px-3 py-3">
+                  {q.pctCorrect == null ? (
+                    <span className="text-[12px] text-soft">{q.correct == null ? "Graded by hand" : "No responses yet"}</span>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 flex-1 bg-line"><div className={`h-full ${q.pctCorrect < 40 ? "bg-alert" : "bg-forest"}`} style={{ width: `${q.pctCorrect}%` }} /></div>
+                      <span className={`w-12 text-right font-mono text-[11px] tabular-nums ${q.pctCorrect < 40 ? "text-alert" : ""}`}>{q.pctCorrect.toFixed(0)}%</span>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

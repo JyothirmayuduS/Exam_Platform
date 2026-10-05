@@ -7,7 +7,8 @@ import { getSupabase } from "@/shared/data/supabase";
 import { useQuery } from "@tanstack/react-query";
 import AppealForm from "@/features/student/components/exam/AppealForm";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
-import { gradeObjective, isAutoGraded, questionKind, remapAnswer, scoreObjective, type NegativeSettings } from "@/shared/domain/exam";
+import { examClosed, gradeObjective, isAutoGraded, questionKind, remapAnswer, scoreObjective, visibilityFor, type NegativeSettings, type ReleaseSettings } from "@/shared/domain/exam";
+import { uploadPathOf } from "@/features/student/services/uploadedAnswers";
 
 
 function MiniBarChart({ data }: { data: { category: string; score: number }[] }) {
@@ -60,9 +61,17 @@ export default function StudentResultDetail() {
 
       const { data: exam } = await db
         .from("exams")
-        .select("name, total_marks, settings")
+        .select("name, total_marks, settings, status, scheduled_at, duration_minutes")
         .eq("id", resultId)
         .maybeSingle();
+
+      const visibility = visibilityFor((exam?.settings ?? {}) as ReleaseSettings, {
+        examClosed: exam ? examClosed(exam) : false,
+        graded: attempt.score !== null,
+      });
+      if (!visibility.score) {
+        return { withheld: true as const, name: exam?.name || "Exam", note: visibility.note ?? "Results are not released yet." };
+      }
 
       const { data: questions } = await db
         .from("questions")
@@ -156,6 +165,8 @@ export default function StudentResultDetail() {
 
       const minutesUsed = attempt.minutes_used ?? 0;
       return {
+        withheld: false as const,
+        showKey: visibility.answerKey,
         name: exam?.name || "Unknown Exam",
         code: resultId,
         date: attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : "N/A",
@@ -191,7 +202,22 @@ export default function StudentResultDetail() {
     );
   }
 
+  if (data.withheld) {
+    return (
+      <RoleLayout role="Student" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone={STUDENT_TONE} items={STUDENT_NAV}>
+        <Link to="/student/results" className="mb-4 inline-block font-mono text-[12px] uppercase tracking-wider text-ink-soft hover:text-ink">← Back to Results</Link>
+        <section className="max-w-xl border border-line bg-paper p-8">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Result</p>
+          <h1 className="mt-2 font-serif text-2xl font-semibold">{data.name}</h1>
+          <p className="mt-4 text-[14px]">{data.note}</p>
+          <p className="mt-2 text-[12.5px] text-ink-soft">Your paper is submitted and safe. This page will show your score once it's released.</p>
+        </section>
+      </RoleLayout>
+    );
+  }
+
   const EXAM_DETAIL = data;
+  const showKey = data.showKey;
 
   const handleAppealSubmit = (qId: number, reason: string) => {
     setSubmittedAppeals(prev => ({ ...prev, [qId]: reason }));
@@ -237,6 +263,7 @@ export default function StudentResultDetail() {
         {/* Main Review Section */}
         <div className="lg:col-span-2 space-y-6">
           <h2 className="font-serif text-xl border-b border-line pb-2">Question Review</h2>
+          {!showKey && <p className="border-l-2 border-amber bg-amber/5 px-3 py-2 text-[12.5px] text-ink-soft">Your teacher hasn't released the answer key yet, so correct answers are hidden.</p>}
           
           {EXAM_DETAIL.questions.map((q: any, i: number) => {
             const isCorrect = q.marksAwarded === q.maxMarks;
@@ -262,7 +289,7 @@ export default function StudentResultDetail() {
                   <div className="space-y-2 mb-4">
                     {q.options.map((opt: any, optIdx: number) => {
                       const isStudentAns = q.studentAnswer === optIdx;
-                      const isCorrectAns = q.correctAnswer === optIdx;
+                      const isCorrectAns = showKey && q.correctAnswer === optIdx;
                       
                       let rowClass = "border border-line px-3 py-2 text-[13px] ";
                       if (isCorrectAns && isStudentAns) rowClass += "bg-success/10 border-success text-success";
@@ -283,13 +310,13 @@ export default function StudentResultDetail() {
                 
                 {q.type === 'subjective' && (
                   <div className="border border-line p-3 bg-white mb-4 text-[13px] italic text-ink-soft flex items-center gap-2">
-                    <span className="text-xl">📄</span> {q.studentAnswerText}
+                    {uploadPathOf(q.studentAnswerText) ? "Answer uploaded as a photo" : q.studentAnswerText || "Not answered"}
                   </div>
                 )}
 
-                {(q.explanation || q.teacherComment) && (
+                {((showKey && q.explanation) || q.teacherComment) && (
                   <div className="bg-paper p-4 border border-line text-[12px] space-y-2 mb-4">
-                    {q.explanation && (
+                    {showKey && q.explanation && (
                       <p><strong className="font-mono text-[9px] uppercase tracking-wider text-ink-soft block mb-1">Explanation</strong> {q.explanation}</p>
                     )}
                     {q.teacherComment && (

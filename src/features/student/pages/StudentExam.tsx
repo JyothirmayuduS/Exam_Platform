@@ -28,9 +28,12 @@ import {
 import { lockdownReady, isTauri, downloadUrl, osLabel, detectOS, probeInstaller } from "@/shared/platform/platform";
 import { launchExamInLockdown, openStudentSide, mediaPermissionStatus, openMediaSettings } from "@/shared/platform/lockdownBridge";
 import { defaultWatermarkText, renderWatermarkTemplate } from "@/shared/services/watermark";
+import ExamWatermark from "@/features/student/components/exam/ExamWatermark";
 import useExamState from "@/features/student/hooks/useExamState";
 import useExamTimer from "@/features/student/hooks/useExamTimer";
 import useSectionTimer from "@/features/student/hooks/useSectionTimer";
+import { isUploadHandled, markUploadHandled, uploadAnswer } from "@/features/student/services/uploadedAnswers";
+import { getSupabase } from "@/shared/data/supabase";
 import { describeNegative, groupBySection, questionKind, KIND_LABEL, sectionWindows, type NegativeSettings, type QuestionKind } from "@/shared/domain/exam";
 import useAutosave from "@/features/student/hooks/useAutosave";
 import useProctoring from "@/features/proctoring/hooks/useProctoring";
@@ -412,6 +415,35 @@ function StudentExamSession() {
   );
 
   useOfflineSync(studentIdRef.current);
+
+  // Phone uploads land in question_submissions. Attach any new one to its
+  // question even if the candidate has moved to another question meanwhile
+  // (the QR panel only watches while its question is on screen).
+  useEffect(() => {
+    const db = getSupabase();
+    if (step !== "exam" || !db || !attemptId || !studentId) return;
+    let alive = true;
+    const ids = new Set(questions.map((x) => x.id));
+    const sync = async () => {
+      const { data } = await db
+        .from("question_submissions")
+        .select("question_id, pdf_storage_path, created_at")
+        .eq("attempt_id", attemptId)
+        .eq("student_id", studentId)
+        .order("created_at", { ascending: true });
+      if (!alive) return;
+      for (const row of data ?? []) {
+        const qid = String(row.question_id);
+        const path = row.pdf_storage_path as string | null;
+        if (!path || !ids.has(qid) || isUploadHandled(attemptId, path)) continue;
+        markUploadHandled(attemptId, path);
+        setAnswer(qid, uploadAnswer(path));
+      }
+    };
+    void sync();
+    const id = window.setInterval(() => void sync(), 5000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [step, attemptId, studentId, questions, setAnswer]);
 
   const { violations, activeViolation, setActiveViolation, flag, handleAIViolation } = useProctoring(
     step === "exam",
@@ -795,6 +827,10 @@ function StudentExamSession() {
       examId: EXAM_ID,
     });
   })();
+  const watermarkMeta = useMemo(
+    () => [examName, new Date().toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" })].filter(Boolean).join("  ·  "),
+    [examName],
+  );
 
   // Live broadcasts from the proctor/teacher console (proctor_messages,
   // kind = broadcast) shown as a toast while the exam is running.
@@ -1546,17 +1582,7 @@ function StudentExamSession() {
   // ---------- Step: exam (kiosk mode) ----------
   return (
     <div className="exam-body">
-      {/* Watermark */}
-      <svg aria-hidden className="pointer-events-none fixed inset-0 z-0 h-full w-full" >
-        <defs>
-          <pattern id="exam-watermark" width={Math.max(460, watermarkLine.length * 16 + 60)} height="220" patternUnits="userSpaceOnUse" patternTransform="rotate(-20)">
-            <text x="10" y="110" fontSize="26" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" opacity="0.13">
-              {watermarkLine}
-            </text>
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#exam-watermark)" className="text-ink" />
-      </svg>
+      <ExamWatermark primary={watermarkLine} secondary={watermarkMeta} />
       {proctorPaused && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-6" style={{ background: "rgba(22, 32, 46, 0.95)" }}>
           <div className="exam-panel" style={{ textAlign: "center", maxWidth: "400px", padding: "32px", borderColor: "var(--warn)" }}>

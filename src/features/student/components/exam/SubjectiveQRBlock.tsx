@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { FiCamera, FiAlertTriangle } from "react-icons/fi";
 import { QRCodeSVG } from "qrcode.react";
 import { getSupabase } from "@/shared/data/supabase";
 import { uploadSubjectiveAnswer } from "@/shared/services/subjectiveUpload";
+import { isUploadHandled, markUploadHandled } from "@/features/student/services/uploadedAnswers";
 
 function getPublicBase(): string {
   const envUrl = import.meta.env.VITE_APP_BASE_URL as string | undefined;
@@ -77,80 +78,77 @@ export default function SubjectiveQRBlock({
 
   const isLocalhost = base.includes("localhost") || base.includes("127.0.0.1");
 
-  // Fetch the uploaded PDF for this question and expose its signed URL. Called
-  // when the realtime UPDATE says COMPLETED and by the polling fallback — the
-  // submission row may be written a beat AFTER the session status flips, so
-  // this retries briefly instead of failing on the first empty query.
-  const fetchSubmissionPdf = useCallback(async (db: ReturnType<typeof getSupabase>) => {
-    if (!db) return;
-    // The mobile-upload edge function resolves a REAL attempt id when the
-    // session was created with the pending placeholder, so look up by
-    // student + question as well — not just the (possibly placeholder)
-    // attempt_id used at session creation.
-    let attemptFilter = db.from("question_submissions")
+  // The parent passes a fresh callback on every render (the exam timer ticks
+  // every second); keep it in a ref so the session effect below doesn't
+  // tear down its realtime channel and poller on each tick.
+  const onUploadedRef = useRef(onAnswerUploaded);
+  onUploadedRef.current = onAnswerUploaded;
+
+  // Looks up the latest stored upload for this question. The submissions
+  // table is the source of truth: it is read directly (not only after the
+  // session flips to COMPLETED), so an upload from an older QR for the same
+  // question is still picked up. Returns true once the answer is shown.
+  const fetchSubmission = useCallback(async (db: NonNullable<ReturnType<typeof getSupabase>>): Promise<boolean> => {
+    let query = db.from("question_submissions")
       .select("pdf_storage_path, mime_type")
       .eq("question_id", String(questionId))
       .eq("student_id", studentId ?? "")
       .order("created_at", { ascending: false })
       .limit(1);
-    if (attemptId) {
-      attemptFilter = attemptFilter.eq("attempt_id", attemptId);
-    }
-    const { data: subData, error } = await attemptFilter.maybeSingle();
+    if (attemptId) query = query.eq("attempt_id", attemptId);
+    const { data, error } = await query.maybeSingle();
     if (error) {
       console.warn("[SubjectiveQRBlock] submission lookup failed:", error.message);
-      return;
+      return false;
     }
-    const path = subData?.pdf_storage_path as string | undefined;
-    if (!path) return;
-    // Fresh signed URL on EVERY mount from Cloudflare R2 — never store the
-    // short-lived URL in the answer; keep the storage PATH instead.
+    const path = data?.pdf_storage_path as string | undefined;
+    if (!path || isUploadHandled(attemptId, path)) return false;
+    markUploadHandled(attemptId, path);
+    // The answer keeps the storage PATH; signed URLs are minted at render.
+    onUploadedRef.current?.(path);
+    setUploadIsImage((data?.mime_type ?? "").startsWith("image/") || !path.endsWith(".pdf"));
+    setStatus("COMPLETED");
     const { getArtifactObjectUrl } = await import("@/shared/services/examStorage");
     const signedUrl = await getArtifactObjectUrl(path, 3600);
-    if (signedUrl) {
-      setPdfUrl(signedUrl);
-      setUploadIsImage((subData?.mime_type ?? "").startsWith("image/") || !path.endsWith(".pdf"));
-      setStatus("COMPLETED");
-      // The ANSWER store gets the storage PATH, not this signed URL.
-      onAnswerUploaded?.(path);
-    }
-  }, [attemptId, questionId, studentId, onAnswerUploaded]);
+    if (signedUrl) setPdfUrl(signedUrl);
+    return true;
+  }, [attemptId, questionId, studentId]);
 
   useEffect(() => {
-    // Create the session as soon as studentId is available — don't block on attemptId.
-    // If attemptId isn't ready yet, use a placeholder so the mobile-upload edge function
-    // can still find and validate the token.
+    // Create the session as soon as studentId is available — don't block on
+    // attemptId; the mobile-upload function resolves a placeholder attempt.
     if (!studentId) return;
     const db = getSupabase();
     if (!db) return;
 
     let active = true;
-    let channel: any = null;
+    let done = false;
+    let channel: ReturnType<typeof db.channel> | null = null;
     let pollId: number | undefined;
 
+    const check = async () => {
+      if (!active || done) return;
+      if (await fetchSubmission(db)) {
+        done = true;
+        if (pollId !== undefined) window.clearInterval(pollId);
+      }
+    };
+
     const initSession = async () => {
-      // ── Restore an ALREADY-COMPLETED upload (page navigated / remounted) ──
-      // Without this, coming back to the question after the phone uploaded
-      // shows the QR again because realtime only fires on future changes.
-      await fetchSubmissionPdf(db);
+      // Restore an already-completed upload (question revisited / remount).
+      await check();
+      if (!active || done) return;
 
-      const expiresAt = new Date(Date.now() + 1000 * 60 * 60).toISOString(); // 1 hr
-      const effectiveAttemptId = attemptId || `pending_${studentId}`;
-
-      // NOTE: `question_index` is deliberately NOT written here — the column
-      // does not exist in the documented schema, and referencing it makes the
-      // upsert fail, which in turn makes every QR scan return
-      // "Invalid or expired token" (no session row = no token match). The
-      // mobile-upload edge function falls back to question_id for the PDF
-      // header, so the question number survives without the column.
+      // `question_index` is deliberately not written: the column does not
+      // exist and referencing it makes every scan fail with "Invalid token".
       const { error } = await db.from("mobile_upload_sessions").upsert({
-        attempt_id: effectiveAttemptId,
+        attempt_id: attemptId || `pending_${studentId}`,
         question_id: String(questionId),
         student_id: studentId,
         token_hash: token,
-        expires_at: expiresAt,
+        expires_at: new Date(Date.now() + 1000 * 60 * 60).toISOString(),
       }, { onConflict: "token_hash" });
-
+      if (!active) return;
       if (error) {
         console.error("[SubjectiveQRBlock] Session upsert failed:", error);
         setSessionError(`Session error: ${error.message}`);
@@ -158,70 +156,37 @@ export default function SubjectiveQRBlock({
       }
       setSessionError(null);
 
-      // After the upsert, a previously-completed session may now be visible —
-      // poll the session status once as a second restore path.
-      const { data: sessRow } = await db.from("mobile_upload_sessions")
-        .select("status")
-        .eq("token_hash", token)
-        .maybeSingle();
-      if (active && sessRow?.status === "COMPLETED") {
-        await fetchSubmissionPdf(db);
-      }
-
       channel = db.channel(`session_${token}`)
         .on(
           "postgres_changes",
           { event: "UPDATE", schema: "public", table: "mobile_upload_sessions", filter: `token_hash=eq.${token}` },
-          async (payload: any) => {
-            if (!active) return;
-            const newStatus = payload.new.status;
-            setStatus(newStatus);
-
-            if (newStatus === "COMPLETED") {
-              // The submission row can land a moment after the status update;
-              // retry a few times before giving up (polling fallback also runs).
-              for (let attempt = 0; attempt < 4 && active; attempt++) {
-                await fetchSubmissionPdf(db);
-                if (!active) return;
-                // Check whether the PDF actually got through by reading state:
-                // setPdfUrl only happens inside fetchSubmissionPdf on success.
-                await new Promise((r) => setTimeout(r, 1500));
-              }
+          (payload: { new: { status?: string } }) => {
+            if (!active || done) return;
+            const next = payload.new.status ?? "WAITING";
+            setStatus(next);
+            // The submission row is written just before COMPLETED; check now
+            // and once more shortly after in case it lands a beat later.
+            if (next === "COMPLETED") {
+              void check();
+              window.setTimeout(() => void check(), 1500);
             }
-          }
+          },
         )
         .subscribe();
 
-      // ── Polling fallback (every 4 s) ───────────────────────────────────
-      // Realtime (postgres_changes on mobile_upload_sessions) is silently
-      // dropped when RLS blocks the row or the websocket is throttled —
-      // polling guarantees the PDF shows up even then.
-      pollId = window.setInterval(() => {
-        if (!active) return;
-        void (async () => {
-          const { data: sessRow } = await db.from("mobile_upload_sessions")
-            .select("status")
-            .eq("token_hash", token)
-            .maybeSingle();
-          if (sessRow?.status === "COMPLETED") {
-            await fetchSubmissionPdf(db);
-            if (active && pollId !== undefined) {
-              window.clearInterval(pollId);
-              pollId = undefined;
-            }
-          }
-        })();
-      }, 4000);
+      // Polling fallback: realtime can be dropped by flaky networks or
+      // throttled sockets, so the upload still appears within a few seconds.
+      pollId = window.setInterval(() => void check(), 3000);
     };
 
     void initSession();
 
     return () => {
       active = false;
-      if (channel) db.removeChannel(channel);
+      if (channel) void db.removeChannel(channel);
       if (pollId !== undefined) window.clearInterval(pollId);
     };
-  }, [examId, studentId, attemptId, questionId, questionIndex, token, fetchSubmissionPdf, retryNonce]);
+  }, [studentId, attemptId, questionId, token, fetchSubmission, retryNonce]);
 
 
   // Direct desktop image upload (no QR/phone required)
@@ -243,13 +208,14 @@ export default function SubjectiveQRBlock({
       setUploadProgress(100);
       // blob: URLs (dev mode) display directly; real uploads pass the storage
       // path so signed URLs are minted fresh at render time, never stored.
-      onAnswerUploaded?.(result.publicUrl.startsWith("blob:") ? result.publicUrl : result.path);
+      if (!result.publicUrl.startsWith("blob:")) markUploadHandled(attemptId, result.path);
+      onUploadedRef.current?.(result.publicUrl.startsWith("blob:") ? result.publicUrl : result.path);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
     }
-  }, [studentId, examId, questionId, onAnswerUploaded]);
+  }, [studentId, examId, questionId, attemptId]);
 
   // The QR URL carries only the single-use capability token + non-PII ids.
   // The student's NAME is never placed in the URL (it would leak into phone
@@ -312,13 +278,15 @@ export default function SubjectiveQRBlock({
             ↻ Retry creating session
           </button>
         </div>
-      ) : status === "COMPLETED" && pdfUrl ? (
+      ) : status === "COMPLETED" ? (
         <div className="space-y-4">
           <div className="flex h-12 items-center gap-3 bg-success/10 px-4 text-success border border-success/20">
             <span className="text-xl">✓</span>
             <span className="font-mono text-[12px] uppercase tracking-widest font-bold">Answer Uploaded Successfully</span>
           </div>
-          {uploadIsImage ? (
+          {!pdfUrl ? (
+            <div className="flex h-40 items-center justify-center border border-line bg-raised font-mono text-[10px] uppercase tracking-widest text-soft">Loading preview…</div>
+          ) : uploadIsImage ? (
             <img src={pdfUrl} alt="Uploaded answer" className="max-h-[600px] w-full border border-line bg-ink object-contain" />
           ) : (
             <iframe src={`${pdfUrl}#toolbar=0`} className="w-full h-[600px] border border-line bg-ink" title="Answer Preview" />

@@ -13,8 +13,9 @@ const corsHeaders = {
 async function putR2Object(key: string, body: ArrayBuffer | Uint8Array, contentType: string): Promise<string> {
   const accessKeyId = Deno.env.get("R2_ACCESS_KEY_ID");
   const secretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY");
-  const endpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "").replace(/\/+$/, "");
-  const bucket = Deno.env.get("R2_BUCKET") ?? "exam-records";
+  const rawEndpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "").trim().replace(/\/+$/, "");
+  const endpoint = rawEndpoint && !/^https?:\/\//i.test(rawEndpoint) ? `https://${rawEndpoint}` : rawEndpoint;
+  const bucket = (Deno.env.get("R2_BUCKET") ?? "exam-records").trim();
   if (!accessKeyId || !secretAccessKey || !endpoint) {
     throw new Error("R2 secrets not configured (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_S3_ENDPOINT)");
   }
@@ -311,6 +312,17 @@ serve(async (req) => {
         mime_type: pdfPath ? "application/pdf" : "image/jpeg",
         file_size: 0,
       });
+      // Record the answer on the attempt too, so grading has it even if the
+      // exam screen never syncs it back. A typed answer is never replaced.
+      const { data: att } = await supabaseAdmin.from("attempts").select("answers").eq("id", submissionAttemptId).maybeSingle();
+      const answers = (att?.answers ?? {}) as Record<string, unknown>;
+      const current = answers[session.question_id];
+      const isEmpty = current == null || (typeof current === "string" && (current.trim() === "" || current.startsWith("[Uploaded answer:")));
+      if (att && isEmpty) {
+        await supabaseAdmin.from("attempts")
+          .update({ answers: { ...answers, [session.question_id]: `[Uploaded answer: ${pdfPath || firstOriginalPath}]` } })
+          .eq("id", submissionAttemptId);
+      }
     } else {
       console.warn("[mobile-upload] no real attempt row — files stored without a question_submissions record");
     }

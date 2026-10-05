@@ -178,7 +178,12 @@ export default function QuestionDisplay({
               <div className="exam-uh">
                 <span className="exam-sm" style={{ color: "var(--ok)", fontWeight: 600 }}>Handwritten answer uploaded</span>
                 <button
-                  onClick={() => onSelectOption("" as unknown as number)}
+                  onClick={() => {
+                    // A used QR session can't take a second upload; the next
+                    // QR panel mints a fresh token.
+                    try { sessionStorage.removeItem(`mobile_upload_${attemptId}_${question.id}`); } catch { /* ignore */ }
+                    onSelectOption("" as unknown as number);
+                  }}
                   className="exam-btn"
                   style={{ color: "var(--bad)" }}
                 >

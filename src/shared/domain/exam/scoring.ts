@@ -106,7 +106,7 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-const FRACTION_LABEL: Record<string, string> = { "0.25": "¼", "0.33": "⅓", "0.5": "½", "1": "full" };
+const FRACTION_LABEL: Record<string, string> = { "0.25": "1/4", "0.33": "1/3", "0.5": "1/2", "1": "full" };
 
 /** One-line rule for candidates and teachers, or null when marking is off. */
 export function describeNegative(settings: NegativeSettings | null | undefined): string | null {
