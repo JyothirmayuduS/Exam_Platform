@@ -52,7 +52,7 @@ export default function StudentResultDetail() {
 
       const { data: attempt } = await db
         .from("attempts")
-        .select("score, submitted_at, answers, minutes_used, paper")
+        .select("id, score, submitted_at, answers, minutes_used, paper")
         .eq("exam_id", resultId)
         .eq("student_id", student.id)
         .maybeSingle();
@@ -97,6 +97,18 @@ export default function StudentResultDetail() {
       const percentile = validScores.length
         ? Math.round((validScores.filter((s: number) => s < myScore).length / validScores.length) * 100)
         : 0;
+
+      const { data: gradingNotes } = await db
+        .from("grading_comments")
+        .select("question_id, comment, voice_key")
+        .eq("attempt_id", attempt.id)
+        .order("created_at", { ascending: true });
+      const notesByQ = new Map<string, string[]>();
+      for (const n of gradingNotes ?? []) {
+        const text = String(n.comment ?? "");
+        if (!text || text.startsWith("[Image-key:") || (n.voice_key && text === "Voice note")) continue;
+        notesByQ.set(String(n.question_id), [...(notesByQ.get(String(n.question_id)) ?? []), text]);
+      }
 
       const answersObj = attempt.answers || {};
       const totalMarks = exam?.total_marks ?? 100;
@@ -152,7 +164,7 @@ export default function StudentResultDetail() {
           marksAwarded: awarded,
           maxMarks: q.marks,
           explanation: q.explanation ?? null,
-          teacherComment: q.teacher_comment ?? null,
+          teacherComment: notesByQ.get(String(q.id))?.join("\n") ?? null,
           markedForReview: false,
           timeSpentSec: 0,
         };
@@ -320,7 +332,7 @@ export default function StudentResultDetail() {
                       <p><strong className="font-mono text-[9px] uppercase tracking-wider text-ink-soft block mb-1">Explanation</strong> {q.explanation}</p>
                     )}
                     {q.teacherComment && (
-                      <p className="text-forest"><strong className="font-mono text-[9px] uppercase tracking-wider text-forest/70 block mb-1">Teacher Note</strong> {q.teacherComment}</p>
+                      <p className="whitespace-pre-line text-forest"><strong className="font-mono text-[9px] uppercase tracking-wider text-forest/70 block mb-1">Teacher Note</strong> {q.teacherComment}</p>
                     )}
                   </div>
                 )}

@@ -1,4 +1,6 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
+import type { AutoGradeResult } from "@/shared/domain/exam";
+import { ExamFeedback, InstantReport } from "@/features/student/components/exam/PostExamPanels";
 import { FiDownload } from "react-icons/fi";
 import Seal from "@/shared/components/Seal";
 import { openStudentSide } from "@/shared/platform/lockdownBridge";
@@ -218,7 +220,7 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
   );
 }
 
-export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId, uploadState, uploadDetail, submitFailed }: {
+export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId, uploadState, uploadDetail, submitFailed, report, feedbackStudentId }: {
   answeredCount: number;
   totalQuestions: number;
   studentName: string;
@@ -231,7 +233,13 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
   uploadDetail?: string;
   /** True when the final answer-submit DB write failed (answers saved locally). */
   submitFailed?: boolean;
+  /** Auto-graded result, present only when the exam releases results on submit. */
+  report?: AutoGradeResult | null;
+  /** Student id for the feedback form; null when the exam skips feedback. */
+  feedbackStudentId?: string | null;
 }) {
+  const [feedbackDone, setFeedbackDone] = useState(!feedbackStudentId);
+  const holdOpen = !!report || !feedbackDone;
   // Real attempt id from the DB (short-displayed). Falls back to the exam id
   // when the attempt row hasn't been created yet — never a random fake.
   const receiptId = attemptId && attemptId.length > 8 ? attemptId.slice(0, 8).toUpperCase() : (attemptId || examId || "—");
@@ -261,12 +269,19 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
     window.setTimeout(backToDashboard, 350);
   };
 
+  const openReport = () => {
+    const path = `/student/results/${examId}`;
+    if (isTauri()) void openStudentSide(path);
+    else window.location.assign(path);
+  };
+
   useEffect(() => {
-    if (isTauri()) {
+    if (isTauri() && !holdOpen) {
       const id = window.setTimeout(closeExamWindow, 5000);
       return () => window.clearTimeout(id);
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdOpen]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper px-6 text-ink pb-20 pt-12 overflow-y-auto">
@@ -303,9 +318,12 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
         {isTauri() && (
           <div className="mt-6 border border-success/40 bg-success/5 px-4 py-3 text-left text-[12px] text-success">
             <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Status</p>
-            <p className="mt-1">Your exam has been submitted successfully. This window will close shortly.</p>
+            <p className="mt-1">Your exam has been submitted successfully.{holdOpen ? "" : " This window will close shortly."}</p>
           </div>
         )}
+
+        {report && <InstantReport grade={report} onOpenReport={openReport} />}
+        {feedbackStudentId && <ExamFeedback examId={examId} attemptId={attemptId ?? null} studentId={feedbackStudentId} onDone={() => setFeedbackDone(true)} />}
 
         <div className="mt-8 border border-line bg-raised text-left font-mono text-[11px] text-soft">
           <div className="border-b border-line px-5 py-3">
@@ -338,7 +356,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
 
         <div className="mt-8 space-y-4">
           <p className="text-[13px] text-soft leading-relaxed px-4">
-            You may now close this secure browser window. Detailed results and Analytics will be available on your dashboard once grading is complete.
+            {report ? "You may now close this window. Your full report is also in Results on your dashboard." : "You may now close this window. Your results will appear in Results on your dashboard once your teacher releases them."}
           </p>
 
           <a 

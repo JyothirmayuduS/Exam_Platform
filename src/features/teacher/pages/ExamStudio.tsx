@@ -522,8 +522,8 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, sec
               </Group>
               <Group label="Results & watermark">
                 <Check label="Show report to test-taker after test finishes" detail="Graded score and answer key appear as soon as each student submits. Fine-tune this later under Reports → Release." checked={releaseTiming(s as ReleaseSettings) === "on_submit"} onChange={(v) => { patch("showReportToTaker", v); patch("release_timing", v ? "on_submit" : "manual"); patch("release_mode", null); }} />
-                <Check label="Make comments mandatory for manual evaluation" detail="Evaluators must leave a comment when grading descriptive answers." checked={!!s.commentsMandatory} onChange={(v) => patch("commentsMandatory", v)} />
-                <Check label="Don't ask for feedback post test completion" checked={!!s.skipFeedback} onChange={(v) => patch("skipFeedback", v)} />
+                <Check label="Make comments mandatory for manual evaluation" detail="Evaluate won't save a paper until every written answer has a comment. Students see these comments on their result." checked={!!s.commentsMandatory} onChange={(v) => patch("commentsMandatory", v)} />
+                <Check label="Don't ask for feedback post test completion" detail="By default students rate the exam 1–5 after submitting; responses appear under Reports → Overview." checked={!!s.skipFeedback} onChange={(v) => patch("skipFeedback", v)} />
                 <label className="mt-3 block text-[12px] text-soft">Custom watermark text (optional)
                   <input value={s.watermarkText ?? ""} onChange={(e) => patch("watermarkText", e.target.value)} placeholder="e.g. {registration number} · {name} — do not share" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                   <span className="mt-1.5 block text-[11px] leading-snug text-soft">

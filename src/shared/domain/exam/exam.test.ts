@@ -123,3 +123,21 @@ describe("result release", () => {
     expect(releaseTiming({ release_mode: "manual", release_timing: "close" })).toBe("manual");
   });
 });
+
+import { autoGradeAttempt } from "./autoGrade";
+
+describe("auto-grading on submit", () => {
+  const q = (id: string, type: string, answer: string | null, options: string[] | null = null, marks = 2) =>
+    ({ id, exam_id: "e", title: id, type, unit: null, difficulty: null, marks, options, answer });
+  const pool = [q("a", "MCQ", "1", ["x", "y", "z"]), q("b", "Numerical", "2.5"), q("c", "MCQ", "0", ["p", "q"])];
+
+  it("scores a fully objective paper", () => {
+    const r = autoGradeAttempt(pool, [], { a: 1, b: "2.50" });
+    expect(r).toMatchObject({ score: 4, max: 6, correct: 2, wrong: 0, unanswered: 1, manual: 0 });
+  });
+  it("leaves the score open when written answers need marking", () => {
+    const r = autoGradeAttempt([...pool, q("d", "Subjective", null)], [], { a: 1 });
+    expect(r.score).toBeNull();
+    expect(r).toMatchObject({ objectiveScore: 2, objectiveMax: 6, manual: 1, max: 8 });
+  });
+});

@@ -184,13 +184,14 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
 
         {!loading && state === "idle" && report && (
           <div className="space-y-3">
-            <div className="flex items-end gap-6">
-              <div>
-                <p className={`font-serif text-[40px] leading-none ${meta.tone}`}>{report.risk_score ?? 0}</p>
-                <p className="mt-1 font-mono text-[9px] uppercase tracking-wider text-soft">Risk score / 100</p>
+            <div>
+              <div className="flex items-baseline gap-2">
+                <p className={`font-serif text-[34px] leading-none tabular-nums ${meta.tone}`}>{report.risk_score ?? 0}</p>
+                <p className="font-mono text-[9px] uppercase tracking-wider text-soft">Risk score / 100</p>
               </div>
+              <div className="mt-2 h-1 bg-line"><div className={`h-full ${(report.risk_score ?? 0) >= 60 ? "bg-alert" : (report.risk_score ?? 0) >= 30 ? "bg-amber" : "bg-forest"}`} style={{ width: `${Math.min(100, report.risk_score ?? 0)}%` }} /></div>
               {report.summary?.summary && (
-                <p className="max-w-md flex-1 text-[12px] leading-relaxed text-ink">{report.summary.summary}</p>
+                <p className="mt-3 text-[12px] leading-relaxed text-ink">{report.summary.summary}</p>
               )}
             </div>
 

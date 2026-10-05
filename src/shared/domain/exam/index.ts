@@ -4,3 +4,4 @@ export * from "./scoring";
 export * from "./phase";
 export * from "./release";
 export * from "./paperBuilder";
+export * from "./autoGrade";

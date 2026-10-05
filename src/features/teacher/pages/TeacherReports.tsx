@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { PageHeading, Button, Metric } from "@/features/teacher/components/PageChrome";
 import useLiveAttempts from "@/features/teacher/hooks/useLiveAttempts";
 import { useQuery } from "@tanstack/react-query";
+import { getSupabase } from "@/shared/data/supabase";
 import { listExamsForTeacher, listLiveAttempts, loadExamBundle, type ExamRecord } from "@/shared/data/examApi";
 import { examClosed, visibilityFor, type ReleaseSettings } from "@/shared/domain/exam";
 import ResultReleasePanel from "@/features/teacher/components/ResultReleasePanel";
@@ -40,6 +41,16 @@ export function Reports({ notify }: { notify: (s: string) => void }) {
     enabled: !!examId,
   });
   const report = useMemo(() => buildExamReport(liveAttempts, pool), [liveAttempts, pool]);
+  const { data: feedback = [] } = useQuery({
+    queryKey: ["examFeedback", examId],
+    enabled: !!examId,
+    queryFn: async () => {
+      const db = getSupabase();
+      if (!db) return [];
+      const { data } = await db.from("exam_feedback").select("rating, comment, created_at").eq("exam_id", examId).order("created_at", { ascending: false });
+      return (data ?? []) as { rating: number; comment: string | null; created_at: string }[];
+    },
+  });
   const flagged = liveAttempts.filter((a) => a.flags.length > 0);
   const submitted = liveAttempts.filter((a) => a.state === "Submitted");
   const releaseState = releaseSummary(selectedExam);
@@ -171,6 +182,8 @@ export function Reports({ notify }: { notify: (s: string) => void }) {
             )}
           </div>
 
+          <FeedbackSummary rows={feedback} />
+
           {flagged.length > 0 && (
             <div className="mt-6 border-l-2 border-alert bg-alert/5 px-5 py-4">
               <p className="font-mono text-[10px] uppercase tracking-widest text-alert">Proctoring flags</p>
@@ -244,6 +257,48 @@ export function Reports({ notify }: { notify: (s: string) => void }) {
 
       {activeTab === "Across exams" && <ExamTrends exams={exams} />}
     </>
+  );
+}
+
+function FeedbackSummary({ rows }: { rows: { rating: number; comment: string | null; created_at: string }[] }) {
+  const avg = rows.length ? rows.reduce((t, r) => t + r.rating, 0) / rows.length : null;
+  const comments = rows.filter((r) => r.comment?.trim()).slice(0, 6);
+  return (
+    <div className="mt-6 border border-line bg-paper p-6">
+      <div className="flex items-baseline justify-between">
+        <h2 className="font-serif text-xl font-semibold">Student feedback</h2>
+        <span className="font-mono text-[10px] text-soft">{rows.length} response(s)</span>
+      </div>
+      {avg == null ? (
+        <p className="py-6 text-center text-[12.5px] text-soft">No feedback yet. Students are asked to rate the exam right after submitting, unless you turned it off in the builder.</p>
+      ) : (
+        <div className="mt-4 grid gap-6 sm:grid-cols-[180px_1fr]">
+          <div>
+            <p className="font-serif text-4xl tabular-nums">{avg.toFixed(1)}<span className="text-lg text-soft"> / 5</span></p>
+            <div className="mt-3 space-y-1">
+              {[5, 4, 3, 2, 1].map((n) => {
+                const c = rows.filter((r) => r.rating === n).length;
+                return (
+                  <div key={n} className="flex items-center gap-2 font-mono text-[10px] text-soft">
+                    <span className="w-2">{n}</span>
+                    <div className="h-1.5 flex-1 bg-line"><div className="h-full bg-forest" style={{ width: `${(c / rows.length) * 100}%` }} /></div>
+                    <span className="w-5 text-right tabular-nums">{c}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <ul className="space-y-2">
+            {comments.length === 0 && <li className="text-[12.5px] text-soft">No written comments.</li>}
+            {comments.map((r, i) => (
+              <li key={i} className="border-l-2 border-line px-3 py-1.5 text-[13px]">
+                <span className="mr-2 font-mono text-[10px] text-forest">{r.rating}/5</span>{r.comment}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 

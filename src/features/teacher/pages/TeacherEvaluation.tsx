@@ -289,13 +289,6 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
 
   const [visibility, setVisibility] = useState<"OFF" | "ON">("OFF");
   const [saving, setSaving] = useState(false);
-  const handleSave = () => {
-    setSaving(true);
-    setTimeout(() => {
-      setSaving(false);
-      notify("Evaluation saved");
-    }, 1000);
-  };
 
   const handleBulkGrade = async () => {
     setSaving(true);
@@ -355,9 +348,6 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
         <div className="flex divide-x divide-line border border-line-strong bg-paper">
           <button onClick={() => setShowGuide(true)} className="px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:bg-paper-raised hover:text-ink">Grading guide</button>
         </div>
-        <button disabled={saving} onClick={handleSave} className="border border-forest bg-forest px-6 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper transition-colors hover:bg-forest-light disabled:cursor-wait disabled:opacity-80">
-          {saving ? "Saving..." : "Save progress"}
-        </button>
       </div>
     </div>
 
@@ -433,7 +423,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
       {visible.length === 0 && <div className="p-10 text-center"><p className="font-serif text-lg">No candidates match these filters</p><p className="mt-1 text-[12px] text-ink-soft">Try clearing the search or switching the status tab.</p></div>}
     </section>
 
-    {active && <ReviewSession candidate={active} queue={gradeQueue} onClose={closeReview} onNavigate={navigateReview} onFinalize={finalizeGrade} notify={notify} profileName={profile?.full_name ?? "Faculty"} />}
+    {active && <ReviewSession commentsMandatory={(examBundle?.exam?.settings as { commentsMandatory?: boolean } | undefined)?.commentsMandatory === true} candidate={active} queue={gradeQueue} onClose={closeReview} onNavigate={navigateReview} onFinalize={finalizeGrade} notify={notify} profileName={profile?.full_name ?? "Faculty"} />}
 
     {showBulkDelegateModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-paper/80 backdrop-blur-sm">
@@ -531,10 +521,10 @@ function useEvaluatorCamera() {
   return { videoRef, state, seconds, stream, retry: () => { setSeconds(0); setAttempt((x) => x + 1); } };
 }
 
-function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, notify, profileName }: {
-  candidate: Candidate; queue: Candidate[];
+function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, notify, profileName, commentsMandatory }: {
+  candidate: Candidate; queue: Candidate[]; commentsMandatory: boolean;
   onClose: () => void; onNavigate: (cid: string) => void;
-  onFinalize: (cid: string, awarded: number) => void; notify: (m: string) => void; profileName: string
+  onFinalize: (cid: string, awarded: number) => Promise<void> | void; notify: (m: string) => void; profileName: string
 }) {
   const cam = useEvaluatorCamera();
   const [manualScores, setManualScores] = useState<Record<string, number>>({});
@@ -561,8 +551,45 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
   const prevCand = idx > 0 ? queue[idx - 1] : null;
   const nextCand = idx >= 0 && idx + 1 < queue.length ? queue[idx + 1] : null;
   const nextUngraded = queue.slice(idx + 1).find((c) => c.status !== "Graded") ?? queue.find((c) => c.id !== cid && c.status !== "Graded") ?? null;
-  const finish = (goNext: boolean) => {
-    onFinalize(cid, awarded);
+  // Questions that already carry a saved grading comment (text, voice or image).
+  const [commented, setCommented] = useState<Set<string>>(new Set());
+  const [savingGrade, setSavingGrade] = useState(false);
+  const [showMissing, setShowMissing] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setShowMissing(false);
+    void listGradingComments(cid).then((rows) => {
+      if (alive) setCommented(new Set(rows.map((r) => String(r.question_id))));
+    });
+    return () => { alive = false; };
+  }, [cid]);
+  const unscored = manualQs.filter((q) => manualScores[key(cid, q.id)] == null);
+  const uncommented = commentsMandatory
+    ? manualQs.filter((q) => !(feedback[key(cid, q.id)] ?? "").trim() && !commented.has(String(q.id)))
+    : [];
+  const blockers = [
+    unscored.length ? `${unscored.length} written answer${unscored.length > 1 ? "s" : ""} still need a score` : null,
+    uncommented.length ? `${uncommented.length} written answer${uncommented.length > 1 ? "s" : ""} need a comment (required for this exam)` : null,
+  ].filter((b): b is string => !!b);
+
+  const jumpTo = (qid: string) => document.getElementById(`q-${qid}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const finish = async (goNext: boolean) => {
+    if (blockers.length) {
+      setShowMissing(true);
+      notify(blockers[0]);
+      const first = unscored[0] ?? uncommented[0];
+      if (first) jumpTo(first.id);
+      return;
+    }
+    setSavingGrade(true);
+    for (const q of manualQs) {
+      const text = (feedback[key(cid, q.id)] ?? "").trim();
+      if (text) await addGradingComment({ attemptId: cid, questionId: String(q.id), comment: text });
+    }
+    await onFinalize(cid, awarded);
+    setSavingGrade(false);
+    setFeedback((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => !k.startsWith(`${cid}:`))));
     notify(`${candidate.name} · ${awarded}/${max} recorded`);
     if (goNext && nextUngraded) onNavigate(nextUngraded.id);
     else onClose();
@@ -607,15 +634,23 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
           <div className="mx-auto max-w-3xl">
             <div className="flex items-center justify-between"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">{candidate.exam}</p><p className="font-mono text-[10px] text-ink-soft">Submitted {candidate.submittedAgo}</p></div>
             <h1 className="mt-2 font-serif text-3xl font-semibold">Answer paper</h1>
-            {candidate.flags.length > 0 && <IntegrityBanner flags={candidate.flags} name={candidate.name} notify={notify} onOpenRecording={() => setReviewRec({ attemptId: candidate.id, roll: candidate.roll, name: candidate.name })} />}
-            <div className="mt-7 space-y-5">
-              {paper.map((q) => <QuestionCard key={q.id} q={q} cid={cid} manualScores={manualScores} feedback={feedback} setScore={setScore} setFeedback={setFb} />)}
+            {candidate.flags.length > 0 && <IntegrityBanner flags={candidate.flags} onOpenRecording={() => setReviewRec({ attemptId: candidate.id, roll: candidate.roll, name: candidate.name })} />}
+            <QuestionStrip paper={paper} cid={cid} manualScores={manualScores} onJump={jumpTo} />
+            <div className="mt-5 space-y-5">
+              {paper.map((q) => (
+                <QuestionCard
+                  key={q.id} q={q} cid={cid} manualScores={manualScores} feedback={feedback} setScore={setScore} setFeedback={setFb}
+                  commentRequired={commentsMandatory && !commented.has(String(q.id))}
+                  showMissing={showMissing}
+                  onCommentSaved={() => setCommented((cur) => new Set(cur).add(String(q.id)))}
+                />
+              ))}
             </div>
           </div>
         </main>
 
         <aside className="w-full border-t border-line bg-paper-raised xl:w-[340px] xl:shrink-0 xl:overflow-y-auto xl:border-l xl:border-t-0">
-          <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} onFinish={() => finish(false)} onFinishNext={() => finish(true)} onDelegate={() => setShowDelegateModal(true)} onFlagModeration={flagModeration} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
+          <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} blockers={blockers} saving={savingGrade} commentsMandatory={commentsMandatory} onFinish={() => void finish(false)} onFinishNext={() => void finish(true)} onDelegate={() => setShowDelegateModal(true)} onFlagModeration={flagModeration} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
           <div className="mt-4"><AIIntegrityCard attemptId={cid} /></div>
           <CandidateFacts candidate={candidate} />
         </aside>
@@ -721,23 +756,89 @@ function CameraPip({ cam, minimized, onToggle, profileName, notify }: { cam: Ret
   );
 }
 
-function IntegrityBanner({ flags, name, notify, onOpenRecording }: { flags: Flag[]; name: string; notify: (m: string) => void; onOpenRecording: () => void }) {
+function flagName(f: Flag): string {
+  return f.label.replace(/^\[[^\]]+\]\s*/, "").replace(/\s*\([^)]*\)\s*$/, "").replace(/\s+—.*$/, "").trim() || f.type || "Flag";
+}
+
+function IntegrityBanner({ flags, onOpenRecording }: { flags: Flag[]; onOpenRecording: () => void }) {
+  const [open, setOpen] = useState(false);
+  const groups = useMemo(() => {
+    const m = new Map<string, { name: string; count: number; critical: number }>();
+    for (const f of flags) {
+      const name = flagName(f);
+      const g = m.get(name) ?? { name, count: 0, critical: 0 };
+      g.count += 1;
+      if (f.severity === "critical") g.critical += 1;
+      m.set(name, g);
+    }
+    return [...m.values()].sort((x, y) => y.critical - x.critical || y.count - x.count);
+  }, [flags]);
+  const critical = flags.filter((f) => f.severity === "critical").length;
   return (
-    <div className="mt-5 border border-alert/30 bg-alert/5 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div><p className="font-mono text-[10px] uppercase tracking-widest text-alert">Proctoring · review before finalizing</p><p className="mt-1 text-[13px]">This candidate's exam raised {flags.length} flag{flags.length > 1 ? "s" : ""}. Review the recording before confirming marks.</p></div>
+    <section className="mt-5 border border-line bg-paper">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-l-2 border-alert px-4 py-3">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-alert">Proctoring · check before you finalise</p>
+          <p className="mt-0.5 text-[13px]">
+            <span className="font-medium tabular-nums">{flags.length}</span> flag{flags.length === 1 ? "" : "s"}
+            {critical > 0 && <> · <span className="tabular-nums text-alert">{critical} high severity</span></>}
+            <span className="text-ink-soft"> · {flags[0]?.at?.replace(/^at /, "")} to {flags[flags.length - 1]?.at?.replace(/^at /, "")}</span>
+          </p>
+        </div>
         <button onClick={onOpenRecording} className="shrink-0 border border-alert px-3 py-2 font-mono text-[9px] uppercase tracking-wider text-alert hover:bg-alert/10">Open recording</button>
       </div>
-      <ul className="mt-3 space-y-1.5">
-        {flags.map((f, i) => <li key={i} className="flex items-center gap-2 text-[12px]"><span className={`h-1.5 w-1.5 ${f.severity === "critical" ? "bg-alert" : "bg-amber"}`} /><span className="font-medium">{f.label}</span><span className="font-mono text-[10px] text-ink-soft">{f.at}</span></li>)}
-      </ul>
+      <div className="flex flex-wrap gap-1.5 border-t border-line px-4 py-3">
+        {groups.map((g) => (
+          <span key={g.name} className={`inline-flex items-center gap-1.5 border px-2 py-1 text-[11.5px] ${g.critical ? "border-alert/40 text-alert" : "border-line text-ink"}`}>
+            <span className={`h-1.5 w-1.5 ${g.critical ? "bg-alert" : "bg-amber"}`} />
+            {g.name}
+            <span className="font-mono text-[10px] tabular-nums text-ink-soft">×{g.count}</span>
+          </span>
+        ))}
+      </div>
+      <button onClick={() => setOpen((v) => !v)} className="w-full border-t border-line px-4 py-2 text-left font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:text-ink">
+        {open ? "Hide timeline ▴" : `Show full timeline (${flags.length}) ▾`}
+      </button>
+      {open && (
+        <ol className="max-h-72 overflow-y-auto border-t border-line">
+          {flags.map((f, i) => (
+            <li key={i} className="flex items-center gap-3 border-b border-line/60 px-4 py-1.5 text-[12px] last:border-0">
+              <span className="w-14 shrink-0 font-mono text-[10px] tabular-nums text-ink-soft">{f.at?.replace(/^at /, "")}</span>
+              <span className={`h-1.5 w-1.5 shrink-0 ${f.severity === "critical" ? "bg-alert" : "bg-amber"}`} />
+              <span className="min-w-0 truncate" title={f.label}>{f.label.replace(/^\[[^\]]+\]\s*/, "")}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function QuestionStrip({ paper, cid, manualScores, onJump }: { paper: Question[]; cid: string; manualScores: Record<string, number>; onJump: (qid: string) => void }) {
+  return (
+    <div className="sticky top-0 z-10 -mx-1 mt-6 flex flex-wrap items-center gap-1.5 border-b border-line bg-paper px-1 py-3">
+      <span className="mr-1 font-mono text-[9px] uppercase tracking-widest text-ink-soft">Jump to</span>
+      {paper.map((q) => {
+        const auto = isAuto(q);
+        const scored = manualScores[key(cid, q.id)] != null;
+        const tone = auto
+          ? q.verdict === "correct" ? "border-success/50 text-success" : q.verdict === "wrong" ? "border-alert/50 text-alert" : "border-line text-ink-soft"
+          : scored ? "border-forest bg-forest text-paper" : "border-amber bg-amber/10 text-amber";
+        const title = auto ? `Q${q.no} · auto · ${q.verdict}` : scored ? `Q${q.no} · scored` : `Q${q.no} · needs your score`;
+        return <button key={q.id} onClick={() => onJump(q.id)} title={title} className={`h-7 min-w-[28px] border px-1.5 font-mono text-[10px] tabular-nums ${tone}`}>{q.no}</button>;
+      })}
+      <span className="ml-auto hidden gap-3 font-mono text-[9px] uppercase tracking-wider text-ink-soft sm:flex">
+        <span><span className="mr-1 inline-block h-2 w-2 bg-amber/60" />To score</span>
+        <span><span className="mr-1 inline-block h-2 w-2 bg-forest" />Scored</span>
+      </span>
     </div>
   );
 }
 
-function QuestionCard({ q, cid, manualScores, feedback, setScore, setFeedback }: {
+function QuestionCard({ q, cid, manualScores, feedback, setScore, setFeedback, commentRequired, showMissing, onCommentSaved }: {
   q: Question; cid: string; manualScores: Record<string, number>; feedback: Record<string, string>;
   setScore: (qid: string, marks: number, maxMarks: number) => void; setFeedback: (qid: string, v: string) => void;
+  commentRequired: boolean; showMissing: boolean; onCommentSaved: () => void;
 }) {
   const auto = isAuto(q);
   const scored = manualScores[key(cid, q.id)] != null;
@@ -749,7 +850,7 @@ function QuestionCard({ q, cid, manualScores, feedback, setScore, setFeedback }:
   const badge = auto ? autoBadge : scored ? `Scored · ${score}/${q.marks}` : "Needs review";
   const badgeTone = auto ? (full ? "text-success" : score <= 0 ? "text-alert" : "text-amber") : scored ? "text-forest" : "text-amber";
   return (
-    <section className="border border-line bg-paper">
+    <section id={`q-${q.id}`} className={`scroll-mt-16 border bg-paper ${showMissing && !auto && !scored ? "border-amber" : "border-line"}`}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper-raised px-4 py-3">
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question {q.no} · {typeLabel(q.type)} · {q.marks} marks</p>
         <span className={`font-mono text-[10px] uppercase tracking-wider ${badgeTone}`}>{auto ? "◆ " : ""}{badge}</span>
@@ -759,7 +860,7 @@ function QuestionCard({ q, cid, manualScores, feedback, setScore, setFeedback }:
         {(q.type === "MCQ" || q.type === "TrueFalse") && <McqAnswer q={q} />}
         {q.type === "MSQ" && <MsqAnswer q={q} />}
         {q.type === "Numerical" && <NumericalAnswer q={q} />}
-        {(q.type === "Subjective" || q.type === "Coding") && <ManualAnswer q={q} cid={cid} score={score} feedback={feedback} setScore={setScore} setFeedback={setFeedback} />}
+        {(q.type === "Subjective" || q.type === "Coding") && <ManualAnswer q={q} cid={cid} score={score} scored={scored} feedback={feedback} setScore={setScore} setFeedback={setFeedback} commentRequired={commentRequired} showMissing={showMissing} onCommentSaved={onCommentSaved} />}
       </div>
     </section>
   );
@@ -829,9 +930,10 @@ function NumericalAnswer({ q }: { q: Question }) {
   );
 }
 
-function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
-  q: Question; cid: string; score: number; feedback: Record<string, string>;
+function ManualAnswer({ q, cid, score, scored, feedback, setScore, setFeedback, commentRequired, showMissing, onCommentSaved }: {
+  q: Question; cid: string; score: number; scored: boolean; feedback: Record<string, string>;
   setScore: (qid: string, marks: number, maxMarks: number) => void; setFeedback: (qid: string, v: string) => void;
+  commentRequired: boolean; showMissing: boolean; onCommentSaved: () => void;
 }) {
   const fb = feedback[key(cid, q.id)] ?? "";
   // Detect uploaded answer: response starts with "[Uploaded answer: …]". The
@@ -898,9 +1000,11 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
   };
 
   const loadComments = () => {
-    void listGradingComments(cid).then((rows) =>
-      setComments(rows.filter((c) => String(c.question_id) === String(q.id))),
-    );
+    void listGradingComments(cid).then((rows) => {
+      const mine = rows.filter((c) => String(c.question_id) === String(q.id));
+      setComments(mine);
+      if (mine.length) onCommentSaved();
+    });
   };
   useEffect(loadComments, [cid, q.id]);
 
@@ -1024,15 +1128,15 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">Award</span>
-          <input type="number" min={0} max={q.marks} value={score} onChange={(e) => setScore(q.id, Number(e.target.value), q.marks)} className="w-16 border border-forest bg-paper px-2 py-1.5 text-center font-serif text-lg outline-none" />
+          <input type="number" min={0} max={q.marks} value={scored ? score : ""} placeholder="–" onChange={(e) => setScore(q.id, Number(e.target.value), q.marks)} className={`w-16 border bg-paper px-2 py-1.5 text-center font-serif text-lg outline-none ${showMissing && !scored ? "border-amber" : "border-forest"}`} />
           <span className="font-serif text-[13px] text-ink-soft">/ {q.marks}</span>
         </div>
         <div className="flex flex-wrap gap-1">
-          {Array.from({ length: q.marks + 1 }, (_, m) => <button key={m} onClick={() => setScore(q.id, m, q.marks)} className={`h-7 w-7 border font-mono text-[10px] ${score === m ? "border-forest bg-forest text-paper" : "border-line-strong text-ink-soft hover:border-forest"}`}>{m}</button>)}
+          {Array.from({ length: q.marks + 1 }, (_, m) => <button key={m} onClick={() => setScore(q.id, m, q.marks)} className={`h-7 w-7 border font-mono text-[10px] ${scored && score === m ? "border-forest bg-forest text-paper" : "border-line-strong text-ink-soft hover:border-forest"}`}>{m}</button>)}
         </div>
       </div>
       <div className="mt-3 relative">
-        <textarea value={fb} onChange={(e) => setFeedback(q.id, e.target.value)} rows={3} placeholder="Feedback for this answer (optional)…" className="block w-full resize-y border border-line-strong bg-paper px-3 py-2 pb-10 text-[13px] outline-none focus:border-forest" />
+        <textarea value={fb} onChange={(e) => setFeedback(q.id, e.target.value)} rows={3} placeholder={commentRequired ? "Comment for the student (required for this exam)…" : "Comment for the student (optional) — saved with the grade…"} className={`block w-full resize-y border bg-paper px-3 py-2 pb-10 text-[13px] outline-none focus:border-forest ${showMissing && commentRequired && !fb.trim() ? "border-amber" : "border-line-strong"}`} />
         <div className="absolute bottom-2 left-2 flex flex-wrap items-center gap-2">
           <button onClick={() => void addInlineComment()} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">Inline Text Comment</button>
           <button onClick={() => void toggleVoice()} className="border border-line-strong px-2 py-1 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">
@@ -1055,6 +1159,7 @@ function ManualAnswer({ q, cid, score, feedback, setScore, setFeedback }: {
           />
         </div>
       </div>
+      {commentRequired && showMissing && !fb.trim() && <p className="mt-1 text-[12px] text-amber">A comment is required on written answers for this exam.</p>}
       {attachError && <p className="mt-1 flex items-center gap-1.5 text-[12px] text-alert"><FiAlertTriangle aria-hidden /> {attachError}</p>}
       {comments.length > 0 && (
         <div className="mt-2 space-y-1.5">
@@ -1114,11 +1219,12 @@ function VoicePlayButton({ voiceKey }: { voiceKey: string }) {
   return <audio controls src={url} className="h-8 w-44" />;
 }
 
-function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount, onFinish, onFinishNext, onDelegate, onFlagModeration, hasNext, nextName }: {
+function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount, blockers, saving, commentsMandatory, onFinish, onFinishNext, onDelegate, onFlagModeration, hasNext, nextName }: {
   awarded: number; max: number; autoTotal: number; manualTotal: number; gradedManual: number; manualCount: number;
+  blockers: string[]; saving: boolean; commentsMandatory: boolean;
   onFinish: () => void; onFinishNext: () => void; onDelegate: () => void; onFlagModeration: () => void; hasNext: boolean; nextName?: string;
 }) {
-  const done = manualCount === 0 || gradedManual === manualCount;
+  const done = blockers.length === 0;
   return (
     <div className="border-b border-line p-4">
       <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Score summary</p>
@@ -1128,10 +1234,11 @@ function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manu
         <Row label="Manual review (subjective + coding)" value={`${manualTotal}`} />
         <Row label="Manual answers scored" value={`${gradedManual} / ${manualCount}`} />
       </div>
-      <div className={`mt-3 flex items-center gap-1.5 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${done ? "border-success/40 bg-success/5 text-success" : "border-amber/40 bg-amber/5 text-amber"}`}>{done ? <><FiCheck /> Ready to record</> : `${manualCount - gradedManual} answer(s) still need a score`}</div>
+      <div className={`mt-3 flex items-center gap-1.5 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${done ? "border-success/40 bg-success/5 text-success" : "border-amber/40 bg-amber/5 text-amber"}`}>{done ? <><FiCheck /> Ready to record</> : <span className="space-y-0.5">{blockers.map((b) => <span key={b} className="block normal-case tracking-normal">{b}</span>)}</span>}</div>
+      {commentsMandatory && manualCount > 0 && <p className="mt-2 text-[11px] text-ink-soft">This exam requires a comment on every written answer.</p>}
       <div className="mt-4 grid gap-2">
-        {hasNext && <button onClick={onFinishNext} className="border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">Save &amp; next / {nextName}</button>}
-        <button onClick={onFinish} className="border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5">{hasNext ? "Save & close" : "Save & finish"}</button>
+        {hasNext && <button onClick={onFinishNext} disabled={saving} className={`border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:opacity-50 ${done ? "" : "opacity-60"}`}>{saving ? "Saving…" : <>Save &amp; next / {nextName}</>}</button>}
+        <button onClick={onFinish} disabled={saving} className={`border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5 disabled:opacity-50 ${done ? "" : "opacity-60"}`}>{saving ? "Saving…" : hasNext ? "Save & close" : "Save & finish"}</button>
         <button onClick={onDelegate} className="border border-line-strong px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Delegate for cross-check</button>
         <button onClick={onFlagModeration} className="border border-alert/50 text-alert bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10">Flag for Moderation</button>
       </div>

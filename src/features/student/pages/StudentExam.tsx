@@ -34,7 +34,7 @@ import useExamTimer from "@/features/student/hooks/useExamTimer";
 import useSectionTimer from "@/features/student/hooks/useSectionTimer";
 import { isUploadHandled, markUploadHandled, uploadAnswer } from "@/features/student/services/uploadedAnswers";
 import { getSupabase } from "@/shared/data/supabase";
-import { describeNegative, groupBySection, questionKind, KIND_LABEL, sectionWindows, type NegativeSettings, type QuestionKind } from "@/shared/domain/exam";
+import { autoGradeAttempt, describeNegative, groupBySection, releaseTiming, type AutoGradeResult, type ReleaseSettings, questionKind, KIND_LABEL, sectionWindows, type NegativeSettings, type QuestionKind } from "@/shared/domain/exam";
 import useAutosave from "@/features/student/hooks/useAutosave";
 import useProctoring from "@/features/proctoring/hooks/useProctoring";
 import useKeyboardShortcuts from "@/features/student/hooks/useKeyboardShortcuts";
@@ -168,6 +168,8 @@ function StudentExamSession() {
   // The student's paper snapshot (DB question ids in order) — persisted with
   // the attempt row so reloads and grading see exactly what this student saw.
   const paperRef = useRef<PaperSlot[]>([]);
+  const poolRef = useRef<DBQuestion[]>([]);
+  const [submitGrade, setSubmitGrade] = useState<AutoGradeResult | null>(null);
   // Index of the first question of the section the student picked on the
   // "Ready to start?" screen (defaults to the very first question).
   const startIndexRef = useRef(0);
@@ -703,6 +705,7 @@ function StudentExamSession() {
         return;
       }
       paperRef.current = paper;
+      poolRef.current = rows;
       const uiRows = rows.map(toUIQuestion);
       // Sections must be contiguous; papers built before per-type sections
       // are regrouped here (answers are keyed by id, so order is free).
@@ -1259,6 +1262,9 @@ function StudentExamSession() {
     const snapshotsStored = screenshotHandleRef.current?.stop() ?? Promise.resolve(false);
     screenshotHandleRef.current = null;
 
+    const grade = autoGradeAttempt(poolRef.current, paperRef.current, answers as Record<string, unknown>, examSettings as NegativeSettings);
+    setSubmitGrade(grade);
+
     if (supabaseConfigured && studentIdRef.current) {
       const minutesUsed = Math.round((durationMin * 60 - secondsLeft) / 60);
       const success = await submitAttempt({
@@ -1268,6 +1274,7 @@ function StudentExamSession() {
         answered: answeredCount,
         minutesUsed,
         total: questions.length,
+        score: grade.score,
       });
 
       if (!success) {
@@ -1279,6 +1286,7 @@ function StudentExamSession() {
             answers,
             answered: answeredCount,
             minutesUsed,
+            score: grade.score,
             isSubmit: true
           }));
         } catch {}
@@ -1562,6 +1570,8 @@ function StudentExamSession() {
     );
   }
 
+  const releaseSettings = examSettings as ReleaseSettings;
+  const showInstantReport = releaseTiming(releaseSettings) === "on_submit" || releaseSettings.results_published === true || releaseSettings.answer_key_published === true;
     if (step === "submitted") {
     return (
       <SubmittedScreen
@@ -1575,6 +1585,8 @@ function StudentExamSession() {
         uploadState={artifactStatus?.state}
         uploadDetail={artifactStatus?.detail}
         submitFailed={submitFailed}
+        report={submitGrade && showInstantReport ? submitGrade : null}
+        feedbackStudentId={examSettings.skipFeedback === true ? null : studentIdRef.current}
       />
     );
   }
