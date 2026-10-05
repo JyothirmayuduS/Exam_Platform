@@ -10,7 +10,7 @@ const pdf = vi.hoisted(() => ({
   splitTextToSize: vi.fn((text: string) => [text]),
 }));
 vi.mock("jspdf", () => ({ jsPDF: class { constructor() { return pdf; } } }));
-vi.mock("@/shared/services/examStorage", () => ({ listStudentArtifacts: vi.fn(), getArtifactBlob: vi.fn().mockResolvedValue(null) }));
+vi.mock("@/shared/services/examStorage", () => ({ listStudentArtifacts: vi.fn(), getArtifactBlob: vi.fn().mockResolvedValue(null), getArtifactUrls: vi.fn().mockResolvedValue(new Map()) }));
 const start = Date.parse("2026-09-01T10:00:00Z");
 function snapshots(count: number) {
   return Array.from({ length: count }, (_, i) => ({

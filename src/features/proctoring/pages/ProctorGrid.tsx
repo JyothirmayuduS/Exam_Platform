@@ -138,7 +138,7 @@ export default function ProctorGrid() {
         const all = await listExams();
         rows = (all ?? [])
           .filter((e) => e.status !== "draft")
-          .map((e) => ({ id: e.id, name: e.name, batch: e.batch ?? "", status: e.status, mode: e.mode, assignee_role: "proctor" }));
+          .map((e) => ({ id: e.id, name: e.name, batch: e.batch ?? "", status: e.status, mode: e.mode, assignee_role: "proctor", created_at: e.created_at }));
       }
       if (!active) return;
       setExamOptions(rows);
@@ -830,6 +830,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
   const [pdfJob, setPdfJob] = useState<string | null>(null);
   const [expandedRoll, setExpandedRoll] = useState<string | null>(null);
   const [zipping, setZipping] = useState(false);
+  const [zipStep, setZipStep] = useState<string | null>(null);
   const [zipMsg, setZipMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -892,7 +893,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
     setZipping(true);
     setZipMsg(null);
     try {
-      const res = await downloadExamEvidenceZip({ examId, examName, students });
+      const res = await downloadExamEvidenceZip({ examId, examName, students, onProgress: setZipStep });
       if (res.fileCount === 0) {
         setZipMsg("No recordings or screenshots found in storage for this exam.");
       } else if (res.errors.length > 0) {
@@ -904,6 +905,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
       console.error("[ProctorReports] evidence ZIP export failed:", err);
       setZipMsg("ZIP export failed — storage may be unavailable.");
     } finally {
+      setZipStep(null);
       setZipping(false);
     }
   };
@@ -912,7 +914,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
 
   return (
     <div className="mt-8 space-y-8">
-      <JobBanner label={pdfJob ?? (zipping ? "Packing evidence ZIP…" : null)} />
+      <JobBanner label={pdfJob ?? (zipping ? zipStep ?? "Packing evidence ZIP…" : null)} />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total students" value={String(reportRows.length)} sub="attempts in this session" />
         <StatCard label="Submitted" value={String(submitted)} sub="papers received" />

@@ -33,6 +33,7 @@ import PageLoader from "@/shared/components/PageLoader";
 import RecordingReviewer from "@/features/proctoring/components/RecordingReview";
 import AIIntegrityCard from "@/features/proctoring/components/AIIntegrityCard";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
+import JobBanner from "@/shared/components/JobBanner";
 
 type ExamFolder = {
   /** Stored folder segment, e.g. "Test-3" (no trailing slash). */
@@ -356,6 +357,7 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
   const [violations, setViolations] = useState<ViolationEvent[]>([]);
   const [reportUrl, setReportUrl] = useState<string | null>(null);
   const [zipping, setZipping] = useState(false);
+  const [zipStep, setZipStep] = useState<string | null>(null);
   const [zipMsg, setZipMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -387,6 +389,7 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
     setZipMsg(null);
     try {
       const res = await downloadExamEvidenceZip({
+        onProgress: setZipStep,
         examId: exam.examId ?? exam.folder,
         examName: exam.name ?? exam.folder,
         folder: exam.folder,
@@ -399,12 +402,14 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
       console.error("[EvidenceBrowser] ZIP failed:", err);
       setZipMsg("ZIP export failed — storage may be unavailable.");
     } finally {
+      setZipStep(null);
       setZipping(false);
     }
   };
 
   return (
     <div className="grid gap-8 xl:grid-cols-[1fr_340px]">
+      <JobBanner label={zipping ? zipStep ?? `Packing evidence ZIP for ${student.name ?? student.roll}…` : null} />
       <div className="min-w-0 space-y-8">
         {/* Recording */}
         <div className="border border-line bg-paper p-5">

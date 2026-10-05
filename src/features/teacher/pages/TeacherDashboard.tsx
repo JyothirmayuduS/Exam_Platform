@@ -33,7 +33,24 @@ import EvidenceBrowser from "@/features/teacher/pages/EvidenceBrowser";
 import { getSupabase } from "@/shared/data/supabase";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
 
-
+function toExamCard(exam: ExamRecord) {
+  return {
+    id: exam.id,
+    name: exam.name,
+    batch: exam.batch,
+    state: exam.status === "draft" ? "Draft" : exam.status === "scheduled" ? "Scheduled" : "Live",
+    status: exam.status,
+    scheduled_at: exam.scheduled_at,
+    created_at: exam.created_at ?? new Date().toISOString(),
+    count: `${exam.pool_count || 0} questions`,
+    tone: exam.status === "draft" ? "text-amber" : "text-success",
+    progress: exam.status === "draft" ? 18 : 100,
+    schedule: exam.scheduled_at,
+    duration: exam.duration_minutes,
+    duration_minutes: exam.duration_minutes,
+    mode: exam.mode,
+  };
+}
 
 export default function TeacherDashboard() {
   const location = useLocation();
@@ -58,18 +75,7 @@ export default function TeacherDashboard() {
       const dbExams = await listExamsForTeacher();
       if (active && dbExams) {
         setCreatedExams(
-          dbExams.map((e) => ({
-            id: e.id,
-            name: e.name,
-            batch: e.batch,
-            state: e.status === "draft" ? "Draft" : e.status === "scheduled" ? "Scheduled" : "Live",
-            count: `${e.pool_count || 0} questions`,
-            tone: e.status === "draft" ? "text-amber" : "text-success",
-            progress: e.status === "draft" ? 18 : 100,
-            schedule: e.scheduled_at,
-            duration: e.duration_minutes,
-            mode: e.mode,
-          }))
+          dbExams.map(toExamCard)
         );
         void refreshTotals(dbExams.map((e) => ({ id: e.id, state: e.status })));
       }
@@ -121,11 +127,11 @@ export default function TeacherDashboard() {
     <>
       <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav}>
         {section === "overview" && <Overview notify={notify} navigate={navigate} examsList={createdExams} loading={loadingExams} avgScore={avgScore} scoredCount={totals.scored} stats={{ live: totals.live, submitted: totals.submitted, flagged: totals.flagged }} />}
-    {section === "exams" && subSection === "new" && <TeacherExams notify={notify} navigate={navigate} exams={createdExams} autoCreate onCreate={(exam) => setCreatedExams((current) => [{ id: exam.id, name: exam.name, batch: exam.batch, state: exam.status === "draft" ? "Draft" : exam.status === "scheduled" ? "Scheduled" : "Live", count: `${exam.pool_count} questions`, tone: exam.status === "draft" ? "text-amber" : "text-success", progress: exam.status === "draft" ? 18 : 100, schedule: exam.scheduled_at, duration: exam.duration_minutes, mode: exam.mode }, ...current])} onDeleted={(examId) => setCreatedExams((current) => current.filter((e) => e.id !== examId))} />}
+    {section === "exams" && subSection === "new" && <TeacherExams notify={notify} navigate={navigate} exams={createdExams} autoCreate onCreate={(exam) => setCreatedExams((current) => [toExamCard(exam), ...current])} onDeleted={(examId) => setCreatedExams((current) => current.filter((e) => e.id !== examId))} />}
     {section === "exams" && subSection && subSection !== "new" && examAction === "settings" && <ExamSettings notify={notify} navigate={navigate} examId={subSection} examsList={createdExams} />}
-    {section === "exams" && subSection && subSection !== "new" && examAction === "build" && <ExamStudio notify={notify} navigate={navigate} examId={subSection} onSaved={(exam) => setCreatedExams((current) => { const rest = current.filter((e) => e.id !== exam.id); return [{ id: exam.id, name: exam.name, batch: exam.batch, state: exam.status === "draft" ? "Draft" : exam.status === "scheduled" ? "Scheduled" : "Live", count: `${exam.pool_count} questions`, tone: exam.status === "draft" ? "text-amber" : "text-success", progress: exam.status === "draft" ? 18 : 100, schedule: exam.scheduled_at, duration: exam.duration_minutes, mode: exam.mode }, ...rest]; })} />}
+    {section === "exams" && subSection && subSection !== "new" && examAction === "build" && <ExamStudio notify={notify} navigate={navigate} examId={subSection} onSaved={(exam) => setCreatedExams((current) => { const rest = current.filter((e) => e.id !== exam.id); return [toExamCard(exam), ...rest]; })} />}
     {section === "exams" && subSection && subSection !== "new" && !examAction && <ExamWorkspace notify={notify} navigate={navigate} examId={subSection} examsList={createdExams} />}
-    {section === "exams" && !subSection && <TeacherExams notify={notify} navigate={navigate} exams={createdExams} onCreate={(exam) => setCreatedExams((current) => [{ id: exam.id, name: exam.name, batch: exam.batch, state: exam.status === "draft" ? "Draft" : exam.status === "scheduled" ? "Scheduled" : "Live", count: `${exam.pool_count} questions`, tone: exam.status === "draft" ? "text-amber" : "text-success", progress: exam.status === "draft" ? 18 : 100, schedule: exam.scheduled_at, duration: exam.duration_minutes, mode: exam.mode }, ...current])} onDeleted={(examId) => setCreatedExams((current) => current.filter((e) => e.id !== examId))} />}
+    {section === "exams" && !subSection && <TeacherExams notify={notify} navigate={navigate} exams={createdExams} onCreate={(exam) => setCreatedExams((current) => [toExamCard(exam), ...current])} onDeleted={(examId) => setCreatedExams((current) => current.filter((e) => e.id !== examId))} />}
     {section === "dashboard" && <ExaminerDashboard notify={notify} navigate={navigate} />}
     {section === "questions" && subSection === "new" && <QuestionEditorV4 notify={notify} navigate={navigate} />}
     {section === "bank" && <TeacherQuestionBank notify={notify} navigate={navigate} />}
@@ -420,11 +426,13 @@ function Reports({ notify }: { notify: (s: string) => void }) {
     notify(`Results CSV exported · ${liveAttempts.length} rows`);
   };
   const [zipping, setZipping] = useState(false);
+  const [zipStep, setZipStep] = useState<string | null>(null);
   const exportZip = async () => {
     if (!examId || submitted.length === 0 || zipping) return;
     setZipping(true);
     try {
       const res = await downloadExamEvidenceZip({
+        onProgress: setZipStep,
         examId,
         examName: selectedExam?.name ?? null,
         students: submitted.map((a) => ({ roll: a.roll, name: a.name })),
@@ -440,6 +448,7 @@ function Reports({ notify }: { notify: (s: string) => void }) {
       console.error("[Reports] evidence ZIP export failed:", err);
       notify("ZIP export failed — storage may be unavailable.");
     } finally {
+      setZipStep(null);
       setZipping(false);
     }
   };
@@ -471,7 +480,7 @@ function Reports({ notify }: { notify: (s: string) => void }) {
 
   return (
     <>
-      <JobBanner label={pdfProgress ?? (zipping ? "Packing evidence ZIP…" : null)} />
+      <JobBanner label={pdfProgress ?? (zipping ? zipStep ?? "Packing evidence ZIP…" : null)} />
       <PageHeading eyebrow="Reports" title="Performance reports" detail="Live stats, exports, and result publishing — straight from the database." action={
         <div className="flex flex-wrap items-center gap-2">
           <select value={examId} onChange={(e) => setExamId(e.target.value)} className="border border-line bg-paper px-2 py-2.5 font-mono text-[10px] uppercase tracking-wider text-soft">

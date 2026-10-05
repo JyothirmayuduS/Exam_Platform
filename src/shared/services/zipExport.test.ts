@@ -10,6 +10,7 @@ import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 vi.mock("@/shared/services/examStorage", () => ({
   listStudentArtifacts: vi.fn(),
   getArtifactObjectUrl: vi.fn(),
+  getArtifactUrls: vi.fn(async () => new Map()),
 }));
 
 function mockResponse(bytes: number[]): { ok: boolean; arrayBuffer: () => Promise<ArrayBuffer> } {

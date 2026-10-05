@@ -116,6 +116,18 @@ export async function r2PresignGet(key: string, expiresSec = 3600): Promise<stri
   return res?.url ?? null;
 }
 
+/** Presigned GETs for many keys, 500 per edge call. Missing keys are omitted. */
+export async function r2PresignGetMany(keys: string[], expiresSec = 3600): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const batches: string[][] = [];
+  for (let i = 0; i < keys.length; i += 500) batches.push(keys.slice(i, i + 500));
+  await Promise.all(batches.map(async (batch) => {
+    const res = await invoke<{ urls: Record<string, string> }>({ op: "get-many", keys: batch, expiresSec });
+    for (const [k, v] of Object.entries(res?.urls ?? {})) out.set(k, v);
+  }));
+  return out;
+}
+
 /** List objects under a prefix (e.g. `${examId}/${owner}/${kind}/`). */
 export async function r2List(prefix: string): Promise<R2ListedObject[] | null> {
   const objects = new Map<string, R2ListedObject>();

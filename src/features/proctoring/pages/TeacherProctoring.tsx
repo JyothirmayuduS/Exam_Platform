@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
+import { byNewest } from "@/shared/services/examPhase";
 import { supabaseConfigured } from "@/shared/data/env";
 import { listLiveAttempts, subscribeToAttempts, forceSubmitAttempt, saveViolation, setAttemptPaused, listExamsForTeacher, listProctoringStats, listProctorAssignments, saveProctorAssignments, listFaculty, type LiveAttempt, type ViolationEvent, type FacultyMember } from "@/shared/data/examApi";
 import { sendProctorAssignmentEmail } from "@/features/teacher/services/emailApi";
@@ -164,12 +165,10 @@ export default function TeacherProctoring() {
           name: e.name,
           batch: e.batch,
           status: e.status,
+          created_at: e.created_at,
           candidates: stats[e.id]?.candidates ?? 0,
         }))
-        .sort((a, b) => {
-          const rank = (x: typeof a) => (x.status === "draft" ? 2 : x.candidates > 0 ? 0 : 1);
-          return rank(a) - rank(b) || b.candidates - a.candidates || a.name.localeCompare(b.name);
-        });
+        .sort(byNewest);
       setExamList(list);
       if (paramExamId) return;
       if (selectedExamId && list.some((e) => e.id === selectedExamId)) return;
@@ -309,6 +308,7 @@ export default function TeacherProctoring() {
   const examIsEmpty = !!selectedExam && selectedExam.status === "draft" && rosterCount === 0;
 
   const [zipping, setZipping] = useState(false);
+  const [zipStep, setZipStep] = useState<string | null>(null);
   const [pdfJob, setPdfJob] = useState<string | null>(null);
   const [zipMsg, setZipMsg] = useState<string | null>(null);
   const exportZip = async () => {
@@ -324,6 +324,7 @@ export default function TeacherProctoring() {
     setZipMsg(null);
     try {
       const res = await downloadExamEvidenceZip({
+        onProgress: setZipStep,
         examId: selectedExamId,
         examName: examList.find((e) => e.id === selectedExamId)?.name || null,
         students: rows,
@@ -339,6 +340,7 @@ export default function TeacherProctoring() {
       console.error("[TeacherProctoring] evidence ZIP export failed:", err);
       setZipMsg("ZIP export failed — storage may be unavailable.");
     } finally {
+      setZipStep(null);
       setZipping(false);
     }
   };
@@ -462,7 +464,7 @@ export default function TeacherProctoring() {
   }
 
   return <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav} status={live ? "Live monitoring active" : "Not connected"}>
-    <JobBanner label={pdfJob ?? (zipping ? "Packing evidence ZIP…" : null)} />
+    <JobBanner label={pdfJob ?? (zipping ? zipStep ?? "Packing evidence ZIP…" : null)} />
 
     {/* Session header card */}
     <section className="border border-line bg-paper">

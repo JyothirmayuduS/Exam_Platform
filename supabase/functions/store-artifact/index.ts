@@ -193,6 +193,30 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // ── op "get-many": presigned GETs for up to 500 keys in one round trip ─────
+  // Reports sign every snapshot up front, then fetch straight from R2 in
+  // parallel instead of one relayed base64 call per frame.
+  if (op === "get-many") {
+    const raw = Array.isArray(body.keys) ? body.keys.slice(0, 500) : [];
+    const expires = Math.min(Math.max(Number(body.expiresSec ?? 3600) || 3600, 60), 86400);
+    const urls: Record<string, string> = {};
+    try {
+      for (const k of raw) {
+        const key = safeSegment(String(k ?? ""));
+        if (!key || !canReadPath(key)) continue;
+        const signed = await aws.sign(
+          new Request(`${endpoint}/${bucket}/${key}?X-Amz-Expires=${expires}`, { method: "GET" }),
+          { aws: { signQuery: true } },
+        );
+        urls[key] = signed.url;
+      }
+      return json({ urls });
+    } catch (err) {
+      console.error("[store-artifact] presign get-many error:", err);
+      return json({ error: "failed to presign" }, 500);
+    }
+  }
+
   // ── op "list": list objects under a prefix (server-side, XML → JSON) ──────
   if (op === "list") {
     const prefix = safeSegment(String(body.prefix ?? ""));

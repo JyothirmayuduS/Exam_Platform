@@ -1,3 +1,4 @@
+import { byNewest } from "@/shared/services/examPhase";
 // ──────────────────────────────────────────────────────────────────────────
 // Domain module: assignments — extracted from src/shared/data/examApi.ts.
 // ──────────────────────────────────────────────────────────────────────────
@@ -111,7 +112,7 @@ export async function saveProctorAssignments(
  * console to replace its hard-coded exam id.
  */
 export async function listAssignedExamsForAuthUser(): Promise<
-  { id: string; name: string; batch: string; status: string; mode: string; assignee_role: string }[]
+  { id: string; name: string; batch: string; status: string; mode: string; assignee_role: string; created_at?: string }[]
 > {
   const db = getSupabase();
   if (!db) return [];
@@ -126,12 +127,12 @@ export async function listAssignedExamsForAuthUser(): Promise<
   if (!me?.id) return [];
   const { data, error } = await db
     .from("proctor_assignments")
-    .select("exam_id, assignee_role, exam:exams(id, name, batch, status, mode)")
+    .select("exam_id, assignee_role, exam:exams(id, name, batch, status, mode, created_at)")
     .eq("assignee_id", me.id as string)
     .order("created_at", { ascending: false });
   if (error || !data) return [];
   const seen = new Set<string>();
-  const out: { id: string; name: string; batch: string; status: string; mode: string; assignee_role: string }[] = [];
+  const out: { id: string; name: string; batch: string; status: string; mode: string; assignee_role: string; created_at?: string }[] = [];
   for (const raw of data as unknown[]) {
     const r = raw as { exam_id?: string; assignee_role?: string; exam?: unknown };
     const examRow = Array.isArray(r.exam) ? (r.exam as unknown[])[0] : r.exam;
@@ -146,9 +147,10 @@ export async function listAssignedExamsForAuthUser(): Promise<
       status: String(e.status ?? ""),
       mode: String(e.mode ?? "lockdown"),
       assignee_role: String(r.assignee_role ?? "proctor"),
+      created_at: typeof e.created_at === "string" ? e.created_at : undefined,
     });
   }
-  return out;
+  return out.sort(byNewest);
 }
 
 // ── Teacher grading comments (inline + voice) ────────────────────────────────

@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
 import ExamCountdown from "@/features/student/components/ExamCountdown";
 import SystemCheckPage from "@/shared/components/SystemCheckPage";
-import { loadExamForStudent, type ExamRecord } from "@/shared/data/examApi";
+import { getMyAttemptState, loadExamForStudent, type ExamRecord } from "@/shared/data/examApi";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
 import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
 
@@ -21,6 +21,7 @@ export default function StudentExamDetail() {
   const { profile } = useCurrentProfile();
   const [exam, setExam] = useState<ExamRecord | null>(null);
   const [questionCount, setQuestionCount] = useState(0);
+  const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -29,6 +30,7 @@ export default function StudentExamDetail() {
       setExam(res.exam);
       setQuestionCount(res.questionCount);
     });
+    void getMyAttemptState(examId).then((state) => { if (active) setSubmitted(state === "submitted"); });
     return () => {
       active = false;
     };
@@ -113,7 +115,14 @@ export default function StudentExamDetail() {
           >
             Open practice mode
           </Link>
-          {startVisible && (
+          {submitted ? (
+            <Link
+              to="/student/results"
+              className="mt-3 block border border-line bg-paper-raised px-4 py-3 text-center font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest"
+            >
+              Submitted · view result
+            </Link>
+          ) : startVisible && (
             <Link
               to={`/student/exam?examId=${encodeURIComponent(examId)}`}
               className="mt-3 block border border-forest bg-forest px-4 py-3 text-center font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest/90"

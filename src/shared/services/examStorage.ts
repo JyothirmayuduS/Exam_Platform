@@ -26,7 +26,7 @@ import { jsPDF } from "jspdf";
 import { createSnapshotOutbox } from "@/shared/services/snapshotOutbox";
 import type { ReportRow } from "@/shared/services/sessionReport";
 import { supabaseConfigured } from "@/shared/data/env";
-import { r2FetchData, r2List, r2ListFolders, r2PresignGet, r2PutBlob, type R2Kind } from "@/shared/services/r2Function";
+import { r2FetchData, r2List, r2ListFolders, r2PresignGet, r2PresignGetMany, r2PutBlob, type R2Kind } from "@/shared/services/r2Function";
 
 // Storage policy: Cloudflare R2 only. No Supabase Storage writes.
 export type StorageProvider = "r2";
@@ -239,6 +239,17 @@ export async function getArtifactBlob(key: string): Promise<Blob | null> {
     }
   } catch { /* R2 unreachable */ }
   return null;
+}
+
+/** Presigned GET URLs for many artifacts at once (empty map when R2 is off). */
+export async function getArtifactUrls(keys: string[], expiresIn = 3600): Promise<Map<string, string>> {
+  if (!r2Configured || keys.length === 0) return new Map();
+  try {
+    return await r2PresignGetMany(keys, expiresIn);
+  } catch (err) {
+    console.warn("[examStorage] R2 batch presign failed:", err);
+    return new Map();
+  }
 }
 
 /** Playable/embeddable URL for an R2 artifact (server-signed GET). */

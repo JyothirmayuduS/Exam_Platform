@@ -1,3 +1,4 @@
+import { byNewest } from "@/shared/services/examPhase";
 // ──────────────────────────────────────────────────────────────────────────
 // Domain module: exams — extracted from src/shared/data/examApi.ts.
 // ──────────────────────────────────────────────────────────────────────────
@@ -114,13 +115,33 @@ export async function listEnrolledExamsForAuthUser(
 
   // Only enrolled exams. Do not invent a batch match — that looked like mock
   // data when every published CSE paper appeared for every CSE student.
-  const exams = Array.from(examMap.values()).sort((a, b) => {
-    const left = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
-    const right = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
-    return left - right;
-  });
+  if (student?.id && examMap.size) {
+    const { data: att } = await db
+      .from("attempts")
+      .select("exam_id, state")
+      .eq("student_id", student.id)
+      .in("exam_id", Array.from(examMap.keys()));
+    for (const a of (att ?? []) as { exam_id: string; state: string }[]) {
+      const exam = examMap.get(a.exam_id);
+      if (exam && exam.my_attempt_state !== "submitted") exam.my_attempt_state = a.state;
+    }
+  }
+  const exams = Array.from(examMap.values()).sort(byNewest);
 
   return exams;
+}
+
+/** The signed-in student's attempt state for one exam, or null if none. */
+export async function getMyAttemptState(examId: string): Promise<string | null> {
+  const db = getSupabase();
+  if (!db) return null;
+  const { data: auth } = await db.auth.getUser();
+  if (!auth?.user) return null;
+  const { data: st } = await db.from("students").select("id").eq("auth_id", auth.user.id).maybeSingle();
+  if (!st?.id) return null;
+  const { data } = await db.from("attempts").select("state").eq("student_id", st.id).eq("exam_id", examId);
+  const states = ((data ?? []) as { state: string }[]).map((r) => r.state);
+  return states.includes("submitted") ? "submitted" : states[0] ?? null;
 }
 
 /**

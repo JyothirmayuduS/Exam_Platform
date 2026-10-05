@@ -10,6 +10,7 @@ import { PageHeading, Button } from "@/features/teacher/pages/TeacherDashboard";
 import { PlusIcon, ArrowRightIcon } from "@/shared/components/ui";
 import { FiGrid, FiList, FiTrash2 } from "react-icons/fi";
 import CreateTestModal from "@/features/teacher/components/teacher/CreateTestModal";
+import { byNewest, examPhase, PHASE_FILTERS, PHASE_LABEL, type ExamPhase, type PhaseFilter } from "@/shared/services/examPhase";
 
 type ExamCard = {
   id: string;
@@ -24,9 +25,16 @@ type ExamCard = {
   mode: string;
   schedule?: string;
   takers: number;
+  phase: ExamPhase;
+  created_at?: string;
 };
 
-const STATUS_ORDER = ["Live", "Scheduled", "Draft"];
+const PHASE_TONE: Record<ExamPhase, string> = {
+  live: "text-success",
+  upcoming: "text-amber",
+  draft: "text-amber",
+  completed: "text-ink-soft",
+};
 
 export default function TeacherExams({
   navigate,
@@ -44,7 +52,7 @@ export default function TeacherExams({
   onDeleted?: (examId: string) => void;
 }) {
   const [takers, setTakers] = useState<Record<string, number>>({});
-  const [filter, setFilter] = useState("All exams");
+  const [filter, setFilter] = useState<PhaseFilter>("all");
   const [view, setView] = useState<"cards" | "list">("cards");
   const [showCreate, setShowCreate] = useState(autoCreate);
   const [deleting, setDeleting] = useState<ExamCard | null>(null);
@@ -71,13 +79,16 @@ export default function TeacherExams({
     () =>
       exams.map((e: any) => {
         const q = parseInt(e.count) || e.questionCount || 0;
+        const phase = examPhase({ status: e.status, scheduled_at: e.scheduled_at ?? e.schedule, duration_minutes: e.duration_minutes ?? e.duration });
         return {
           id: e.id,
           name: e.name,
           batch: e.batch,
           state: e.state,
           status: e.status ?? e.state?.toLowerCase?.() ?? "",
-          tone: e.tone,
+          tone: PHASE_TONE[phase],
+          phase,
+          created_at: e.created_at,
           count: `${q} questions`,
           questionCount: q,
           duration: e.duration ?? e.duration_minutes ?? 0,
@@ -90,17 +101,13 @@ export default function TeacherExams({
   );
 
   const filtered = useMemo(() => {
-    const list = filter === "All exams" ? cards : cards.filter((c) => c.state === filter);
-    return [...list].sort((a, b) => {
-      const ia = STATUS_ORDER.indexOf(a.state);
-      const ib = STATUS_ORDER.indexOf(b.state);
-      return (ia < 0 ? 9 : ia) - (ib < 0 ? 9 : ib);
-    });
+    const list = filter === "all" ? cards : cards.filter((c) => c.phase === filter);
+    return [...list].sort(byNewest);
   }, [cards, filter]);
 
-  const live = cards.filter((c) => c.state === "Live").length;
-  const scheduled = cards.filter((c) => c.state === "Scheduled").length;
-  const drafts = cards.filter((c) => c.state === "Draft").length;
+  const live = cards.filter((c) => c.phase === "live").length;
+  const scheduled = cards.filter((c) => c.phase === "upcoming").length;
+  const drafts = cards.filter((c) => c.phase === "draft").length;
 
   return (
     <div>
@@ -112,16 +119,16 @@ export default function TeacherExams({
       />
 
       <div className="mt-8 grid gap-4 sm:grid-cols-3">
-        <MiniStat label="Published" value={String(live)} detail="Currently live" tone="text-forest" onClick={() => setFilter("Live")} />
-        <MiniStat label="Scheduled" value={String(scheduled)} detail="Upcoming assessments" tone="text-amber" onClick={() => setFilter("Scheduled")} />
-        <MiniStat label="Drafts" value={String(drafts)} detail="Need your attention" tone="text-ink" onClick={() => setFilter("Draft")} />
+        <MiniStat label="Live" value={String(live)} detail="Open right now" tone="text-forest" onClick={() => setFilter("live")} />
+        <MiniStat label="Upcoming" value={String(scheduled)} detail="Scheduled assessments" tone="text-amber" onClick={() => setFilter("upcoming")} />
+        <MiniStat label="Drafts" value={String(drafts)} detail="Need your attention" tone="text-ink" onClick={() => setFilter("draft")} />
       </div>
 
       <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1 border border-line bg-paper-raised p-1">
-          {["All exams", "Live", "Scheduled", "Draft"].map((item) => (
-            <button key={item} onClick={() => setFilter(item)} className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider ${filter === item ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}>
-              {item}
+          {PHASE_FILTERS.map((item) => (
+            <button key={item.value} onClick={() => setFilter(item.value)} className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider ${filter === item.value ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"}`}>
+              {item.label}
             </button>
           ))}
         </div>
@@ -140,7 +147,7 @@ export default function TeacherExams({
               <div className="px-5 pt-5">
                 <div className="flex items-start justify-between gap-3 pr-3">
                   <p className="font-mono text-[9px] uppercase tracking-widest text-ink-soft">{exam.id}</p>
-                  <span className={`font-mono text-[9px] uppercase tracking-wider ${exam.tone}`}>{exam.state}</span>
+                  <span className={`font-mono text-[9px] uppercase tracking-wider ${exam.tone}`}>{PHASE_LABEL[exam.phase]}</span>
                 </div>
                 <h3 className="mt-3 font-serif text-lg font-semibold leading-snug group-hover:text-forest">{exam.name}</h3>
                 <p className="mt-1 text-[11px] text-ink-soft">{exam.batch}</p>
@@ -173,8 +180,8 @@ export default function TeacherExams({
           ))}
           {filtered.length === 0 && (
             <div className="col-span-full border border-dashed border-line-strong p-12 text-center sm:col-span-2 xl:col-span-4">
-              <p className="font-serif text-xl">No tests here yet</p>
-              <p className="mt-2 text-[13px] text-ink-soft">Create your first exam — it will appear as a card here.</p>
+              <p className="font-serif text-xl">{cards.length ? "No tests match this filter" : "No tests here yet"}</p>
+              <p className="mt-2 text-[13px] text-ink-soft">{cards.length ? "Pick another filter or All to see every test." : "Create your first exam — it will appear as a card here."}</p>
               <button onClick={() => setShowCreate(true)} className="mt-5 border border-forest bg-forest px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light">
                 Create your first test
               </button>
@@ -206,7 +213,7 @@ export default function TeacherExams({
                   <td className="px-5 py-4">{exam.questionCount}</td>
                   <td className="px-5 py-4">{exam.duration ? `${exam.duration} min` : "—"}</td>
                   <td className="px-5 py-4">{exam.takers}</td>
-                  <td className="px-5 py-4"><span className={`font-mono text-[10px] uppercase ${exam.tone}`}>{exam.state}</span></td>
+                  <td className="px-5 py-4"><span className={`font-mono text-[10px] uppercase ${exam.tone}`}>{PHASE_LABEL[exam.phase]}</span></td>
                   <td className="px-5 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <Button size="sm" onClick={() => navigate(exam.state === "Draft" ? `/teacher/exams/${exam.id}/build` : `/teacher/exams/${exam.id}`)} iconRight={<ArrowRightIcon />}>{exam.state === "Draft" ? "Continue setup" : "Open"}</Button>

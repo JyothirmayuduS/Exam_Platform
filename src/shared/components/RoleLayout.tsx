@@ -17,8 +17,8 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
   const [mobileOpen, setMobileOpen] = useState(false);
   return (
     <div className="min-h-screen bg-paper">
-      {/* Mobile header bar */}
-      <header className="flex items-center justify-between border-b border-line bg-paper px-4 py-3 lg:hidden">
+      {/* Mobile header bar — the only top bar; on desktop the sidebar carries identity */}
+      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-paper px-4 py-3 lg:hidden">
         <Link to="/" className="flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center border border-ink font-serif text-sm font-semibold">V</div>
           <span className="font-serif text-sm font-semibold">Vignan Lockdown OS</span>
@@ -108,10 +108,6 @@ export default function RoleLayout({ role, name, subtitle, tone, items, children
       </aside>
 
       <div className="lg:pl-60">
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-paper px-5 py-3 lg:px-8">
-          <div><p className="font-mono text-[9px] uppercase tracking-widest" style={{ color: tone }}>{role} console</p><p className="mt-0.5 font-serif text-base font-semibold">{name}</p></div>
-          <div className="flex items-center gap-3"><span className="hidden text-[11px] text-soft sm:block">{status}</span><div className="flex h-7 w-7 items-center justify-center rounded-none bg-ink text-[10px] font-semibold text-paper">{name.split(" ").map((x) => x[0]).slice(0, 2).join("")}</div></div>
-        </header>
         <main className="mx-auto max-w-7xl px-5 py-6 lg:px-8">{children}</main>
       </div>
     </div>

@@ -12,7 +12,7 @@
 // saw when each flag fired.
 
 import { jsPDF } from "jspdf";
-import { listStudentArtifacts, getArtifactBlob } from "@/shared/services/examStorage";
+import { listStudentArtifacts, getArtifactBlob, getArtifactUrls } from "@/shared/services/examStorage";
 
 export type ReportRow = {
   name: string;
@@ -135,7 +135,7 @@ export async function collectSnapshotTimeline(
   }
   let artifacts;
   try {
-    artifacts = await listStudentArtifacts(folderExamId, roll);
+    artifacts = await listArtifactsCached(folderExamId, roll);
   } catch {
     return null;
   }
@@ -194,13 +194,42 @@ export async function collectSnapshotTimeline(
   return timeline;
 }
 
+let artifactListCache: Map<string, ReturnType<typeof listStudentArtifacts>> | null = null;
+
+/** Within one report run the timeline and audio pages share a single listing. */
+function listArtifactsCached(examId: string, roll: string): ReturnType<typeof listStudentArtifacts> {
+  if (!artifactListCache) return listStudentArtifacts(examId, roll);
+  const key = `${examId}|${roll}`;
+  const hit = artifactListCache.get(key);
+  if (hit) return hit;
+  const list = listStudentArtifacts(examId, roll);
+  artifactListCache.set(key, list);
+  return list;
+}
+
+type Thumb = { data: string; w: number; h: number };
+
+const THUMB_EDGE = 360;
+const FETCH_CONCURRENCY = 16;
+const PREFETCH_AHEAD = 64;
+
+async function fetchSnapshotBlob(key: string, url: string | undefined): Promise<Blob | null> {
+  if (url) {
+    try {
+      const res = await fetch(url, { mode: "cors" });
+      if (res.ok) return await res.blob();
+    } catch { /* fall back to the relayed read */ }
+  }
+  return getArtifactBlob(key);
+}
+
 /** Fetch a stored snapshot and downscale it to a small embedded JPEG. */
-async function snapshotThumbDataUrl(key: string, maxEdge = 480): Promise<string | null> {
+async function snapshotThumb(key: string, url?: string): Promise<Thumb | null> {
   try {
-    const blob = await getArtifactBlob(key);
+    const blob = await fetchSnapshotBlob(key, url);
     if (!blob) return null;
     const bitmap = await createImageBitmap(blob);
-    const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
+    const scale = Math.min(1, THUMB_EDGE / Math.max(bitmap.width, bitmap.height));
     const w = Math.max(1, Math.round(bitmap.width * scale));
     const h = Math.max(1, Math.round(bitmap.height * scale));
     const c = document.createElement("canvas");
@@ -213,10 +242,42 @@ async function snapshotThumbDataUrl(key: string, maxEdge = 480): Promise<string 
     }
     ctx.drawImage(bitmap, 0, 0, w, h);
     bitmap.close?.();
-    return c.toDataURL("image/jpeg", 0.6);
+    return { data: c.toDataURL("image/jpeg", 0.6), w, h };
   } catch {
     return null;
   }
+}
+
+/**
+ * Loads thumbnails in order with a bounded parallel pool that runs ahead of
+ * the renderer, so drawing row N overlaps with downloading rows N+1…N+k.
+ */
+function createThumbLoader(keys: string[], urls: Map<string, string>) {
+  const pending = new Map<number, Promise<Thumb | null>>();
+  const waiting: (() => void)[] = [];
+  let active = 0;
+  let scheduled = 0;
+  const limit = (fn: () => Promise<Thumb | null>) => new Promise<Thumb | null>((resolve) => {
+    const start = () => {
+      active += 1;
+      fn().then(resolve, () => resolve(null)).finally(() => {
+        active -= 1;
+        waiting.shift()?.();
+      });
+    };
+    if (active < FETCH_CONCURRENCY) start();
+    else waiting.push(start);
+  });
+  return (index: number): Promise<Thumb | null> => {
+    const upTo = Math.min(keys.length - 1, index + PREFETCH_AHEAD);
+    for (; scheduled <= upTo; scheduled++) {
+      const key = keys[scheduled];
+      pending.set(scheduled, limit(() => snapshotThumb(key, urls.get(key))));
+    }
+    const p = pending.get(index) ?? Promise.resolve(null);
+    pending.delete(index);
+    return p;
+  };
 }
 
 /** Render all available evidence, including clean frames and explicit gaps. */
@@ -224,7 +285,7 @@ export async function drawSnapshotTimeline(
   doc: jsPDF,
   row: ReportRow,
   examId: string,
-  opts: { continuePage?: boolean } = {},
+  opts: { continuePage?: boolean; onFrames?: (done: number, total: number) => void } = {},
 ): Promise<number> {
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
@@ -254,6 +315,8 @@ export async function drawSnapshotTimeline(
     return 0;
   }
 
+  const keys = timeline.map((t) => t.key);
+  const thumbAt = createThumbLoader(keys, await getArtifactUrls(keys));
   const gutter = 12;
   const cellW = (W - M * 2 - gutter * (SNAPS_PER_ROW - 1)) / SNAPS_PER_ROW;
   const imgH = Math.round(cellW * 0.75);
@@ -263,7 +326,10 @@ export async function drawSnapshotTimeline(
   let y = 74;
   for (let i = 0; i < timeline.length; i += SNAPS_PER_ROW) {
     const slice = timeline.slice(i, i + SNAPS_PER_ROW);
-    const thumbs = await Promise.all(slice.map((s) => snapshotThumbDataUrl(s.key)));
+    const thumbs = await Promise.all(slice.map((_, j) => thumbAt(i + j)));
+    if (i % (SNAPS_PER_ROW * 10) === 0 || i + SNAPS_PER_ROW >= timeline.length) {
+      opts.onFrames?.(Math.min(timeline.length, i + SNAPS_PER_ROW), timeline.length);
+    }
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
     const captions = slice.map((snap, j) => {
@@ -298,10 +364,9 @@ export async function drawSnapshotTimeline(
           try {
             const thumb = thumbs[col]!;
             // Preserve the camera's aspect ratio rather than stretching faces.
-            const props = doc.getImageProperties(thumb);
-            const scale = Math.min(cellW / props.width, imgH / props.height);
-            const w = props.width * scale, h = props.height * scale;
-            doc.addImage(thumb, "JPEG", x + (cellW - w) / 2, y + (imgH - h) / 2, w, h, undefined, "FAST");
+            const scale = Math.min(cellW / thumb.w, imgH / thumb.h);
+            const w = thumb.w * scale, h = thumb.h * scale;
+            doc.addImage(thumb.data, "JPEG", x + (cellW - w) / 2, y + (imgH - h) / 2, w, h, undefined, "FAST");
             embedded = true;
           } catch { /* explicitly mark unavailable images below */ }
         }
@@ -336,7 +401,7 @@ async function drawAudioInventory(doc: jsPDF, row: ReportRow, examId: string): P
   }
   let artifacts;
   try {
-    artifacts = await listStudentArtifacts(folderExamId, row.roll);
+    artifacts = await listArtifactsCached(folderExamId, row.roll);
   } catch {
     return;
   }
@@ -524,13 +589,18 @@ export async function downloadSessionReportPdf(
   // Every export embeds the full per-second snapshot timeline and the audio
   // inventory. The timeline always starts on its own page so page 1 holds the
   // summary and violations.
-  {
+  artifactListCache = new Map();
+  try {
     let index = 0;
     for (const r of rows) {
       index += 1;
-      opts.onProgress?.(`Building PDF · ${r.name} · every snapshot and the audio (${index} of ${rows.length})`);
+      opts.onProgress?.(`Building PDF · ${rows.length > 1 ? `${r.name} (${index} of ${rows.length})` : r.name} · listing snapshots`);
       try {
-        await drawSnapshotTimeline(doc, r, examId);
+        const who = rows.length > 1 ? `${r.name} (${index} of ${rows.length})` : r.name;
+        await drawSnapshotTimeline(doc, r, examId, {
+          onFrames: (done, total) => opts.onProgress?.(`Building PDF · ${who} · snapshot ${done} of ${total}`),
+        });
+        opts.onProgress?.(`Building PDF · ${who} · audio list`);
         await drawAudioInventory(doc, r, examId);
       } catch (err) {
         console.warn(`[sessionReport] snapshot timeline failed for ${r.roll}:`, err);
@@ -540,6 +610,8 @@ export async function downloadSessionReportPdf(
         doc.text(`Snapshot export incomplete for ${r.name} (${r.roll}). Please retry this student's report.`, M, 60);
       }
     }
+  } finally {
+    artifactListCache = null;
   }
 
   // Filename: keep the caller's id — per-candidate exports pass

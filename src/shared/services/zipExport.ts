@@ -19,7 +19,7 @@
 // (examStorage.getArtifactObjectUrl) — the browser never holds credentials.
 
 import { zip, type AsyncZippable } from "fflate";
-import { listStudentArtifacts, getArtifactObjectUrl } from "@/shared/services/examStorage";
+import { listStudentArtifacts, getArtifactObjectUrl, getArtifactUrls } from "@/shared/services/examStorage";
 
 export type ZipStudent = {
   roll: string;
@@ -61,9 +61,9 @@ function triggerDownload(blob: Blob, filename: string): void {
 
 /**
  * Download one zip containing every student's evidence, with the folder layout
- * described at the top of this file. Students are processed one at a time and
- * artifacts are fetched sequentially so a large class never floods the network
- * at once; `onProgress` (if given) reports the current step.
+ * described at the top of this file. Students are processed one at a time;
+ * each student's files are signed in one batch and fetched 12 at a time.
+ * `onProgress` (if given) reports the current step.
  */
 export async function downloadExamEvidenceZip(opts: {
   examId: string;
@@ -125,25 +125,37 @@ export async function downloadExamEvidenceZip(opts: {
     if (targets.length === 0) continue;
 
     studentCount += 1;
-    for (const t of targets) {
-      try {
-        const url = await getArtifactObjectUrl(t.key);
-        if (!url) {
-          errors.push(`${s.roll}: could not sign URL for ${t.key}`);
-          continue;
+    const signed = await getArtifactUrls(targets.map((t) => t.key));
+    let done = 0;
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < targets.length) {
+        const t = targets[cursor++];
+        try {
+          const url = signed.get(t.key) ?? await getArtifactObjectUrl(t.key);
+          if (!url) {
+            errors.push(`${s.roll}: could not sign URL for ${t.key}`);
+            continue;
+          }
+          const res = await fetch(url);
+          if (!res.ok) {
+            errors.push(`${s.roll}: HTTP ${res.status} for ${t.key}`);
+            continue;
+          }
+          // JPEG/WebM/PDF are already compressed; storing skips a slow deflate.
+          files[t.path] = [new Uint8Array(await res.arrayBuffer()), { level: 0 }];
+          fileCount += 1;
+        } catch {
+          errors.push(`${s.roll}: failed to download ${t.key}`);
+        } finally {
+          done += 1;
+          if (done % 10 === 0 || done === targets.length) {
+            onProgress?.(`${s.name || s.roll}: downloaded ${done} of ${targets.length} files`);
+          }
         }
-        const res = await fetch(url);
-        if (!res.ok) {
-          errors.push(`${s.roll}: HTTP ${res.status} for ${t.key}`);
-          continue;
-        }
-        files[t.path] = new Uint8Array(await res.arrayBuffer());
-        fileCount += 1;
-        onProgress?.(`${s.name || s.roll}: packed ${t.path}`);
-      } catch {
-        errors.push(`${s.roll}: failed to download ${t.key}`);
       }
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(12, targets.length) }, worker));
   }
 
   if (fileCount === 0) {

@@ -22,6 +22,7 @@ type Row = {
 };
 
 function getStatus(exam: ExamRecord): ViewStatus {
+  if (exam.my_attempt_state === "submitted") return "completed";
   if (!exam.scheduled_at) return exam.status === "published" ? "live" : "upcoming";
   const start = new Date(exam.scheduled_at).getTime();
   const end = start + exam.duration_minutes * 60 * 1000;
@@ -171,9 +172,15 @@ export default function StudentHome() {
                     Join exam
                   </Link>
                 ) : (
-                  <span className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
-                    {row.status === "upcoming" ? "Not open yet" : "Closed"}
-                  </span>
+                  row.status === "completed" ? (
+                    <Link to="/student/results" className="border border-line bg-paper-raised px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">
+                      View result
+                    </Link>
+                  ) : (
+                    <span className="border border-line px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+                      Not open yet
+                    </span>
+                  )
                 )}
               </div>
             </article>

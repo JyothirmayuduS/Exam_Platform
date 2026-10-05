@@ -29,6 +29,8 @@ export type ExamRecord = {
   resources_url?: string | null;
   faq?: { question: string; answer: string }[] | null;
   created_at?: string;
+  /** Student views only: this student's attempt state for the exam. */
+  my_attempt_state?: string | null;
 };
 
 export type DBQuestion = {

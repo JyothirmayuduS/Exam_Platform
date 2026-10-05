@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FiVideo, FiUsers, FiActivity, FiAlertTriangle, FiCheckCircle, FiClock, FiSearch } from "react-icons/fi";
 import { listExamsForTeacher, listProctoringStats } from "@/shared/data/examApi";
 import { Button, Badge, EmptyState } from "@/shared/components/ui";
+import { byNewest, examPhase, matchesPhase, PHASE_FILTERS, PHASE_LABEL, type PhaseFilter } from "@/shared/services/examPhase";
 
 type ExamRow = {
   id: string;
@@ -14,6 +15,8 @@ type ExamRow = {
   batch: string | null;
   status: string;
   scheduled_at: string | null;
+  duration_minutes: number;
+  created_at?: string;
   stats: { candidates: number; active: number; submitted: number; paused: number; flagged: number };
 };
 
@@ -26,7 +29,7 @@ export default function ProctoringAssessmentSelect({
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [statusFilter, setStatusFilter] = useState("All");
+  const [statusFilter, setStatusFilter] = useState<PhaseFilter>("all");
 
   useEffect(() => {
     let active = true;
@@ -40,12 +43,11 @@ export default function ProctoringAssessmentSelect({
           batch: e.batch ?? null,
           status: e.status,
           scheduled_at: e.scheduled_at ?? null,
+          duration_minutes: e.duration_minutes,
+          created_at: e.created_at,
           stats: stats[e.id] ?? { candidates: 0, active: 0, submitted: 0, paused: 0, flagged: 0 },
         }))
-        .sort((a, b) => {
-          const rank = (x: typeof a) => (x.status === "draft" ? 2 : x.stats.candidates > 0 ? 0 : 1);
-          return rank(a) - rank(b) || b.stats.candidates - a.stats.candidates;
-        });
+        .sort(byNewest);
       setRows(list);
       setLoading(false);
     })();
@@ -56,12 +58,11 @@ export default function ProctoringAssessmentSelect({
     const term = search.trim().toLowerCase();
     return rows.filter((r) => {
       const matchesTerm = !term || `${r.name} ${r.batch ?? ""} ${r.id}`.toLowerCase().includes(term);
-      const matchesStatus = statusFilter === "All" || r.status === statusFilter;
+      const matchesStatus = matchesPhase(r, statusFilter);
       return matchesTerm && matchesStatus;
     });
   }, [rows, search, statusFilter]);
 
-  const statuses = useMemo(() => ["All", ...Array.from(new Set(rows.map((r) => r.status)))], [rows]);
   const totals = useMemo(() => rows.reduce(
     (acc, r) => ({ candidates: acc.candidates + r.stats.candidates, active: acc.active + r.stats.active, flagged: acc.flagged + r.stats.flagged, submitted: acc.submitted + r.stats.submitted }),
     { candidates: 0, active: 0, flagged: 0, submitted: 0 },
@@ -119,15 +120,15 @@ export default function ProctoringAssessmentSelect({
           />
         </div>
         <div className="flex gap-1 border border-line bg-paper p-1">
-          {statuses.map((s) => (
+          {PHASE_FILTERS.map((f) => (
             <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
+              key={f.value}
+              onClick={() => setStatusFilter(f.value)}
               className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${
-                statusFilter === s ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"
+                statusFilter === f.value ? "bg-forest text-paper" : "text-ink-soft hover:text-ink"
               }`}
             >
-              {s}
+              {f.label}
             </button>
           ))}
         </div>
@@ -165,7 +166,7 @@ export default function ProctoringAssessmentSelect({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-serif text-[15px] font-medium">{r.name}</p>
-                    <Badge tone={r.status === "draft" ? "amber" : r.status === "scheduled" ? "blue" : "green"}>{r.status}</Badge>
+                    {(() => { const phase = examPhase(r); return <Badge tone={phase === "live" ? "green" : phase === "completed" ? "neutral" : "amber"}>{PHASE_LABEL[phase]}</Badge>; })()}
                     {hasFlags && <Badge tone="red"><FiAlertTriangle /> flagged</Badge>}
                   </div>
                   <p className="mt-1 font-mono text-[10px] text-ink-soft">{r.id} · {r.batch ?? "No batch"} {r.scheduled_at ? `· ${new Date(r.scheduled_at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}</p>

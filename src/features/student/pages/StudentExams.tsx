@@ -28,7 +28,7 @@ function toRow(e: ExamRecord): Row {
     name: e.name,
     meta: `${e.batch} · ${e.duration_minutes} min · ${e.total_marks} marks`,
     when: e.status === "scheduled" ? when : "Available now",
-    status: e.status === "published" ? "published" : "scheduled",
+    status: e.my_attempt_state === "submitted" ? "completed" : e.status === "published" ? "published" : "scheduled",
   };
 }
 
@@ -77,31 +77,11 @@ export default function StudentExams() {
 
       const data = await listEnrolledExamsForAuthUser(user.id);
       if (!active) return;
-      
-      let attemptsMap: Record<string, string> = {};
-      
-      if (data) {
-         const { data: st } = await db.from("students").select("id").eq("auth_id", user.id).maybeSingle();
-         if (st?.id) {
-           const { data: att } = await db.from("attempts").select("exam_id, state").eq("student_id", st.id);
-            if (att) {
-              att.forEach((a: any) => { attemptsMap[a.exam_id] = a.state; });
-            }
-         }
-      }
-
-      if (!active) return;
       setLive(true);
       setLoading(false);
       // null = query failed / keep last-known rows; only a real result replaces.
       if (data) {
-        setRows(data.map(e => {
-          const row = toRow(e);
-          if (attemptsMap[e.id] === "submitted") {
-            row.status = "completed";
-          }
-          return row;
-        }));
+        setRows(data.map(toRow));
       }
     };
     void load();
