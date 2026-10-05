@@ -635,13 +635,20 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[210px_minmax(0,1fr)_330px] lg:overflow-hidden">
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[220px_minmax(0,1fr)_340px] lg:overflow-hidden">
         <nav aria-label="Questions" className="hidden border-r border-line bg-paper-raised lg:block lg:overflow-y-auto">
           <QuestionNav paper={paper} cid={cid} manualScores={manualScores} onJump={jumpTo} manualDone={manualDone} manualCount={manualQs.length} />
         </nav>
 
-        <main className="min-w-0 px-5 py-6 lg:overflow-y-auto lg:px-10">
+        <main className="min-w-0 bg-paper px-5 py-8 lg:overflow-y-auto lg:px-12">
           <div className="mx-auto max-w-3xl space-y-5">
+            <div className="flex items-end justify-between border-b border-line pb-4">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Answer paper</p>
+                <h1 className="mt-1 font-serif text-2xl font-semibold">{candidate.exam}</h1>
+              </div>
+              <p className="font-mono text-[10px] tabular-nums text-ink-soft">{paper.length} questions · {max} marks</p>
+            </div>
             {paper.map((q) => (
               <QuestionCard
                 key={q.id} q={q} cid={cid} manualScores={manualScores} feedback={feedback} setScore={setScore} setFeedback={setFb}
@@ -655,10 +662,10 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
         </main>
 
         <aside className="border-t border-line bg-paper-raised lg:overflow-y-auto lg:border-l lg:border-t-0">
+          <EvaluatorCamera cam={cam} profileName={profileName} />
           <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} blockers={blockers} saving={savingGrade} commentsMandatory={commentsMandatory} onFinish={() => void finish(false)} onFinishNext={() => void finish(true)} onFlagModeration={flagModeration} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
           <IntegrityPanel flags={candidate.flags} onOpenRecording={openRecording} />
-          <div className="border-b border-line p-4"><AIIntegrityCard attemptId={cid} /></div>
-          <EvaluatorCamera cam={cam} profileName={profileName} />
+          <div className="p-5"><AIIntegrityCard attemptId={cid} /></div>
         </aside>
       </div>
 
@@ -702,27 +709,26 @@ function EvaluatorCamera({ cam, profileName }: { cam: ReturnType<typeof useEvalu
   const [hidden, setHidden] = useState(false);
   const showVideo = state === "connecting" || state === "live";
   return (
-    <section className="p-4">
-      <div className="flex items-center justify-between">
-        <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-          <span className={`h-1.5 w-1.5 ${state === "live" ? "bg-success" : "bg-ink-soft"}`} />
-          Your camera
-        </p>
-        {showVideo && <button onClick={() => setHidden((v) => !v)} className="font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:text-ink">{hidden ? "Show" : "Hide"}</button>}
-      </div>
-      {showVideo ? (
-        <div className={hidden ? "hidden" : "relative mt-3 aspect-video overflow-hidden border border-line bg-ink"}>
+    <section className="flex items-center gap-3 border-b border-line bg-paper px-5 py-3">
+      {showVideo && (
+        <div className={hidden ? "hidden" : "relative h-[68px] w-[120px] shrink-0 overflow-hidden border border-line bg-ink"}>
           <video ref={videoRef} autoPlay playsInline muted className="h-full w-full -scale-x-100 object-cover" />
-          {state === "connecting" && <div className="absolute inset-0 flex items-center justify-center font-mono text-[9px] uppercase tracking-wider text-paper/80">Starting camera…</div>}
-          <span className="absolute bottom-1.5 left-1.5 bg-ink/70 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper">{profileName}</span>
-        </div>
-      ) : (
-        <div className="mt-3 flex items-center justify-between gap-3 border border-line px-3 py-2.5 text-[12px] text-ink-soft">
-          {state === "denied" ? "Camera blocked in browser" : "No camera available"}
-          {(state === "denied" || state === "unavailable") && <button onClick={cam.retry} className="font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">Try again</button>}
+          {state === "connecting" && <div className="absolute inset-0 flex items-center justify-center font-mono text-[8px] uppercase tracking-wider text-paper/80">Starting…</div>}
         </div>
       )}
-      <p className="mt-2 text-[11px] text-ink-soft">Shown only to you. Nothing is recorded or analysed.</p>
+      <div className="min-w-0 flex-1">
+        <p className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+          <span className={`h-1.5 w-1.5 ${state === "live" ? "bg-success" : "bg-ink-soft"}`} />
+          {state === "live" ? "Camera on" : state === "connecting" ? "Connecting" : state === "denied" ? "Camera blocked" : "No camera"}
+        </p>
+        <p className="mt-0.5 truncate text-[12.5px]">{profileName}</p>
+        <p className="text-[10.5px] text-ink-soft">Visible only to you · not recorded</p>
+      </div>
+      {showVideo ? (
+        <button onClick={() => setHidden((v) => !v)} className="shrink-0 self-start font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:text-ink">{hidden ? "Show" : "Hide"}</button>
+      ) : (
+        <button onClick={cam.retry} className="shrink-0 self-start font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">Retry</button>
+      )}
     </section>
   );
 }
@@ -746,7 +752,7 @@ function IntegrityPanel({ flags, onOpenRecording }: { flags: Flag[]; onOpenRecor
   }, [flags]);
   const critical = flags.filter((f) => f.severity === "critical").length;
   return (
-    <section className="border-b border-line p-4">
+    <section className="border-b border-line px-5 py-5">
       <div className="flex items-center justify-between">
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exam integrity</p>
         <button onClick={onOpenRecording} className="font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">Watch recording →</button>
@@ -794,7 +800,7 @@ function QuestionNav({ paper, cid, manualScores, onJump, manualDone, manualCount
   paper: Question[]; cid: string; manualScores: Record<string, number>; onJump: (qid: string) => void; manualDone: number; manualCount: number;
 }) {
   return (
-    <div className="p-4">
+    <div className="px-4 py-5">
       <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Questions</p>
       {manualCount > 0 && (
         <div className="mt-3">
@@ -838,18 +844,22 @@ function QuestionCard({ q, cid, manualScores, feedback, setScore, setFeedback, c
   const score = auto ? autoScore(q) : (manualScores[key(cid, q.id)] ?? 0);
   const full = score === q.marks;
   const autoBadge = q.verdict === "unanswered"
-    ? `Auto · skipped · 0/${q.marks}`
-    : score < 0 ? `Auto · wrong · −${-score} (negative)` : `Auto · ${score}/${q.marks}`;
-  const badge = auto ? autoBadge : scored ? `Scored · ${score}/${q.marks}` : "Needs review";
+    ? `Skipped · 0/${q.marks}`
+    : score < 0 ? `Wrong · −${-score}` : `${full ? "Correct" : "Wrong"} · ${score}/${q.marks}`;
+  const badge = auto ? autoBadge : scored ? `Scored · ${score}/${q.marks}` : "Needs your score";
   const badgeTone = auto ? (full ? "text-success" : score <= 0 ? "text-alert" : "text-amber") : scored ? "text-forest" : "text-amber";
   return (
     <section id={`q-${q.id}`} className={`scroll-mt-6 border bg-paper ${showMissing && !auto && !scored ? "border-amber" : "border-line"}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper-raised px-4 py-3">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question {q.no} · {typeLabel(q.type)} · {q.marks} marks</p>
-        <span className={`font-mono text-[10px] uppercase tracking-wider ${badgeTone}`}>{auto ? "◆ " : ""}{badge}</span>
-      </div>
-      <div className="p-4 sm:p-5">
-        <p className="font-serif text-[16px] leading-snug">{q.prompt}</p>
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3">
+        <p className="flex items-center gap-3">
+          <span className="flex h-7 w-7 items-center justify-center bg-forest font-mono text-[11px] tabular-nums text-paper">{q.no}</span>
+          <span className="text-[12.5px] font-medium">{typeLabel(q.type)}</span>
+          <span className="font-mono text-[10px] text-ink-soft">{q.marks} mark{q.marks === 1 ? "" : "s"}</span>
+        </p>
+        <span className={`border px-2 py-1 font-mono text-[9.5px] uppercase tracking-wider ${badgeTone} ${badgeTone === "text-success" ? "border-success/40" : badgeTone === "text-alert" ? "border-alert/40" : badgeTone === "text-forest" ? "border-forest/40" : "border-amber/50 bg-amber/5"}`}>{badge}</span>
+      </header>
+      <div className="px-5 py-5">
+        <p className="font-serif text-[17px] leading-relaxed">{q.prompt}</p>
         {(q.type === "MCQ" || q.type === "TrueFalse") && <McqAnswer q={q} />}
         {q.type === "MSQ" && <MsqAnswer q={q} />}
         {q.type === "Numerical" && <NumericalAnswer q={q} />}
@@ -1218,23 +1228,41 @@ function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manu
   onFinish: () => void; onFinishNext: () => void; onFlagModeration: () => void; hasNext: boolean; nextName?: string;
 }) {
   const done = blockers.length === 0;
+  const pct = max > 0 ? Math.round((awarded / max) * 100) : 0;
   return (
-    <div className="border-b border-line p-4">
-      <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Score summary</p>
-      <div className="mt-3 flex items-end gap-3"><p className="font-serif text-4xl">{awarded}</p><p className="pb-1 font-serif text-lg text-ink-soft">/ {max}</p></div>
-      <div className="mt-3 space-y-1.5 text-[12px]">
-        <Row label="Auto-graded (objective)" value={`${autoTotal}`} />
-        <Row label="Manual review (subjective + coding)" value={`${manualTotal}`} />
-        <Row label="Manual answers scored" value={`${gradedManual} / ${manualCount}`} />
+    <section className="border-b border-line px-5 py-5">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Grade</p>
+      <div className="mt-2 flex items-baseline justify-between">
+        <p className="font-serif text-[40px] leading-none tabular-nums">{awarded}<span className="text-lg text-ink-soft"> / {max}</span></p>
+        <span className="font-mono text-[13px] tabular-nums text-forest">{pct}%</span>
       </div>
-      <div className={`mt-3 flex items-center gap-1.5 border px-3 py-2 font-mono text-[10px] uppercase tracking-wider ${done ? "border-success/40 bg-success/5 text-success" : "border-amber/40 bg-amber/5 text-amber"}`}>{done ? <><FiCheck /> Ready to record</> : <span className="space-y-0.5">{blockers.map((b) => <span key={b} className="block normal-case tracking-normal">{b}</span>)}</span>}</div>
-      {commentsMandatory && manualCount > 0 && <p className="mt-2 text-[11px] text-ink-soft">This exam requires a comment on every written answer.</p>}
+      <div className="mt-3 h-1 bg-line"><div className="h-full bg-forest transition-[width]" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
+      <dl className="mt-4 divide-y divide-line border-y border-line text-[12px]">
+        <div className="flex justify-between py-2"><dt className="text-ink-soft">Objective (auto)</dt><dd className="tabular-nums">{autoTotal}</dd></div>
+        <div className="flex justify-between py-2"><dt className="text-ink-soft">Written (you)</dt><dd className="tabular-nums">{manualTotal}</dd></div>
+        <div className="flex justify-between py-2"><dt className="text-ink-soft">Written answers scored</dt><dd className="tabular-nums">{gradedManual} / {manualCount}</dd></div>
+      </dl>
+      {done ? (
+        <p className="mt-4 flex items-center gap-1.5 text-[12px] text-success"><FiCheck aria-hidden /> Ready to save</p>
+      ) : (
+        <ul className="mt-4 space-y-1 border-l-2 border-amber pl-3 text-[12px] text-ink">
+          {blockers.map((b) => <li key={b}>{b}</li>)}
+        </ul>
+      )}
+      {commentsMandatory && manualCount > 0 && <p className="mt-2 text-[11px] text-ink-soft">Comments are required on written answers for this exam.</p>}
       <div className="mt-4 grid gap-2">
-        {hasNext && <button onClick={onFinishNext} disabled={saving} className={`border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:opacity-50 ${done ? "" : "opacity-60"}`}>{saving ? "Saving…" : <>Save &amp; next / {nextName}</>}</button>}
-        <button onClick={onFinish} disabled={saving} className={`border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5 disabled:opacity-50 ${done ? "" : "opacity-60"}`}>{saving ? "Saving…" : hasNext ? "Save & close" : "Save & finish"}</button>
-        <button onClick={onFlagModeration} className="border border-alert/50 text-alert bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10">Flag for Moderation</button>
+        {hasNext && (
+          <button onClick={onFinishNext} disabled={saving} className={`flex items-center justify-between border border-forest bg-forest px-4 py-3 text-left text-paper transition hover:bg-forest-soft disabled:opacity-50 ${done ? "" : "opacity-60"}`}>
+            <span className="font-mono text-[10px] uppercase tracking-wider">{saving ? "Saving…" : "Save & next"}</span>
+            {!saving && <span className="max-w-[150px] truncate text-[11px] text-paper/80">{nextName} →</span>}
+          </button>
+        )}
+        <button onClick={onFinish} disabled={saving} className={`border px-4 py-3 font-mono text-[10px] uppercase tracking-wider transition disabled:opacity-50 ${hasNext ? "border-line-strong text-ink hover:border-forest hover:text-forest" : "border-forest bg-forest text-paper hover:bg-forest-soft"} ${done ? "" : "opacity-60"}`}>
+          {saving ? "Saving…" : hasNext ? "Save & back to roster" : "Save grade"}
+        </button>
       </div>
-    </div>
+      <button onClick={onFlagModeration} className="mt-3 font-mono text-[9px] uppercase tracking-wider text-alert hover:underline">Flag paper for moderation</button>
+    </section>
   );
 }
 
