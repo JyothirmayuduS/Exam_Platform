@@ -35,6 +35,7 @@ import {
   beginPermissionPhase,
   endPermissionPhase,
   relaunchExamBrowser,
+  screenCaptureStatus,
 } from "@/shared/platform/lockdownBridge";
 import { defaultWatermarkText, renderWatermarkTemplate } from "@/shared/services/watermark";
 import ExamWatermark from "@/features/student/components/exam/ExamWatermark";
@@ -1214,6 +1215,36 @@ function StudentExamSession() {
 
 
   const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
+
+  // Screen Recording switched on in System Settings: pick it up in place, no
+  // restart and no leaving the setup page.
+  useEffect(() => {
+    if (!isTauri() || step !== "access" || !screenNeedsRestart || requesting) return;
+    let alive = true;
+    let busy = false;
+    const id = window.setInterval(async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        if ((await screenCaptureStatus()) !== "granted") return;
+        const native = await startNativeDisplayStream();
+        if (!alive || !native || native === "denied") {
+          if (native && native !== "denied") native.stop();
+          return;
+        }
+        window.clearInterval(id);
+        setScreenNeedsRestart(false);
+        handleScreenGranted(native.stream);
+        if (cam === "granted" && mic === "granted" && permissionPhaseRef.current) {
+          permissionPhaseRef.current = false;
+          await endPermissionPhase();
+        }
+      } finally {
+        busy = false;
+      }
+    }, 1500);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [step, screenNeedsRestart, requesting, cam, mic, handleScreenGranted]);
 
   // Kiosk recovery: after the student opens System Settings and toggles the
   // privacy switch for camera/mic, this function re-runs getUserMedia. The

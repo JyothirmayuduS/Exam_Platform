@@ -381,11 +381,22 @@ fn end_permission_phase(app: tauri::AppHandle) {
 fn screen_capture_status() -> String {
     #[cfg(target_os = "macos")]
     {
-        #[link(name = "CoreGraphics", kind = "framework")]
-        extern "C" {
-            fn CGPreflightScreenCaptureAccess() -> bool;
+        // CGPreflightScreenCaptureAccess is cached for the life of a process,
+        // so a grant made in System Settings would only show after a restart.
+        // A short-lived child of this app is attributed to the app by TCC and
+        // sees the current state, matching the per-frame screencapture child.
+        if let Ok(exe) = std::env::current_exe() {
+            if let Ok(status) = std::process::Command::new(exe)
+                .arg(SCREEN_PREFLIGHT_ARG)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+            {
+                return if status.success() { "granted".into() } else { "denied".into() };
+            }
         }
-        if unsafe { CGPreflightScreenCaptureAccess() } { "granted".into() } else { "denied".into() }
+        if screen_preflight() { "granted".into() } else { "denied".into() }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -672,7 +683,24 @@ extern "system" {
     fn GetWindowDisplayAffinity(hwnd: *mut std::ffi::c_void, affinity: *mut u32) -> i32;
 }
 
+const SCREEN_PREFLIGHT_ARG: &str = "--screen-preflight";
+
+#[cfg(target_os = "macos")]
+fn screen_preflight() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
 fn main() {
+    if std::env::args().any(|a| a == SCREEN_PREFLIGHT_ARG) {
+        #[cfg(target_os = "macos")]
+        std::process::exit(if screen_preflight() { 0 } else { 3 });
+        #[cfg(not(target_os = "macos"))]
+        std::process::exit(0);
+    }
     enforce_admin_privileges();
 
     tauri::Builder::default()

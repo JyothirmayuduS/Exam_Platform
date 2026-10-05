@@ -154,12 +154,15 @@ export default function DeviceAccessFull({
                 <b>Screen recording is off for Vignan Exam Browser.</b>
                 <ol>
                   <li>Click <strong>Open screen settings</strong>.</li>
-                  <li>Turn on <strong>Vignan Exam Browser</strong>.</li>
-                  <li>Click <strong>Restart exam browser</strong>. You come back to this page.</li>
+                  <li>Turn on <strong>Vignan Exam Browser</strong>. If it is already on, turn it off and on again.</li>
+                  <li>If macOS offers <strong>Quit &amp; Reopen</strong>, choose <strong>Later</strong>. This page connects your screen by itself.</li>
                 </ol>
+                <p className="exam-sm exam-mute" style={{ margin: "6px 0 0" }}>
+                  <span className="exam-pill w"><i />Waiting for screen recording</span>
+                </p>
                 <div className="exam-nv">
-                  <button className="exam-btn" onClick={() => onOpenMediaSettings?.("screen")}>Open screen settings</button>
-                  {onRestart && <button className="exam-btn pri" onClick={onRestart}>Restart exam browser</button>}
+                  <button className="exam-btn pri" onClick={() => onOpenMediaSettings?.("screen")}>Open screen settings</button>
+                  {onRestart && <button className="exam-btn q" onClick={onRestart}>Still blocked? Restart exam browser</button>}
                 </div>
               </div>
             )}
