@@ -209,8 +209,8 @@ export async function mediaPermissionStatus(kind: "camera" | "microphone"): Prom
   }
 }
 
-/** Open the OS privacy pane (System Settings / Windows Settings) for camera, microphone, or screen recording. */
-export async function openMediaSettings(kind: "camera" | "microphone" | "screen"): Promise<boolean> {
+/** Open the OS privacy pane (System Settings / Windows Settings) for camera, microphone, screen recording, or the keyboard lock (Accessibility). */
+export async function openMediaSettings(kind: "camera" | "microphone" | "screen" | "keyboard"): Promise<boolean> {
   if (!inKiosk()) return false;
   try {
     const { invoke } = await import("@tauri-apps/api/core");
@@ -251,6 +251,28 @@ export async function screenCaptureStatus(): Promise<"granted" | "denied" | null
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     return await invoke<"granted" | "denied">("screen_capture_status");
+  } catch {
+    return null;
+  }
+}
+
+/** "granted" once the system-wide keyboard lock is running (macOS needs Accessibility for it). */
+export async function keyboardLockStatus(): Promise<"granted" | "denied" | null> {
+  if (!inKiosk()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<"granted" | "denied">("keyboard_lock_status");
+  } catch {
+    return null;
+  }
+}
+
+/** Ask macOS for the Accessibility permission the keyboard lock needs. */
+export async function requestKeyboardLock(): Promise<"granted" | "denied" | null> {
+  if (!inKiosk()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<"granted" | "denied">("keyboard_lock_request");
   } catch {
     return null;
   }

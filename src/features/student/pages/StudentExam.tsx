@@ -36,6 +36,8 @@ import {
   endPermissionPhase,
   relaunchExamBrowser,
   screenCaptureStatus,
+  keyboardLockStatus,
+  requestKeyboardLock,
 } from "@/shared/platform/lockdownBridge";
 import { defaultWatermarkText, renderWatermarkTemplate } from "@/shared/services/watermark";
 import ExamWatermark from "@/features/student/components/exam/ExamWatermark";
@@ -195,6 +197,8 @@ function StudentExamSession() {
   const [cam, setCam] = useState<"idle" | "granted" | "denied">("idle");
   const [mic, setMic] = useState<"idle" | "granted" | "denied">("idle");
   const [screen, setScreen] = useState<"idle" | "granted" | "denied">("idle");
+  // Kiosk only: the system-wide keyboard lock (macOS Accessibility).
+  const [keyboard, setKeyboard] = useState<"idle" | "granted" | "denied">(isTauri() ? "idle" : "granted");
   const [requesting, setRequesting] = useState(false);
   const [screenNeedsRestart, setScreenNeedsRestart] = useState(false);
   const permissionPhaseRef = useRef(false);
@@ -1107,6 +1111,8 @@ function StudentExamSession() {
       await beginPermissionPhase();
       await requestMediaAccess("camera");
       await requestMediaAccess("microphone");
+      const lock = await requestKeyboardLock();
+      setKeyboard(lock === "denied" ? "denied" : "granted");
     }
 
     let screenLocalStream: MediaStream | null = null;
@@ -1140,7 +1146,6 @@ function StudentExamSession() {
     }
 
     // Camera + mic
-    let camMicOk = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 } },
@@ -1168,7 +1173,6 @@ function StudentExamSession() {
       }
 
       accessStreamRef.current = stream;
-      camMicOk = stream.getVideoTracks().length > 0 && stream.getAudioTracks().length > 0;
       setCam(stream.getVideoTracks().length ? "granted" : "denied");
       setMic(stream.getAudioTracks().length ? "granted" : "denied");
       if (previewRef.current) previewRef.current.srcObject = stream;
@@ -1189,13 +1193,8 @@ function StudentExamSession() {
       setScreen("denied");
     }
 
-    // Keep the window lowered while something is still blocked so System
-    // Settings stays reachable; restore the lockdown once all three work.
-    if (kiosk && screenLocalStream && camMicOk) {
-      permissionPhaseRef.current = false;
-      await endPermissionPhase();
-    }
-
+    // The window stays lowered while anything is still blocked so System
+    // Settings stays reachable; the effect below restores the lockdown.
     setRequesting(false);
   }
 
@@ -1214,7 +1213,28 @@ function StudentExamSession() {
   }, []);
 
 
-  const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
+  const devicesReady = cam === "granted" && mic === "granted" && screen === "granted" && keyboard === "granted";
+
+  // Restore the full lockdown once every permission works.
+  useEffect(() => {
+    if (!devicesReady || requesting || !permissionPhaseRef.current) return;
+    permissionPhaseRef.current = false;
+    void endPermissionPhase();
+  }, [devicesReady, requesting]);
+
+  // Accessibility switched on in System Settings: the native lock starts by
+  // itself; reflect it here without a restart.
+  useEffect(() => {
+    if (!isTauri() || step !== "access" || keyboard !== "denied" || requesting) return;
+    const id = window.setInterval(async () => {
+      const status = await keyboardLockStatus();
+      if (status !== "denied") {
+        window.clearInterval(id);
+        setKeyboard("granted");
+      }
+    }, 1500);
+    return () => window.clearInterval(id);
+  }, [step, keyboard, requesting]);
 
   // Screen Recording switched on in System Settings: pick it up in place, no
   // restart and no leaving the setup page.
@@ -1235,16 +1255,12 @@ function StudentExamSession() {
         window.clearInterval(id);
         setScreenNeedsRestart(false);
         handleScreenGranted(native.stream);
-        if (cam === "granted" && mic === "granted" && permissionPhaseRef.current) {
-          permissionPhaseRef.current = false;
-          await endPermissionPhase();
-        }
       } finally {
         busy = false;
       }
     }, 1500);
     return () => { alive = false; window.clearInterval(id); };
-  }, [step, screenNeedsRestart, requesting, cam, mic, handleScreenGranted]);
+  }, [step, screenNeedsRestart, requesting, handleScreenGranted]);
 
   // Kiosk recovery: after the student opens System Settings and toggles the
   // privacy switch for camera/mic, this function re-runs getUserMedia. The
@@ -1263,7 +1279,7 @@ function StudentExamSession() {
     await requestDevices();
   }
 
-  function openKioskMediaSettings(kind: "camera" | "microphone" | "screen") {
+  function openKioskMediaSettings(kind: "camera" | "microphone" | "screen" | "keyboard") {
     void openMediaSettings(kind);
   }
 
@@ -1545,13 +1561,13 @@ function StudentExamSession() {
 
   // ---------- Step: device access ----------
     if (step === "access") {
-    const devicesReady = cam === "granted" && mic === "granted" && screen === "granted";
     return (
       <DeviceAccessFull
         attemptId={attemptId}
         cam={cam}
         mic={mic}
         screen={screen}
+        keyboard={keyboard}
         requesting={requesting}
         devicesReady={devicesReady}
         inKiosk={isTauri()}

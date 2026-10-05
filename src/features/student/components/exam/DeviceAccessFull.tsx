@@ -15,6 +15,8 @@ type DeviceAccessFullProps = {
   cam: AccessState;
   mic: AccessState;
   screen: AccessState;
+  /** Kiosk only: system-wide shortcut lock (macOS Accessibility). */
+  keyboard?: AccessState;
   requesting: boolean;
   devicesReady: boolean;
   /** True inside the Vignan Exam Browser: permission recovery is native, not browser settings. */
@@ -22,7 +24,7 @@ type DeviceAccessFullProps = {
   /** Ask the shell to re-trigger the native camera/mic permission prompt. */
   onReRequest?: () => void;
   /** Open the OS privacy pane for the blocked device. */
-  onOpenMediaSettings?: (kind: "camera" | "microphone" | "screen") => void;
+  onOpenMediaSettings?: (kind: "camera" | "microphone" | "screen" | "keyboard") => void;
   /** macOS Screen Recording is off; it only applies after a restart of the exam browser. */
   screenNeedsRestart?: boolean;
   onRestart?: () => void;
@@ -39,6 +41,7 @@ export default function DeviceAccessFull({
   cam,
   mic,
   screen,
+  keyboard = "granted",
   requesting,
   devicesReady,
   inKiosk = false,
@@ -118,6 +121,9 @@ export default function DeviceAccessFull({
             <DeviceRow icon={<FiCamera />} title="Camera" detail="Your face, checked by AI" state={cam} />
             <DeviceRow icon={<FiMic />} title="Microphone" detail="Sound in the room" state={mic} />
             <DeviceRow icon={<FiMonitor />} title="Entire screen" detail="Your whole display, never a single window" state={screen} />
+            {inKiosk && (
+              <DeviceRow icon={<FiLock />} title="Keyboard lock" detail="Shortcuts and app switching are switched off" state={keyboard} />
+            )}
 
             {camMicBlocked && (
               <div className="exam-fix">
@@ -163,6 +169,23 @@ export default function DeviceAccessFull({
                 <div className="exam-nv">
                   <button className="exam-btn pri" onClick={() => onOpenMediaSettings?.("screen")}>Open screen settings</button>
                   {onRestart && <button className="exam-btn q" onClick={onRestart}>Still blocked? Restart exam browser</button>}
+                </div>
+              </div>
+            )}
+
+            {keyboard === "denied" && inKiosk && (
+              <div className="exam-fix">
+                <b>Keyboard lock is off for Vignan Exam Browser.</b>
+                <ol>
+                  <li>Click <strong>Open accessibility settings</strong>.</li>
+                  <li>Turn on <strong>Vignan Exam Browser</strong>.</li>
+                  <li>Come back here. This page picks it up by itself.</li>
+                </ol>
+                <p className="exam-sm exam-mute" style={{ margin: "6px 0 0" }}>
+                  <span className="exam-pill w"><i />Waiting for keyboard lock</span>
+                </p>
+                <div className="exam-nv">
+                  <button className="exam-btn pri" onClick={() => onOpenMediaSettings?.("keyboard")}>Open accessibility settings</button>
                 </div>
               </div>
             )}
@@ -216,6 +239,7 @@ export default function DeviceAccessFull({
 
       {prompt && (
         <PermissionPrompt
+          inKiosk={inKiosk}
           declined={prompt === "declined"}
           onAllow={allowAll}
           onDeny={() => setPrompt("declined")}
@@ -271,12 +295,14 @@ function MicTest({ audio }: { audio: ReturnType<typeof useAudioTest> }) {
 }
 
 function PermissionPrompt({
+  inKiosk,
   declined,
   onAllow,
   onDeny,
   onReview,
   onExit,
 }: {
+  inKiosk: boolean;
   declined: boolean;
   onAllow: () => void;
   onDeny: () => void;
@@ -310,6 +336,9 @@ function PermissionPrompt({
               <li><span className="exam-ic" aria-hidden><FiCamera /></span><div><b>Camera</b><div className="exam-sm exam-mute">Your face, checked by AI and your invigilator</div></div></li>
               <li><span className="exam-ic" aria-hidden><FiMic /></span><div><b>Microphone</b><div className="exam-sm exam-mute">Sound in the room</div></div></li>
               <li><span className="exam-ic" aria-hidden><FiMonitor /></span><div><b>Entire screen</b><div className="exam-sm exam-mute">Your whole display, never a single window</div></div></li>
+              {inKiosk && (
+                <li><span className="exam-ic" aria-hidden><FiLock /></span><div><b>Keyboard lock</b><div className="exam-sm exam-mute">macOS lists this under Accessibility</div></div></li>
+              )}
             </ul>
             <div className="exam-dact">
               <button onClick={onDeny} className="exam-btn q">Deny</button>

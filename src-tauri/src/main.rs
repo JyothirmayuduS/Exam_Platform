@@ -12,6 +12,8 @@ use tauri::{Manager, WindowEvent};
 
 const LOCKDOWN_JS: &str = r#"
 (() => {
+  if (window.__vignanLockdown) return;
+  window.__vignanLockdown = true;
   const block = (e) => { e.preventDefault(); e.stopPropagation(); return false; };
 
   // No right-click context menu.
@@ -21,29 +23,35 @@ const LOCKDOWN_JS: &str = r#"
   ['copy','cut','paste','dragstart','drop','selectstart'].forEach((evt) =>
     document.addEventListener(evt, block, true));
 
-  // Block devtools, view-source, print, save, find, refresh, and screenshot
-  // shortcuts. Note keydown AND keyup: Windows Snipping Tool (Win+Shift+S) and
-  // Ctrl+Shift+Cmd+4 fire on keyup, so intercepting only keydown lets the OS
-  // snipping surface appear.
+  // Strict keyboard: no modifier combination of any kind (Cmd/Ctrl/Option/
+  // Win), no Escape, no function keys, no OS/system keys. Plain typing, Shift,
+  // Tab, Enter, Backspace and the arrows stay usable for answers. keyup too:
+  // Win+Shift+S and some macOS shortcuts act on release.
+  const SYSTEM_KEYS = new Set(['escape','printscreen','snapshot','contextmenu','meta','os','super','hyper','fn','fnlock','help',
+    'browserback','browserforward','browserrefresh','browserhome','browsersearch','launchapplication1','launchapplication2','launchmail']);
   const blockedCombo = (e) => {
     const k = (e.key || '').toLowerCase();
-    const combo = e.ctrlKey || e.metaKey;
-    if (k === 'escape') return true;
-    if (k === 'f12') return true;
-    if (combo && e.shiftKey && ['i','j','c','s'].includes(k)) return true; // devtools + snip
-    if (combo && ['u','p','s','f','r','w','t','n','x','v','a'].includes(k)) return true;
-    if (k === 'f5') return true;
-    if (e.altKey && k === 'tab') return true;
-    if (e.altKey && k === 'f4') return true;
-    if (e.metaKey && e.shiftKey && ['3','4','5','6'].includes(k)) return true; // macOS screenshots
-    if (k === 'printscreen' || k === 'snapshot') {
-      navigator.clipboard?.writeText('');
-      return true;
-    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return true;
+    if (SYSTEM_KEYS.has(k)) return true;
+    if (/^f\d{1,2}$/.test(k)) return true;
     return false;
   };
-  document.addEventListener('keydown', (e) => { if (blockedCombo(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
-  document.addEventListener('keyup', (e) => { if (blockedCombo(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
+  const onKey = (e) => {
+    if (!blockedCombo(e)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if ((e.key || '').toLowerCase() === 'printscreen') navigator.clipboard?.writeText('').catch(() => {});
+  };
+  window.addEventListener('keydown', onKey, true);
+  window.addEventListener('keyup', onKey, true);
+  window.addEventListener('keypress', onKey, true);
+  // No pinch / Ctrl+wheel zoom and no paste/drop via input events.
+  ['gesturestart','gesturechange','gestureend'].forEach((evt) => document.addEventListener(evt, block, true));
+  window.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) block(e); }, { capture: true, passive: false });
+  document.addEventListener('beforeinput', (e) => {
+    if (e.inputType === 'insertFromPaste' || e.inputType === 'insertFromDrop' || e.inputType === 'insertFromYank') block(e);
+  }, true);
+  document.addEventListener('auxclick', block, true);
 
   // NOTE: deliberately do NOT touch window.__TAURI_INTERNALS__ / __TAURI__
   // here. Tauri injects its REAL IPC bridge into this webview before page
@@ -58,10 +66,16 @@ const LOCKDOWN_JS: &str = r#"
     window.dispatchEvent(new CustomEvent('lockdown:focus-lost'));
   });
 
-  // Disable text selection visually.
-  const style = document.createElement('style');
-  style.textContent = '*{-webkit-user-select:none!important;user-select:none!important;} input,textarea{-webkit-user-select:text!important;user-select:text!important;}';
-  document.documentElement.appendChild(style);
+  // Disable text selection visually. Runs at document start, so wait for a root.
+  const addStyle = () => {
+    const root = document.head || document.documentElement;
+    if (!root) return false;
+    const style = document.createElement('style');
+    style.textContent = '*{-webkit-user-select:none!important;user-select:none!important;} input,textarea{-webkit-user-select:text!important;user-select:text!important;}';
+    root.appendChild(style);
+    return true;
+  };
+  if (!addStyle()) document.addEventListener('DOMContentLoaded', addStyle, { once: true });
 })();
 "#;
 
@@ -464,6 +478,8 @@ fn open_media_settings(kind: String) -> Result<(), String> {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
         } else if kind == "screen" {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        } else if kind == "keyboard" {
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         } else {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
         };
@@ -704,6 +720,211 @@ fn screen_preflight() -> bool {
     unsafe { CGPreflightScreenCaptureAccess() }
 }
 
+/// System-wide keyboard lock. System shortcuts (Spotlight, Globe/fn actions,
+/// screenshots, Mission Control keys, Cmd+H/M/Q…) are handled by macOS before
+/// the webview ever sees them, so JS cannot stop them. A CGEventTap sits in
+/// front of all of that and drops every keystroke that carries Cmd, Control
+/// or Option, plus Escape, function and system keys. macOS only allows a
+/// filtering tap for apps trusted under Privacy & Security > Accessibility.
+#[cfg(target_os = "macos")]
+mod keylock {
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+
+    type TapCallback = extern "C" fn(*mut c_void, u32, *mut c_void, *mut c_void) -> *mut c_void;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+        fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
+        static kAXTrustedCheckOptionPrompt: *const c_void;
+        fn CGEventTapCreate(tap: u32, place: u32, options: u32, mask: u64, callback: TapCallback, info: *mut c_void) -> *mut c_void;
+        fn CGEventTapEnable(tap: *mut c_void, enable: bool);
+        fn CGEventGetFlags(event: *mut c_void) -> u64;
+        fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFRunLoopCommonModes: *const c_void;
+        static kCFBooleanTrue: *const c_void;
+        static kCFTypeDictionaryKeyCallBacks: u8;
+        static kCFTypeDictionaryValueCallBacks: u8;
+        fn CFDictionaryCreate(alloc: *const c_void, keys: *const *const c_void, values: *const *const c_void, n: isize, kcb: *const c_void, vcb: *const c_void) -> *const c_void;
+        fn CFRelease(cf: *const c_void);
+        fn CFMachPortCreateRunLoopSource(alloc: *const c_void, port: *mut c_void, order: isize) -> *mut c_void;
+        fn CFRunLoopGetCurrent() -> *mut c_void;
+        fn CFRunLoopAddSource(rl: *mut c_void, src: *mut c_void, mode: *const c_void);
+        fn CFRunLoopRun();
+    }
+
+    const HID_TAP: u32 = 0;
+    const SESSION_TAP: u32 = 1;
+    const KEY_DOWN: u32 = 10;
+    const KEY_UP: u32 = 11;
+    const FLAGS_CHANGED: u32 = 12;
+    const TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
+    const TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
+    const KEYCODE_FIELD: u32 = 9;
+
+    const FLAG_CONTROL: u64 = 0x0004_0000;
+    const FLAG_OPTION: u64 = 0x0008_0000;
+    const FLAG_COMMAND: u64 = 0x0010_0000;
+    const FLAG_FN: u64 = 0x0080_0000;
+
+    /// Escape, Help, F1–F20, and the dedicated system keys (Mission Control,
+    /// Launchpad, Spotlight, Dictation, Do Not Disturb, Globe).
+    const BLOCKED_KEYS: &[i64] = &[
+        53, 114, 122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 105, 107, 113, 106, 64, 79, 80, 90,
+        160, 131, 177, 176, 178, 179,
+    ];
+    /// Keys that carry the fn flag by themselves: arrows, forward delete,
+    /// home/end/page keys, delete, return.
+    const FN_NAVIGATION: &[i64] = &[123, 124, 125, 126, 117, 115, 119, 116, 121, 51, 36, 76];
+    /// Command, Option, Control and fn/Globe press/release on their own
+    /// (double-Control dictation, Globe emoji picker).
+    const BLOCKED_MODIFIERS: &[i64] = &[54, 55, 58, 59, 61, 62, 63, 179];
+
+    static ACTIVE: AtomicBool = AtomicBool::new(false);
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    static TAP: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+    pub fn active() -> bool {
+        ACTIVE.load(Ordering::SeqCst)
+    }
+
+    pub fn trusted() -> bool {
+        unsafe { AXIsProcessTrusted() }
+    }
+
+    /// Show macOS's "would like to control this computer" dialog and add the
+    /// app to the Accessibility list (switched off until the student allows it).
+    pub fn prompt() -> bool {
+        unsafe {
+            let keys = [kAXTrustedCheckOptionPrompt];
+            let values = [kCFBooleanTrue];
+            let dict = CFDictionaryCreate(
+                std::ptr::null(),
+                keys.as_ptr(),
+                values.as_ptr(),
+                1,
+                &kCFTypeDictionaryKeyCallBacks as *const u8 as *const c_void,
+                &kCFTypeDictionaryValueCallBacks as *const u8 as *const c_void,
+            );
+            let trusted = AXIsProcessTrustedWithOptions(dict);
+            if !dict.is_null() {
+                CFRelease(dict);
+            }
+            trusted
+        }
+    }
+
+    fn should_block(kind: u32, event: *mut c_void) -> bool {
+        let flags = unsafe { CGEventGetFlags(event) };
+        let code = unsafe { CGEventGetIntegerValueField(event, KEYCODE_FIELD) };
+        if kind == FLAGS_CHANGED {
+            return BLOCKED_MODIFIERS.contains(&code);
+        }
+        if flags & (FLAG_COMMAND | FLAG_CONTROL | FLAG_OPTION) != 0 {
+            return true;
+        }
+        if BLOCKED_KEYS.contains(&code) {
+            return true;
+        }
+        flags & FLAG_FN != 0 && !FN_NAVIGATION.contains(&code)
+    }
+
+    extern "C" fn on_event(_proxy: *mut c_void, kind: u32, event: *mut c_void, _info: *mut c_void) -> *mut c_void {
+        if kind == TAP_DISABLED_BY_TIMEOUT || kind == TAP_DISABLED_BY_USER_INPUT {
+            let tap = TAP.load(Ordering::SeqCst);
+            if !tap.is_null() {
+                unsafe { CGEventTapEnable(tap, true) };
+            }
+            return event;
+        }
+        // System Settings and permission dialogs must stay operable.
+        if super::in_permission_phase() {
+            return event;
+        }
+        if should_block(kind, event) {
+            return std::ptr::null_mut();
+        }
+        event
+    }
+
+    /// Install the tap as soon as the app is trusted (polls, so a switch
+    /// flipped in System Settings takes effect without a restart).
+    pub fn start() {
+        if STARTED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        std::thread::spawn(|| {
+            let mask = (1u64 << KEY_DOWN) | (1u64 << KEY_UP) | (1u64 << FLAGS_CHANGED);
+            loop {
+                if trusted() {
+                    let tap = [HID_TAP, SESSION_TAP].iter().find_map(|&location| {
+                        let t = unsafe { CGEventTapCreate(location, 0, 0, mask, on_event, std::ptr::null_mut()) };
+                        if t.is_null() { None } else { Some(t) }
+                    });
+                    if let Some(tap) = tap {
+                        TAP.store(tap, Ordering::SeqCst);
+                        unsafe {
+                            let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
+                            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
+                            CGEventTapEnable(tap, true);
+                        }
+                        ACTIVE.store(true, Ordering::SeqCst);
+                        unsafe { CFRunLoopRun() };
+                        ACTIVE.store(false, Ordering::SeqCst);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        });
+    }
+}
+
+/// "granted" once the system-wide keyboard lock is running.
+#[tauri::command]
+fn keyboard_lock_status() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        if keylock::active() { "granted".into() } else { "denied".into() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "granted".to_string()
+    }
+}
+
+/// Ask for the Accessibility permission the keyboard lock needs.
+#[tauri::command]
+fn keyboard_lock_request(app: tauri::AppHandle) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        keylock::start();
+        if keylock::active() {
+            return "granted".into();
+        }
+        if !keylock::trusted() {
+            // Same cdhash pinning as Screen Recording: a grant made for an
+            // earlier build shows "on" but never matches this binary.
+            let _ = std::process::Command::new("/usr/bin/tccutil")
+                .args(["reset", "Accessibility", &app.config().identifier])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            keylock::prompt();
+        }
+        "denied".into()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        "granted".to_string()
+    }
+}
+
 fn main() {
     if std::env::args().any(|a| a == SCREEN_PREFLIGHT_ARG) {
         #[cfg(target_os = "macos")]
@@ -741,7 +962,9 @@ fn main() {
             begin_permission_phase,
             end_permission_phase,
             screen_capture_status,
-            relaunch_app
+            relaunch_app,
+            keyboard_lock_status,
+            keyboard_lock_request
         ])
         // Register first so a second process exits before other plugins start.
         // Its deep-link feature forwards Windows/Linux argv to the same plugin
@@ -786,6 +1009,7 @@ fn main() {
             {
                 // Lock down macOS to create a true kiosk mode (disables Cmd+Tab, Dock, Menu Bar, Spaces)
                 set_kiosk_presentation(true);
+                keylock::start();
                 if let Some(mtm) = objc2::MainThreadMarker::new() {
                     let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
 
@@ -821,6 +1045,9 @@ fn main() {
             .visible(true)
             .closable(false)
             .minimizable(false)
+            // Before page scripts on every load, so a reload or navigation
+            // never leaves a page without the lockdown layer.
+            .initialization_script(LOCKDOWN_JS)
             .on_permission_request(|_, req| match req {
                 // Camera and microphone are needed for proctoring identity
                 // verification and audio monitoring.
