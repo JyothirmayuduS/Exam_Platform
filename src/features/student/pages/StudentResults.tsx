@@ -47,7 +47,8 @@ export default function StudentResults() {
         .from("attempts")
         .select("state, score, submitted_at, exam:exams(id, name, total_marks, settings, status, scheduled_at, duration_minutes)")
         .eq("student_id", student.id)
-        .eq("state", "submitted");
+        .eq("state", "submitted")
+        .order("submitted_at", { ascending: false, nullsFirst: false });
 
       if (error || !data) return [];
 
