@@ -46,12 +46,12 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
 
   return (
     <section className="exam-panel">
-      <h2>Question Navigator</h2>
+      <h2>Question navigator</h2>
       <input
         type="search"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search by #, text, type..."
+        placeholder="Search by number or text"
         className="exam-search"
         aria-label="Search questions"
       />
@@ -83,8 +83,8 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
         })}
       </div>
       <div className="exam-leg">
-        <span><i style={{ background: "var(--ok)" }} />Answered</span>
-        <span><i style={{ background: "var(--warn)" }} />Marked</span>
+        <span><i style={{ background: "var(--pri)", borderColor: "var(--pri)" }} />Answered</span>
+        <span><i style={{ background: "var(--warnc)", borderColor: "var(--warnc)", borderRadius: "50%" }} />Marked</span>
         <span><i style={{ background: "var(--ps)" }} />Visited</span>
         <span><i />Not visited</span>
       </div>

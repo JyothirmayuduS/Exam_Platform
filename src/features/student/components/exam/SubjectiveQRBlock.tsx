@@ -239,75 +239,62 @@ export default function SubjectiveQRBlock({
   const uploadUrl = token ? `${base}/mobile-upload/${token}?${queryParams.toString()}` : "";
 
   return (
-    <div className="mt-4 border border-dashed border-line bg-paper p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-        <p className="font-mono text-[10px] uppercase tracking-widest text-soft">
-          Subjective answer — {showUploader ? "upload from desktop" : "scan to upload from phone"}
-        </p>
-        <button
-          onClick={() => setShowUploader(v => !v)}
-          className="border border-forest text-forest px-3 py-1 font-mono text-[10px] uppercase tracking-wider hover:bg-forest/10"
-        >
-          {showUploader ? "Use QR Code" : "Upload from Desktop"}
-        </button>
+    <div className="exam-up">
+      <div className="exam-uh">
+        <span className="exam-sm exam-mute">
+          {showUploader ? "Upload from this computer" : "Upload from your phone"}
+        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {status === "COMPLETED" ? (
+            <span className="exam-pill g"><i />Answer received</span>
+          ) : status === "PROCESSING" ? (
+            <span className="exam-pill w"><i />Processing upload</span>
+          ) : !showUploader && !sessionError ? (
+            <span className="exam-pill w"><i />Waiting for upload</span>
+          ) : null}
+          {status !== "COMPLETED" && (
+            <button onClick={() => setShowUploader((v) => !v)} className="exam-btn">
+              {showUploader ? "Use phone instead" : "Upload from desktop"}
+            </button>
+          )}
+        </div>
       </div>
 
       {isLocalhost && !pdfUrl && (
-        <div className="mb-4 border border-amber/50 bg-amber/10 px-4 py-2.5 text-[12px]">
-          <p className="font-mono text-[10px] uppercase tracking-wider text-amber font-bold mb-1">
-            ℹ Local dev mode
-          </p>
-          <p className="text-soft">
-            The QR code points to <code className="bg-raised px-1 font-mono text-[11px]">{base}</code>. Both devices <strong>MUST be on the same Wi-Fi network</strong>.
-          </p>
+        <div className="exam-note w" style={{ marginTop: 14 }}>
+          Local dev mode: the QR code points to <code>{base}</code>. The phone must be on the same Wi-Fi network.
         </div>
       )}
 
-
-
       {sessionError ? (
-        <div className="border border-alert/40 bg-alert/5 px-4 py-3 text-[12px] text-alert">
-          <p className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider font-bold">
-            <FiAlertTriangle className="text-amber" aria-hidden /> Upload session could not be created
+        <div className="exam-note b" style={{ marginTop: 14 }}>
+          <p style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600, margin: 0 }}>
+            <FiAlertTriangle aria-hidden /> Upload link could not be created
           </p>
-          <p className="mt-1 text-ink">{sessionError}</p>
-          <p className="mt-1 text-[11px] text-soft">
-            The QR code is disabled until this is fixed — scanning it would just fail with
-            “Invalid or expired token”. You can still use “Upload from Desktop” below, or retry
-            creating the session.
+          <p style={{ margin: "4px 0 0", color: "var(--ink)" }}>{sessionError}</p>
+          <p style={{ margin: "4px 0 10px", color: "var(--mute)" }}>
+            The QR code is off until this is fixed. You can still upload from this computer.
           </p>
-          <button
-            onClick={() => setRetryNonce((n) => n + 1)}
-            className="mt-3 border border-alert px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/10"
-          >
-            ↻ Retry creating session
-          </button>
+          <button onClick={() => setRetryNonce((n) => n + 1)} className="exam-btn">Try again</button>
         </div>
       ) : status === "COMPLETED" ? (
-        <div className="space-y-4">
-          <div className="flex h-12 items-center gap-3 bg-success/10 px-4 text-success border border-success/20">
-            <span className="text-xl">✓</span>
-            <span className="font-mono text-[12px] uppercase tracking-widest font-bold">Answer Uploaded Successfully</span>
-          </div>
+        <div style={{ padding: 14 }}>
           {!pdfUrl ? (
-            <div className="flex h-40 items-center justify-center border border-line bg-raised font-mono text-[10px] uppercase tracking-widest text-soft">Loading preview…</div>
+            <div className="flex h-40 items-center justify-center rounded-md border border-line bg-raised text-[13px] text-soft">Loading preview…</div>
           ) : uploadIsImage ? (
-            <img src={pdfUrl} alt="Uploaded answer" className="max-h-[600px] w-full border border-line bg-ink object-contain" />
+            <img src={pdfUrl} alt="Uploaded answer" className="max-h-[600px] w-full rounded-md border border-line bg-white object-contain" />
           ) : (
-            <iframe src={`${pdfUrl}#toolbar=0`} className="w-full h-[600px] border border-line bg-ink" title="Answer Preview" />
+            <iframe src={`${pdfUrl}#toolbar=0`} className="h-[600px] w-full rounded-md border border-line bg-white" title="Answer preview" />
           )}
         </div>
       ) : showUploader ? (
-        <div className="space-y-3">
-          <p className="font-mono text-[10px] uppercase tracking-wider text-soft">
-            Upload a photo of your handwritten answer directly from this device
-          </p>
-          <label className="flex cursor-pointer items-center gap-3 border border-forest/40 bg-forest/5 px-4 py-3 hover:bg-forest/10">
-            <span className="text-xl text-forest"><FiCamera aria-hidden /></span>
-            <div>
-              <p className="font-mono text-[11px] uppercase tracking-wider text-forest font-bold">Choose image file</p>
-              <p className="font-mono text-[10px] text-soft">JPG, PNG, HEIC — max 10 MB</p>
-            </div>
+        <div style={{ padding: 14, display: "grid", gap: 10 }}>
+          <label className="flex cursor-pointer items-center gap-3 rounded-md border border-line bg-[var(--card)] px-4 py-3 hover:border-forest">
+            <span className="grid h-9 w-9 place-items-center rounded-md bg-[var(--ps)] text-forest"><FiCamera aria-hidden /></span>
+            <span>
+              <b style={{ display: "block", fontWeight: 600 }}>Choose a photo of your answer</b>
+              <span className="exam-sm exam-mute">JPG, PNG or HEIC, up to 10 MB</span>
+            </span>
             <input
               type="file"
               accept="image/*"
@@ -316,61 +303,32 @@ export default function SubjectiveQRBlock({
             />
           </label>
           {uploading && (
-            <div className="space-y-1">
-              <div className="h-1.5 w-full overflow-hidden rounded bg-line">
-                <div className="h-full bg-forest transition-all" style={{ width: `${uploadProgress}%` }} />
+            <div>
+              <div className="exam-bar" style={{ margin: "0 0 4px" }}>
+                <div style={{ width: `${uploadProgress}%` }} />
               </div>
-              <p className="font-mono text-[10px] text-soft">Uploading… {uploadProgress}%</p>
+              <span className="exam-sm exam-mute">Uploading… {uploadProgress}%</span>
             </div>
           )}
-          {uploadError && <p className="flex items-center gap-1.5 text-[12px] text-alert"><FiAlertTriangle aria-hidden /> {uploadError}</p>}
+          {uploadError && <p style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--bad)", margin: 0 }}><FiAlertTriangle aria-hidden /> {uploadError}</p>}
         </div>
       ) : (
-        <div className="flex flex-col sm:flex-row gap-6">
-          <div className="shrink-0 bg-white p-2 border border-line flex items-center justify-center">
+        <div className="exam-ub">
+          <div className="exam-qr">
             {uploadUrl ? (
-              <QRCodeSVG
-                value={uploadUrl}
-                size={180}
-                bgColor={"#ffffff"}
-                fgColor={"#1a1a1a"}
-                level={"M"}
-                includeMargin={false}
-              />
+              <QRCodeSVG value={uploadUrl} size={140} bgColor="#ffffff" fgColor="#1A1814" level="M" includeMargin={false} />
             ) : (
-              <div className="w-[180px] h-[180px] bg-raised animate-pulse flex items-center justify-center">
-                <span className="font-mono text-[10px] text-soft uppercase tracking-widest text-center px-4">Generating Secure QR...</span>
+              <div className="flex h-[140px] w-[140px] animate-pulse items-center justify-center bg-raised px-3 text-center text-[12px] text-soft">
+                Creating secure code…
               </div>
             )}
           </div>
-
-          <div className="flex-1 space-y-4">
-            <ol className="space-y-3 font-serif text-[15px] text-ink">
-              <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-forest font-bold mt-0.5">01</span>
-                <span>Open your phone's camera and scan this QR code.</span>
-              </li>
-              <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-forest font-bold mt-0.5">02</span>
-                <span>The link is securely tied to your exam session.</span>
-              </li>
-              <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-forest font-bold mt-0.5">03</span>
-                <span>Take a clear photo of your handwritten paper and tap Submit.</span>
-              </li>
-              <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-forest font-bold mt-0.5">04</span>
-                <span>The scanned PDF will appear here automatically.</span>
-              </li>
-            </ol>
-            
-            {status === "PROCESSING" && (
-              <div className="flex items-center gap-2 mt-4 px-3 py-2 bg-forest/10 border border-forest/20 text-forest">
-                <span className="animate-spin text-lg">⏳</span>
-                <span className="font-mono text-[10px] font-bold uppercase tracking-widest">Processing PDF & Watermarking...</span>
-              </div>
-            )}
-          </div>
+          <ol>
+            <li>Scan this code with your phone camera.</li>
+            <li>The link is tied to your exam session.</li>
+            <li>Photograph your paper in good light and tap Submit.</li>
+            <li>Your answer appears here automatically.</li>
+          </ol>
         </div>
       )}
     </div>

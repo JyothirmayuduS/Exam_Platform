@@ -1639,11 +1639,11 @@ function StudentExamSession() {
     <div className="exam-body">
       <ExamWatermark primary={watermarkLine} secondary={watermarkMeta} />
       {proctorPaused && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-6" style={{ background: "rgba(22, 32, 46, 0.95)" }}>
-          <div className="exam-panel" style={{ textAlign: "center", maxWidth: "400px", padding: "32px", borderColor: "var(--warn)" }}>
-            <h2 style={{ fontSize: "16px", textTransform: "none", color: "var(--warn)" }}>The invigilator has paused your exam</h2>
-            <p style={{ fontSize: "13px", marginTop: "12px" }}>Your timer is frozen and your answers are safe. Keep this window open.</p>
-            <p style={{ marginTop: "20px", fontSize: "11px", color: "var(--mute)" }}>● Time frozen · {timeString}</p>
+        <div className="exam-scrim" style={{ zIndex: 90, background: "rgba(26, 24, 20, 0.92)" }}>
+          <div className="exam-dialog" style={{ textAlign: "center", maxWidth: 420 }}>
+            <h3>Your invigilator has paused the exam</h3>
+            <p className="exam-mute" style={{ marginTop: 8 }}>Your timer is frozen and your answers are safe. Keep this window open.</p>
+            <p style={{ marginTop: 16 }}><span className="exam-pill w"><i />Time frozen · {timeString}</span></p>
           </div>
         </div>
       )}
@@ -1659,17 +1659,17 @@ function StudentExamSession() {
             </div>
           )}
           {broadcast && (
-            <div className="exam-alert">
+            <div className="exam-alert" style={{ borderLeftColor: "var(--pri)" }}>
               <i>i</i>
               <div>
-                <h3>{broadcast.sender} · broadcast</h3>
+                <h3>Message from {broadcast.sender}</h3>
                 <p>{broadcast.body}</p>
               </div>
               <button onClick={() => setBroadcast(null)}>×</button>
             </div>
           )}
           {flagThresholdWarning && (
-            <div className="exam-alert">
+            <div className="exam-alert hi">
               <i>!</i>
               <div>
                 <h3>Proctoring warning</h3>
@@ -1679,12 +1679,11 @@ function StudentExamSession() {
             </div>
           )}
           {activeViolation && (
-            <div className="exam-alert" key={activeViolation.id}>
+            <div className="exam-alert hi" key={activeViolation.id} role="alert">
               <i>!</i>
               <div>
-                <h3>Proctor alert · logged</h3>
-                <p>{activeViolation.kind}</p>
-                <p style={{ fontSize: "11px", marginTop: "4px", opacity: 0.8 }}>{activeViolation.at} · {violations.length} violation(s) this session</p>
+                <h3>{activeViolation.kind}</h3>
+                <p>Logged at {activeViolation.at}. {violations.length} flag{violations.length === 1 ? "" : "s"} this session.</p>
               </div>
               <button onClick={() => setActiveViolation(null)}>×</button>
             </div>
@@ -1696,6 +1695,7 @@ function StudentExamSession() {
       <ExamHeader
         examName={examName}
         studentName={studentName}
+        studentRoll={resolvedRoll || undefined}
         currentQuestion={current + 1}
         totalQuestions={questions.length}
         timeString={timeString}
@@ -1727,7 +1727,7 @@ function StudentExamSession() {
             <div className="exam-bar">
               <div style={{ width: `${(answeredCount / questions.length) * 100}%` }} />
             </div>
-            <div style={{ fontSize: "11px", color: "var(--mute)" }}>{answeredCount}/{questions.length} complete</div>
+            <div className="exam-sm exam-mute">{answeredCount}/{questions.length} complete</div>
           </section>
           <QuestionPanel
             questions={questions}
@@ -1833,6 +1833,9 @@ function StudentExamSession() {
               <div className={`exam-chip ${!cameraStream ? "w" : ""}`}>
                 <span>Camera</span><span>{cameraStream ? "Connected" : "Waiting"}</span>
               </div>
+              <div className={`exam-chip ${screen === "granted" ? "" : "b"}`}>
+                <span>Screen</span><span>{screen === "granted" ? "Shared" : "Not shared"}</span>
+              </div>
               <div className={`exam-chip ${aiStatus?.faceCount === 0 ? "w" : ""}`}>
                 <span>Face</span><span>{aiStatus?.faceCount === 0 ? "Not visible" : "Visible"}</span>
               </div>
@@ -1877,7 +1880,7 @@ function StudentExamSession() {
               )}
             </ul>
             
-            <div className="exam-up">
+            <div className="exam-side-extra">
               <MonitorQRPanel attemptId={attemptId} onSubmitConsumed={() => setEndMonitor(true)} />
             </div>
             
@@ -1899,8 +1902,8 @@ function StudentExamSession() {
           </div>
 
           {Boolean(examSettings.calculator) && (
-            <div className="rounded-lg border border-line bg-paper p-3.5">
-              <h2 className="mb-2.5 font-sans text-[12px] font-semibold text-soft tracking-wider">Tools</h2>
+            <div className="exam-panel">
+              <h2>Tools</h2>
               <ExamTools />
             </div>
           )}
@@ -1916,17 +1919,17 @@ function StudentExamSession() {
       )}
 
       {confirmFinishSection && sectionTimer.current && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/50 p-4" role="dialog" aria-modal="true" aria-labelledby="finish-section-title">
-          <div className="w-full max-w-md border border-line bg-paper p-6 shadow-xl">
-            <h2 id="finish-section-title" className="font-serif text-xl font-semibold">Finish {sectionTimer.current.name}?</h2>
-            <p className="mt-2 text-[13px] leading-relaxed text-soft">
+        <div className="exam-scrim" style={{ zIndex: 80 }} role="dialog" aria-modal="true" aria-labelledby="finish-section-title">
+          <div className="exam-dialog">
+            <h3 id="finish-section-title">Finish {sectionTimer.current.name}?</h3>
+            <p className="exam-mute" style={{ marginTop: 6 }}>
               You won't be able to come back to this section. {(() => {
                 const w = sectionTimer.current;
                 const left = questions.slice(w.start, w.end).filter((x) => getQuestionStatus(x.id).status !== "answered").length;
                 return left ? `${left} question${left === 1 ? " is" : "s are"} still unanswered.` : "All questions in this section are answered.";
               })()} The unused {sectionTimer.timeString} is not carried over.
             </p>
-            <div className="mt-5 flex justify-end gap-2">
+            <div className="exam-dact">
               <button onClick={() => setConfirmFinishSection(false)} className="exam-btn">Keep working</button>
               <button onClick={finishSection} className="exam-btn pri">Finish section</button>
             </div>
@@ -1939,6 +1942,7 @@ function StudentExamSession() {
         answered={answeredCount}
         total={questions.length}
         marked={markedCount}
+        unanswered={questions.flatMap((x, i) => (getQuestionStatus(x.id).status === "answered" ? [] : [i + 1]))}
         onCancel={() => setShowSubmitDialog(false)}
         onConfirm={() => {
           setShowSubmitDialog(false);

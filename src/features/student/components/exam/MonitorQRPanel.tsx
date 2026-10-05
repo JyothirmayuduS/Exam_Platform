@@ -100,53 +100,37 @@ export default function MonitorQRPanel({ attemptId, onSubmitConsumed }: {
   const live = connected && cameraStatus === "CONNECTED";
 
   return (
-    <div className="border border-line bg-paper-raised p-3">
-      <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+    <div>
+      <h2 style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <FiSmartphone aria-hidden /> Desk monitor
-      </p>
+      </h2>
 
       {!session ? (
         <>
-          <p className="text-[11.5px] leading-snug text-soft">
+          <p className="exam-sm exam-mute" style={{ margin: 0 }}>
             Optional: use your phone as a second camera showing your desk and hands. This strengthens your integrity record.
           </p>
-          <button
-            onClick={start}
-            disabled={creating}
-            className="mt-2 w-full border border-ink py-2 font-mono text-[10px] uppercase tracking-widest text-ink hover:bg-raised disabled:opacity-60"
-          >
-            {creating ? "Generating…" : "Start desk monitoring"}
+          <button onClick={start} disabled={creating} className="exam-btn" style={{ marginTop: 10, width: "100%" }}>
+            {creating ? "Creating code…" : "Start desk monitoring"}
           </button>
-          {createError && <p className="mt-1.5 text-[11px] text-alert">{createError}</p>}
+          {createError && <p className="exam-sm" style={{ color: "var(--bad)", margin: "6px 0 0" }}>{createError}</p>}
         </>
       ) : live ? (
-        <div className="flex items-center gap-2 border border-success/40 bg-success/10 px-2.5 py-2">
-          <span className="h-1.5 w-1.5 animate-pulse bg-success" aria-hidden />
-          <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-success">Phone desk feed live</span>
-          <FiCheck className="ml-auto text-success" aria-hidden />
-        </div>
+        <span className="exam-pill g"><i />Phone desk feed live <FiCheck aria-hidden /></span>
       ) : connected ? (
-        <div className="flex items-center gap-2 border border-amber/40 bg-amber/10 px-2.5 py-2">
-          <span className="h-1.5 w-1.5 animate-pulse bg-amber" aria-hidden />
-          <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber">Phone connecting…</span>
-        </div>
+        <span className="exam-pill w"><i />Phone connecting…</span>
       ) : (
-        <div className="space-y-2.5">
-          <div className="mx-auto w-fit bg-white p-2">
-            <QRCodeSVG value={`${base}/mobile-monitor/${session.token}`} size={132} level="M" />
+        <div style={{ display: "grid", gap: 10, justifyItems: "center" }}>
+          <div className="exam-qr">
+            <QRCodeSVG value={`${base}/mobile-monitor/${session.token}`} size={132} level="M" fgColor="#1A1814" />
           </div>
-          <p className="text-center font-mono text-[9px] uppercase leading-relaxed tracking-wider text-soft">
-            Scan with your phone camera → allow the rear camera → keep desk + hands in frame
+          <p className="exam-sm exam-mute" style={{ margin: 0, textAlign: "center" }}>
+            Scan with your phone camera, allow the rear camera, and keep your desk and hands in frame.
           </p>
-          <p className="text-center font-mono text-[9px] uppercase tracking-widest text-soft">
-            {phoneStatus === "EXPIRED" || phoneStatus === "TERMINATED"
-              ? "Session ended — tap to restart"
-              : "Waiting for phone…"}
-          </p>
-          {(phoneStatus === "EXPIRED" || phoneStatus === "TERMINATED") && (
-            <button onClick={start} className="w-full border border-ink py-1.5 font-mono text-[9px] uppercase tracking-widest text-ink hover:bg-raised">
-              Regenerate QR
-            </button>
+          {phoneStatus === "EXPIRED" || phoneStatus === "TERMINATED" ? (
+            <button onClick={start} className="exam-btn" style={{ width: "100%" }}>Session ended — create a new code</button>
+          ) : (
+            <span className="exam-pill w"><i />Waiting for phone</span>
           )}
         </div>
       )}

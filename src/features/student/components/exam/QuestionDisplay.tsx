@@ -68,8 +68,8 @@ function UploadedAnswerView({ refPath, heightClass }: { refPath: string; heightC
   const isImage = !refPath.toLowerCase().includes(".pdf");
   if (!url) {
     return (
-      <div className={`${heightClass} flex items-center justify-center border border-line bg-ink`}>
-        <span className="animate-pulse font-mono text-[10px] uppercase tracking-widest text-paper/60">Loading answer…</span>
+      <div className={`${heightClass} flex items-center justify-center rounded-md border border-line bg-raised`}>
+        <span className="animate-pulse text-[13px] text-soft">Loading answer…</span>
       </div>
     );
   }
@@ -174,9 +174,9 @@ export default function QuestionDisplay({
       {isSubjective && (
         <div style={{ marginTop: 16 }}>
           {typeof answer === "string" && answer.startsWith("[Uploaded answer:") ? (
-            <div className="exam-up" style={{ background: "var(--oks)", borderColor: "var(--ok)" }}>
+            <div className="exam-up">
               <div className="exam-uh">
-                <span className="exam-sm" style={{ color: "var(--ok)", fontWeight: 600 }}>Handwritten answer uploaded</span>
+                <span className="exam-pill g"><i />Answer received</span>
                 <button
                   onClick={() => {
                     // A used QR session can't take a second upload; the next
@@ -184,10 +184,9 @@ export default function QuestionDisplay({
                     try { sessionStorage.removeItem(`mobile_upload_${attemptId}_${question.id}`); } catch { /* ignore */ }
                     onSelectOption("" as unknown as number);
                   }}
-                  className="exam-btn"
-                  style={{ color: "var(--bad)" }}
+                  className="exam-btn q bad"
                 >
-                  Remove and retake
+                  Remove and upload again
                 </button>
               </div>
               <div style={{ padding: 12 }}>
@@ -202,7 +201,7 @@ export default function QuestionDisplay({
               {(!question.subjective_mode || question.subjective_mode === "both" || question.subjective_mode === "textbox") && (
                 <div>
                   <p className="exam-hint exam-mute exam-sm">
-                    {question.subjective_mode === "both" ? "Option 1: Type your answer" : "Type your answer"}
+                    {question.subjective_mode === "both" ? "Type your answer, or upload a handwritten one below." : "Type your answer."}
                   </p>
                   <textarea
                     className="exam-textarea"
@@ -215,10 +214,8 @@ export default function QuestionDisplay({
 
               {(!question.subjective_mode || question.subjective_mode === "both" || question.subjective_mode === "qr") && (
                 <div>
-                  {question.subjective_mode === "both" && (
-                    <p className="exam-hint exam-mute exam-sm" style={{ marginTop: 12 }}>
-                      Option 2: Scan QR and upload a handwritten answer from your phone
-                    </p>
+                  {question.subjective_mode !== "both" && (
+                    <p className="exam-hint exam-mute exam-sm">Written answer. Write on paper, then upload a photo from your phone.</p>
                   )}
                   <SubjectiveQRBlock
                     key={`qr_${question.id}_${attemptId ?? "init"}`}

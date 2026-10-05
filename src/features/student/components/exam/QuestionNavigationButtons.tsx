@@ -42,7 +42,7 @@ export default function QuestionNavigationButtons({
         </button>
         <button
           onClick={isLast ? onSubmit : endOfSection ? onFinishSection : onNext}
-          className="exam-btn pri"
+          className={`exam-btn ${isLast ? "ok" : "pri"}`}
         >
           {isLast ? "Submit exam" : endOfSection ? "Finish section" : "Save and next"}
         </button>

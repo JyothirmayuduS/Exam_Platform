@@ -1,389 +1,270 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Exam page redesign — Vignan</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vignan Exam Browser – Exam interface</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --paper: #F7F5F0; --raised: #EDEAE2; --raised2: #E3E0D6;
-    --ink: #1A1814; --soft: #6E6B63; --line: #C8C3B8;
-    --forest: #284B34; --forest-soft: #3D6B4B;
-    --amber: #B7791F; --alert: #9B2C2C; --success: #2F6844;
-    --serif: 'Source Serif 4', Georgia, serif;
-    --sans: Inter, system-ui, sans-serif;
-    --mono: 'IBM Plex Mono', monospace;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--paper); color: var(--ink); font: 14px/1.6 var(--sans); }
-  button { font: inherit; cursor: pointer; border-radius: 2px; }
-  .mono { font-family: var(--mono); }
-  .label { font: 500 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--soft); }
+/* Vignan palette: forest #284B34, paper #F7F5F0, raised #EDEAE2, ink #1A1814, soft #6E6B63, line #C8C3B8, amber #B7791F, alert #9B2C2C, success #2F6844 */
+:root{--bg:#EDEAE2;--card:#FBFAF7;--ink:#1A1814;--mute:#6E6B63;--line:#C8C3B8;--pri:#284B34;--pri2:#3D6B4B;--ps:#E6ECE6;
+--ok:#2F6844;--oks:#E3EEE6;--warn:#8A5A12;--warnc:#B7791F;--ws:#F6EEDF;--bad:#9B2C2C;--bs:#F6E5E3;--on:#F7F5F0;--hd:#1F3A29;--accent:#B7791F;
+--serif:'Source Serif 4',Georgia,serif;--sans:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:'IBM Plex Mono',ui-monospace,monospace;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}button{cursor:pointer}:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
 
-  /* review switcher (not part of the design) */
-  .review { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 100;
-    display: flex; gap: 2px; background: var(--ink); padding: 4px; border-radius: 2px; }
-  .review button { background: transparent; color: #cfcbc2; border: 0; padding: 6px 12px; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
-  .review button.on { background: var(--paper); color: var(--ink); }
+header{position:sticky;top:env(safe-area-inset-top,0px);z-index:10;background:var(--hd);color:var(--on);border-bottom:3px solid var(--accent);display:flex;align-items:center;gap:14px;padding:8px 20px;flex-wrap:wrap}
+header .mute,header .b2{color:rgba(247,245,240,.7)}
+.brand{display:flex;align-items:center;gap:10px;padding-right:14px;border-right:1px solid rgba(247,245,240,.22)}
+.logo{width:32px;height:32px;flex:none}
+.b1{font:600 15px/1.2 var(--serif)}.b2{font-size:11px}
+.ttl{font-weight:600}.mute{color:var(--mute)}.sm{font-size:12px}.sp{flex:1}
+.saved{font-size:12px;color:rgba(247,245,240,.82);display:flex;gap:6px;align-items:center}.saved i{width:8px;height:8px;border-radius:50%;background:#7FB08E}
+.timer{font:600 20px var(--mono);font-variant-numeric:tabular-nums;border:1px solid rgba(247,245,240,.4);border-radius:6px;padding:2px 12px;min-width:92px;text-align:center}
+.timer.w{color:var(--warn);background:var(--ws);border-color:var(--warnc)}.timer.c{color:var(--bad);background:var(--bs);border-color:var(--bad)}
+header .btn{background:transparent;color:var(--on);border-color:rgba(247,245,240,.4)}header .btn:hover{background:rgba(247,245,240,.1)}
 
-  /* header */
-  header { position: sticky; top: 0; z-index: 10; height: 60px; display: flex; align-items: center; gap: 24px;
-    padding: 0 28px; background: var(--paper); border-bottom: 1px solid var(--line); }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .crest { width: 28px; height: 28px; background: var(--forest); color: var(--paper); display: grid; place-items: center; font: 700 14px var(--serif); border-radius: 2px; }
-  .exam-title { font: 600 16px/1.2 var(--serif); }
-  .exam-sub { font: 400 11px var(--mono); color: var(--soft); }
-  .spacer { flex: 1; }
-  .saved { display: flex; align-items: center; gap: 6px; font: 400 11px var(--mono); color: var(--soft); }
-  .dot { width: 6px; height: 6px; background: var(--success); display: inline-block; }
-  .timer { display: flex; align-items: baseline; gap: 8px; padding: 6px 14px; border: 1px solid var(--line); }
-  .timer b { font: 600 20px var(--mono); letter-spacing: .02em; }
-  .timer.low { border-color: var(--amber); color: var(--amber); }
-  .btn { border: 1px solid var(--ink); background: var(--ink); color: var(--paper); padding: 9px 18px; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
-  .btn.forest { background: var(--forest); border-color: var(--forest); }
-  .btn.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
-  .btn.ghost:hover { background: var(--raised); }
+.btn{border:1px solid var(--line);background:var(--card);border-radius:6px;padding:7px 14px;font-weight:500;transition:background-color .15s,filter .15s}
+.btn:hover:not(:disabled){background:var(--bg)}.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.pri{background:var(--pri);border-color:var(--pri);color:var(--on)}.btn.pri:hover{background:var(--pri2)}
+.btn.ok{background:var(--ink);border-color:var(--ink);color:var(--on);font-weight:600}.btn.ok:hover{background:#2e2a24}
+.btn.q{border-color:transparent;background:transparent;color:var(--mute)}.btn.q:hover{color:var(--ink)}
+.btn.lg{padding:11px 20px;font-size:15px}
 
-  /* layout */
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 0; min-height: calc(100vh - 60px); }
-  .work { padding: 32px 48px 120px; max-width: 860px; width: 100%; margin: 0 auto; }
-  aside { border-left: 1px solid var(--line); background: var(--raised); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+#banner{display:none;padding:10px 20px;font-weight:500;border-bottom:1px solid var(--line)}
+#banner.on{display:block}#banner.warn{background:var(--ws);color:var(--warn)}#banner.bad{background:var(--bs);color:var(--bad)}#banner.good{background:var(--oks);color:var(--ok)}
+#toasts{max-width:1440px;margin:12px auto 0;padding:0 20px;display:grid;gap:8px}#toasts:empty{display:none}
+.toast{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--warnc);border-radius:6px;padding:10px 12px}
+.toast.hi{border-left-color:var(--bad)}.toast b{display:block}.toast .x{margin-left:auto;border:0;background:none;font-size:18px;line-height:1;color:var(--mute)}
 
-  .section-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); margin-bottom: 28px; }
-  .section-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 16px; font: 500 12px var(--sans); color: var(--soft); border-radius: 0; }
-  .section-tabs button.on { color: var(--ink); border-bottom-color: var(--forest); }
-  .section-tabs .count { font: 400 10px var(--mono); margin-left: 6px; }
+main{display:grid;grid-template-columns:250px minmax(0,1fr) 290px;gap:16px;padding:16px 20px;max-width:1440px;margin:0 auto;align-items:start}
+@media (max-width:1050px){main{grid-template-columns:1fr}#qp{order:-1}}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px}.panel+.panel{margin-top:16px}
+h2{margin:0 0 10px;font-size:12px;font-weight:600;color:var(--mute);letter-spacing:.03em}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px}.stat{border:1px solid var(--line);border-radius:6px;padding:6px;text-align:center}
+.stat b{display:block;font:600 18px var(--mono)}.stat span{font-size:11px;color:var(--mute)}
+.bar{height:6px;border-radius:3px;background:var(--line);margin:10px 0 4px;overflow:hidden}.bar div{height:100%;background:var(--pri);transition:width .2s}
+input[type=search]{width:100%;border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:var(--card);margin-bottom:10px}
+.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;max-height:230px;overflow:auto;padding:2px}
+.n{aspect-ratio:1;border:1px solid var(--line);border-radius:6px;background:var(--card);font:600 13px var(--mono);position:relative}
+.n.v{background:var(--ps)}.n.a{background:var(--pri);border-color:var(--pri);color:var(--on)}
+.n.m::after{content:"";position:absolute;top:3px;right:3px;width:8px;height:8px;border-radius:50%;background:var(--warnc);border:1px solid var(--card)}
+.n.cur{outline:2px solid var(--ink);outline-offset:1px}
+.leg{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:5px;font-size:12px;color:var(--mute)}.leg span{display:flex;gap:6px;align-items:center}.leg i{width:12px;height:12px;border-radius:3px;border:1px solid var(--line)}
 
-  .q-meta { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-  .q-num { font: 600 12px var(--mono); color: var(--forest); }
-  .chip { font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .08em; padding: 3px 8px; border: 1px solid var(--line); color: var(--soft); }
-  .flag { margin-left: auto; background: none; border: 1px solid var(--line); padding: 5px 10px; font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--soft); }
-  .flag.on { border-color: var(--amber); color: var(--amber); }
-  .q-text { font: 400 20px/1.5 var(--serif); margin-bottom: 24px; }
-  .q-text code { font: 15px var(--mono); background: var(--raised); padding: 1px 6px; }
+.qh{display:flex;justify-content:space-between;align-items:center;padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.badge{border:1px solid var(--line);border-radius:4px;padding:2px 8px;font-size:12px;color:var(--mute)}
+.qt{font:600 20px/1.45 var(--serif);margin:0 0 6px}.hint{margin:0 0 16px}
+.opt{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:background-color .15s,border-color .15s}
+.opt:hover{background:var(--bg)}.opt:has(input:checked){border-color:var(--pri);background:var(--ps)}.opt input{margin-top:3px;accent-color:var(--pri)}
+.up{border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.uh{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.ub{display:flex;gap:20px;padding:16px 14px;flex-wrap:wrap;align-items:flex-start}.qr{width:140px;height:140px;background:#fff;padding:8px;border:1px solid var(--line);border-radius:6px;flex:none}
+.ub ol{margin:0;padding-left:20px;flex:1;min-width:220px}.ub li{margin:5px 0}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;padding:3px 10px;border-radius:999px}
+.pill.w{background:var(--ws);color:var(--warn)}.pill.g{background:var(--oks);color:var(--ok)}
+.pill i{width:7px;height:7px;border-radius:50%;background:currentColor}.pill.w i{animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.3}}
+.got{display:flex;gap:14px;padding:16px 14px;align-items:center;flex-wrap:wrap}
+.pg{width:72px;height:96px;background:#fff;border:1px solid var(--line);border-radius:4px;position:relative}
+.pg::before,.pg::after{content:"";position:absolute;left:10px;right:10px;height:1px;background:#DEDAD0;top:22px;box-shadow:0 12px 0 #DEDAD0,0 24px 0 #DEDAD0,0 36px 0 #DEDAD0}
+.pg::after{display:none}
+.ft{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.ft label{display:flex;gap:8px;align-items:center}.nv{display:flex;gap:8px;flex-wrap:wrap}
 
-  .options { display: grid; gap: 10px; }
-  .opt { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; border: 1px solid var(--line); background: var(--paper); text-align: left; width: 100%; }
-  .opt:hover { border-color: var(--forest-soft); }
-  .opt .key { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: 1px solid var(--line); font: 600 12px var(--mono); }
-  .opt.on { border-color: var(--forest); background: #EEF1EC; }
-  .opt.on .key { background: var(--forest); border-color: var(--forest); color: var(--paper); }
+.cam{position:relative;aspect-ratio:4/3;border-radius:6px;overflow:hidden;background:#2A2722;display:grid;place-items:center;border:1px solid var(--line)}
+.cam svg{width:48%;color:#C8C3B8;opacity:.45}.rec{position:absolute;top:6px;right:6px;background:rgba(26,24,20,.7);color:var(--on);font-size:11px;padding:2px 8px;border-radius:3px}
+.chips{display:grid;gap:6px;margin-top:10px}.chip{display:flex;justify-content:space-between;padding:6px 10px;border-radius:6px;background:var(--oks);color:var(--ok);font-weight:500}
+.chip.w{background:var(--ws);color:var(--warn)}.chip.b{background:var(--bs);color:var(--bad)}
+.help{margin-top:10px;padding:10px;border-radius:6px;background:var(--ps);font-size:13px}
+.log{margin:10px 0 0;padding:0;list-style:none;font-size:12px}.log li{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--line)}
 
-  .q-foot { display: flex; align-items: center; gap: 10px; margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--line); }
-  .q-foot .hint { font: 400 11px var(--mono); color: var(--soft); }
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);padding:22px;width:min(480px,calc(100% - 24px))}
+dialog::backdrop{background:rgba(26,24,20,.55)}dialog h3{margin:0 0 4px;font:600 20px/1.3 var(--serif)}
+.sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}
+.dact{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 
-  /* subjective / QR */
-  .qr-card { display: grid; grid-template-columns: 180px 1fr; gap: 24px; border: 1px solid var(--line); background: var(--paper); padding: 20px; }
-  .qr { width: 180px; height: 180px; border: 1px solid var(--line); padding: 10px; background: #fff; }
-  .qr svg { width: 100%; height: 100%; }
-  .steps { list-style: none; counter-reset: s; display: grid; gap: 10px; margin: 12px 0 16px; }
-  .steps li { counter-increment: s; display: flex; gap: 10px; font-size: 13px; }
-  .steps li::before { content: counter(s); width: 20px; height: 20px; flex: none; display: grid; place-items: center; border: 1px solid var(--line); font: 600 10px var(--mono); }
-  .waiting { display: flex; align-items: center; gap: 8px; font: 500 11px var(--mono); color: var(--amber); text-transform: uppercase; letter-spacing: .08em; }
-  .waiting .dot { background: var(--amber); animation: pulse 1.4s infinite; }
-  @keyframes pulse { 50% { opacity: .25; } }
-  .uploaded { border: 1px solid var(--success); background: #EEF2EE; padding: 16px; display: grid; grid-template-columns: 120px 1fr; gap: 16px; }
-  .thumb { height: 150px; border: 1px solid var(--line); background: #fbfaf7; position: relative; }
-  .thumb::after { content: "page 1"; position: absolute; bottom: 6px; left: 6px; font: 10px var(--mono); color: var(--soft); }
-  .ok { display: flex; align-items: center; gap: 8px; font: 600 11px var(--mono); color: var(--success); text-transform: uppercase; letter-spacing: .08em; }
-  textarea { width: 100%; min-height: 120px; border: 1px solid var(--line); background: var(--paper); padding: 12px; font: 14px/1.6 var(--sans); border-radius: 2px; resize: vertical; margin-top: 16px; }
+/* ── Setup (camera / mic / screen) ── */
+.setup{max-width:880px;margin:24px auto;padding:0 20px}
+.steps{display:flex;gap:8px;margin-bottom:14px;font-size:12px;color:var(--mute)}
+.steps span{display:flex;align-items:center;gap:6px}.steps b{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);font:600 11px var(--mono);background:var(--card)}
+.steps .done b{background:var(--pri);border-color:var(--pri);color:var(--on)}.steps .now{color:var(--ink);font-weight:600}.steps .now b{border-color:var(--pri);color:var(--pri)}
+.steps i{flex:0 0 28px;height:1px;background:var(--line);align-self:center}
+.setup h1{font:600 26px/1.25 var(--serif);margin:0 0 4px}
+.sg{display:grid;grid-template-columns:260px 1fr;gap:16px;margin-top:16px;align-items:start}@media (max-width:760px){.sg{grid-template-columns:1fr}}
+.dev{display:flex;gap:12px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}.dev:first-child{border-top:0;padding-top:0}
+.dev .ic{width:36px;height:36px;border-radius:8px;background:var(--ps);color:var(--pri);display:grid;place-items:center;flex:none}
+.dev .ic svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.dev b{display:block}.dev .sm{color:var(--mute)}.dev .pill{margin-left:auto}
+.pill.pn{background:var(--bg);color:var(--mute)}.pill.b{background:var(--bs);color:var(--bad)}
+.fix{margin-top:12px;padding:12px;border-radius:6px;background:var(--bs);color:var(--ink);font-size:13px}.fix b{color:var(--bad)}.fix ol{margin:6px 0 10px;padding-left:18px}
+.cta{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.perm{margin:14px 0 0;padding:0;list-style:none;border:1px solid var(--line);border-radius:8px}
+.perm li{display:flex;gap:12px;padding:12px 14px;align-items:center}.perm li+li{border-top:1px solid var(--line)}
 
-  /* right rail */
-  .card { background: var(--paper); border: 1px solid var(--line); }
-  .card-h { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-  .cam { aspect-ratio: 4 / 3; background: var(--ink); position: relative; display: grid; place-items: center; color: #8d897f; font: 11px var(--mono); }
-  .cam .live { position: absolute; top: 8px; left: 8px; display: flex; align-items: center; gap: 6px; color: var(--paper); font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
-  .cam .live .dot { background: #d9534f; animation: pulse 1.4s infinite; }
-  .feeds { display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 1px solid var(--line); }
-  .feeds div { padding: 8px 10px; font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; display: flex; align-items: center; gap: 6px; }
-  .feeds div + div { border-left: 1px solid var(--line); }
-  .notice { padding: 10px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--soft); }
-  .notice.warn { color: var(--amber); background: #FBF4E8; }
+.devbar{margin:18px 20px;font-size:12px;color:var(--mute);display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
+.devbar select{border:1px solid var(--line);border-radius:6px;padding:4px 8px;background:var(--card)}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style></head><body>
 
-  .progress-bar { height: 4px; background: var(--raised2); margin: 10px 12px 4px; }
-  .progress-bar span { display: block; height: 100%; background: var(--forest); }
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); padding: 8px 12px 12px; }
-  .stats b { display: block; font: 600 18px var(--mono); }
-  .stats small { font: 400 10px var(--mono); color: var(--soft); text-transform: uppercase; letter-spacing: .06em; }
-
-  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; padding: 12px; }
-  .cell { aspect-ratio: 1; border: 1px solid var(--line); background: var(--paper); font: 500 11px var(--mono); display: grid; place-items: center; position: relative; padding: 0; }
-  .cell.done { background: var(--forest); border-color: var(--forest); color: var(--paper); }
-  .cell.flagged::after { content: ""; position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; background: var(--amber); }
-  .cell.current { outline: 2px solid var(--ink); outline-offset: 1px; }
-  .legend { display: flex; flex-wrap: wrap; gap: 12px; padding: 0 12px 12px; font: 400 10px var(--mono); color: var(--soft); }
-  .legend i { display: inline-block; width: 9px; height: 9px; border: 1px solid var(--line); margin-right: 5px; vertical-align: -1px; }
-
-  /* modal */
-  .scrim { position: fixed; inset: 0; background: rgba(26, 24, 20, .6); display: none; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
-  .scrim.show { display: flex; }
-  .modal { width: 100%; max-width: 460px; background: var(--paper); border: 1px solid var(--line); padding: 28px; }
-  .modal h2 { font: 600 22px/1.2 var(--serif); margin: 6px 0 10px; }
-  .modal p { color: var(--soft); font-size: 13px; }
-  .perm-list { list-style: none; display: grid; gap: 8px; margin: 18px 0 10px; }
-  .perm-list li { display: flex; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); font-size: 13px; }
-  .perm-list .ico { width: 22px; height: 22px; flex: none; border: 1px solid var(--forest); color: var(--forest); display: grid; place-items: center; font: 600 11px var(--mono); }
-  .modal .row { display: flex; gap: 8px; margin-top: 22px; }
-  .modal .row .btn { flex: 1; padding: 12px; }
-  .summary { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); margin: 16px 0 6px; }
-  .summary div { padding: 12px; text-align: center; }
-  .summary div + div { border-left: 1px solid var(--line); }
-  .summary b { display: block; font: 600 22px var(--mono); }
-  .summary small { font: 400 10px var(--mono); color: var(--soft); text-transform: uppercase; letter-spacing: .06em; }
-  .unanswered { font: 400 12px var(--mono); color: var(--amber); }
-
-  [data-view] { display: none; }
-  [data-view].show { display: block; }
-</style>
-</head>
-<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-cam" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></symbol>
+  <symbol id="i-screen" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+</svg>
 
 <header>
   <div class="brand">
-    <div class="crest">V</div>
-    <div>
-      <div class="exam-title">Data Structures — Mid-semester II</div>
-      <div class="exam-sub">CSE · Section B · Roll 221FA04312</div>
-    </div>
+    <svg class="logo" viewBox="0 0 64 64" role="img" aria-label="Vignan"><rect width="64" height="64" rx="10" fill="#F7F5F0"/><path d="M32 46 14 18h8.4l9.6 17.6L41.6 18H50L32 46Z" fill="#284B34"/><circle cx="48.5" cy="18.5" r="4.5" fill="#B7791F"/></svg>
+    <div><div class="b1">Vignan Exam Browser</div><div class="b2">Vignan University</div></div>
   </div>
-  <div class="spacer"></div>
-  <div class="saved"><span class="dot"></span>All answers saved · 12s ago</div>
-  <div class="timer" id="timer"><span class="label">Time left</span><b>00:42:18</b></div>
-  <button class="btn forest" onclick="show('submit', true)">Submit exam</button>
+  <div><div class="ttl">Test 13 · Data Structures</div><div class="sm mute">S. Manasa · 21VGN0314</div></div>
+  <div class="sp"></div>
+  <div class="saved" id="sv"><i></i>All changes saved</div>
+  <div class="timer" id="t" role="timer">04:25</div>
 </header>
+<div id="banner" role="status"></div>
+<div id="toasts" aria-live="polite"></div>
 
-<main>
-  <section class="work">
-    <nav class="section-tabs">
-      <button class="on">Part A · Multiple choice<span class="count">18/20</span></button>
-      <button>Part B · Written<span class="count">1/4</span></button>
-    </nav>
+<!-- Exam -->
+<main id="exam">
+<aside>
+  <section class="panel"><h2>Progress</h2>
+    <div class="stats"><div class="stat"><b id="sA">0</b><span>Answered</span></div><div class="stat"><b id="sR">0</b><span>Remaining</span></div><div class="stat"><b id="sM">0</b><span>Marked</span></div><div class="stat"><b id="sV">1</b><span>Visited</span></div></div>
+    <div class="bar"><div id="pb" style="width:0"></div></div><div class="sm mute" id="pt"></div></section>
+  <section class="panel"><h2>Question navigator</h2>
+    <input type="search" id="se" placeholder="Search by number or text" aria-label="Search questions">
+    <div class="grid" id="gr"></div>
+    <div class="leg"><span><i style="background:var(--pri);border-color:var(--pri)"></i>Answered</span><span><i style="background:var(--warnc);border-color:var(--warnc);border-radius:50%"></i>Marked</span><span><i style="background:var(--ps)"></i>Visited</span><span><i></i>Not visited</span></div></section>
+</aside>
 
-    <!-- MCQ -->
-    <div data-view="mcq" class="show">
-      <div class="q-meta">
-        <span class="q-num">Q 07 / 24</span>
-        <span class="chip">MCQ · 2 marks</span>
-        <button class="flag" onclick="this.classList.toggle('on')">⚑ Mark for review</button>
-      </div>
-      <p class="q-text">What is the worst-case time complexity of inserting a key into a binary search tree with <code>n</code> nodes that is not self-balancing?</p>
-      <div class="options">
-        <button class="opt"><span class="key">A</span><span>O(1)</span></button>
-        <button class="opt"><span class="key">B</span><span>O(log n)</span></button>
-        <button class="opt on"><span class="key">C</span><span>O(n)</span></button>
-        <button class="opt"><span class="key">D</span><span>O(n log n)</span></button>
-      </div>
-      <div class="q-foot">
-        <button class="btn ghost">← Previous</button>
-        <button class="btn ghost">Clear response</button>
-        <span class="spacer"></span>
-        <span class="hint">Keys A–D select · ← → move</span>
-        <button class="btn forest">Save &amp; next →</button>
-      </div>
+<section class="panel" id="qp" aria-live="polite"></section>
+
+<aside>
+  <section class="panel"><h2>Proctoring</h2>
+    <div class="cam"><svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><circle cx="32" cy="24" r="12"/><path d="M8 60c2-16 14-22 24-22s22 6 24 22z"/></svg><span class="rec">● Recording</span></div>
+    <div class="chips">
+      <div class="chip" id="cc"><span>Camera</span><span>Connected</span></div>
+      <div class="chip w" id="cf"><span>Face</span><span>Not visible</span></div>
+      <div class="chip"><span>Screen</span><span>Shared</span></div>
+      <div class="chip"><span>Audio</span><span>Quiet</span></div>
     </div>
-
-    <!-- Subjective with QR (waiting) -->
-    <div data-view="qr">
-      <div class="q-meta">
-        <span class="q-num">Q 21 / 24</span>
-        <span class="chip">Written · 8 marks</span>
-        <button class="flag">⚑ Mark for review</button>
-      </div>
-      <p class="q-text">Draw the AVL tree after inserting 30, 20, 40, 10, 25, 5 in that order. Show each rotation you perform.</p>
-      <div class="qr-card">
-        <div class="qr"><svg viewBox="0 0 29 29" shape-rendering="crispEdges" id="qrsvg"></svg></div>
-        <div>
-          <div class="label">Upload from your phone</div>
-          <ol class="steps">
-            <li>Write your answer on paper.</li>
-            <li>Scan this code with your phone camera.</li>
-            <li>Photograph each page and tap Upload.</li>
-          </ol>
-          <div class="waiting"><span class="dot"></span>Waiting for upload</div>
-          <p style="margin-top:10px;font-size:12px;color:var(--soft)">The answer appears here on its own. You can keep working on other questions.</p>
-        </div>
-      </div>
-      <textarea placeholder="Optional: type a note for the examiner"></textarea>
-      <div class="q-foot">
-        <button class="btn ghost">← Previous</button>
-        <span class="spacer"></span>
-        <button class="btn forest">Save &amp; next →</button>
-      </div>
-    </div>
-
-    <!-- Subjective uploaded -->
-    <div data-view="uploaded">
-      <div class="q-meta">
-        <span class="q-num">Q 21 / 24</span>
-        <span class="chip">Written · 8 marks</span>
-        <button class="flag">⚑ Mark for review</button>
-      </div>
-      <p class="q-text">Draw the AVL tree after inserting 30, 20, 40, 10, 25, 5 in that order. Show each rotation you perform.</p>
-      <div class="uploaded">
-        <div class="thumb"></div>
-        <div>
-          <div class="ok">✓ Answer received from phone</div>
-          <p style="margin:8px 0 14px;font-size:13px;color:var(--soft)">2 pages · uploaded 10:42 AM · saved to your answer sheet</p>
-          <div style="display:flex;gap:8px">
-            <button class="btn ghost">View pages</button>
-            <button class="btn ghost">Replace upload</button>
-          </div>
-        </div>
-      </div>
-      <div class="q-foot">
-        <button class="btn ghost">← Previous</button>
-        <span class="spacer"></span>
-        <button class="btn forest">Save &amp; next →</button>
-      </div>
-    </div>
+    <div class="help" id="hp"><b>Move into frame.</b> Face the camera and keep it uncovered. Your invigilator has been notified.</div>
+    <h2 style="margin-top:14px">Session log</h2>
+    <ul class="log"><li><span>Face not visible ×2</span><span class="mute">22:36</span></li><li><span>Phone in view</span><span class="mute">22:36</span></li></ul>
   </section>
-
-  <aside>
-    <div class="card">
-      <div class="card-h"><span class="label">Proctoring</span><span class="label" style="color:var(--success)">● Connected</span></div>
-      <div class="cam"><span class="live"><span class="dot"></span>Live</span>camera preview</div>
-      <div class="feeds">
-        <div><span class="dot"></span>Camera</div>
-        <div><span class="dot"></span>Mic</div>
-        <div><span class="dot"></span>Screen</div>
-      </div>
-      <div class="notice warn">Keep your face in view. Looking away was noted at 10:31.</div>
-    </div>
-
-    <div class="card">
-      <div class="card-h"><span class="label">Progress</span><span class="mono" style="font-size:11px;color:var(--soft)">19 of 24</span></div>
-      <div class="progress-bar"><span style="width:79%"></span></div>
-      <div class="stats">
-        <div><b>19</b><small>Answered</small></div>
-        <div><b style="color:var(--amber)">2</b><small>Review</small></div>
-        <div><b>5</b><small>Left</small></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-h"><span class="label">Questions</span></div>
-      <div class="grid" id="grid"></div>
-      <div class="legend">
-        <span><i style="background:var(--forest);border-color:var(--forest)"></i>Answered</span>
-        <span><i></i>Not answered</span>
-        <span><i style="background:var(--amber);border-color:var(--amber)"></i>Review</span>
-      </div>
-    </div>
-  </aside>
+</aside>
 </main>
 
-<!-- Submit dialog -->
-<div class="scrim" id="submit">
-  <div class="modal">
-    <div class="label">Submit exam</div>
-    <h2>Submit your answers?</h2>
-    <p>You cannot change answers after submitting.</p>
-    <div class="summary">
-      <div><b>19</b><small>Answered</small></div>
-      <div><b style="color:var(--amber)">2</b><small>Review</small></div>
-      <div><b>5</b><small>Not answered</small></div>
-    </div>
-    <p class="unanswered">Not answered: Q 9, 14, 22, 23, 24</p>
-    <div class="row">
-      <button class="btn ghost" onclick="show('mcq')">Keep working</button>
-      <button class="btn forest">Submit now</button>
-    </div>
+<!-- Setup: camera, microphone, screen -->
+<div class="setup" id="setup" hidden>
+  <div class="steps"><span class="done"><b>✓</b>Sign in</span><i></i><span class="now"><b>2</b>Camera, mic &amp; screen</span><i></i><span><b>3</b>Identity check</span></div>
+  <h1>Set up proctoring</h1>
+  <div class="mute">Your camera, microphone and entire screen are monitored for the whole exam by AI and your invigilator.</div>
+  <div class="sg">
+    <section class="panel">
+      <div class="cam" id="scam"><svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><circle cx="32" cy="24" r="12"/><path d="M8 60c2-16 14-22 24-22s22 6 24 22z"/></svg><span class="rec" id="srec">Camera off</span></div>
+      <div class="sm mute" style="margin-top:8px">Sit facing the camera in good light.</div>
+    </section>
+    <section class="panel">
+      <div class="dev"><span class="ic"><svg><use href="#i-cam"/></svg></span><div><b>Camera</b><span class="sm">Your face, checked by AI</span></div><span class="pill n" id="pc">Not allowed yet</span></div>
+      <div class="dev"><span class="ic"><svg><use href="#i-mic"/></svg></span><div><b>Microphone</b><span class="sm">Sound in the room</span></div><span class="pill n" id="pm">Not allowed yet</span></div>
+      <div class="dev"><span class="ic"><svg><use href="#i-screen"/></svg></span><div><b>Entire screen</b><span class="sm">Your whole display, never a single window</span></div><span class="pill n" id="ps">Not allowed yet</span></div>
+      <div class="fix" id="fix" hidden>
+        <b>Screen recording is off for Vignan Exam Browser.</b>
+        <ol><li>Click <strong>Open screen settings</strong>.</li><li>Turn on <strong>Vignan Exam Browser</strong>.</li><li>Click <strong>Restart exam browser</strong>. You come back to this page.</li></ol>
+        <div class="nv"><button class="btn">Open screen settings</button><button class="btn pri">Restart exam browser</button></div>
+      </div>
+      <div class="cta">
+        <button class="btn pri lg" id="allowBtn">Allow camera, microphone &amp; screen</button>
+        <button class="btn ok lg" id="contBtn" hidden>Continue to identity check</button>
+      </div>
+    </section>
   </div>
 </div>
 
-<!-- Permission modal -->
-<div class="scrim" id="perm">
-  <div class="modal">
-    <div class="label">Exam permissions</div>
-    <h2>Allow access for this exam</h2>
-    <ul class="perm-list">
-      <li><span class="ico">✓</span><span><b>Camera</b> — your face, checked by AI and your invigilator</span></li>
-      <li><span class="ico">✓</span><span><b>Microphone</b> — room audio</span></li>
-      <li><span class="ico">✓</span><span><b>Entire screen</b> — your full display, not a single window</span></li>
-    </ul>
-    <p>Your computer may ask you to confirm each one. Choose Allow / OK.</p>
-    <div class="row">
-      <button class="btn ghost" onclick="show('denied', true)">Deny</button>
-      <button class="btn forest" onclick="show('mcq')">Allow all</button>
-    </div>
-  </div>
+<div class="devbar">
+  <label for="view">Design preview – screen:</label>
+  <select id="view"><option value="exam">Exam</option><option value="setup">Setup · camera, mic &amp; screen</option></select>
+  <label for="st">State:</label>
+  <select id="st"><option value="">Normal</option><option value="off">Connection lost</option><option value="fail">Autosave failed</option><option value="cam">Camera blocked</option><option value="end">Time expired</option><option value="perm">Setup · permission prompt</option><option value="denied">Setup · denied</option><option value="screenoff">Setup · screen recording off</option><option value="ready">Setup · all allowed</option></select>
 </div>
 
-<div class="scrim" id="denied">
-  <div class="modal">
-    <div class="label">Exam permissions</div>
-    <h2>The exam can't start without these</h2>
-    <p>Proctoring needs your camera, microphone and full screen for the whole exam. Nothing is shared until you allow it.</p>
-    <div class="row">
-      <button class="btn ghost">Exit</button>
-      <button class="btn forest" onclick="show('perm', true)">Review again</button>
-    </div>
-  </div>
-</div>
+<dialog id="dg" aria-labelledby="dh"><h3 id="dh">Submit exam?</h3><div class="mute" id="dm">You cannot change answers after submitting.</div>
+<div class="sum"><div class="stat"><b id="dA">0</b><span>Answered</span></div><div class="stat"><b id="dU">0</b><span>Unanswered</span></div><div class="stat"><b id="dM">0</b><span>Marked</span></div></div>
+<div class="sm mute" id="dl"></div>
+<div class="dact"><button class="btn" id="dc">Back to exam</button><button class="btn ok" id="dok">Confirm and submit</button></div></dialog>
 
-<div class="review" id="review">
-  <button data-go="mcq" class="on">MCQ</button>
-  <button data-go="qr">Written · QR</button>
-  <button data-go="uploaded">Written · uploaded</button>
-  <button data-go="submit" data-modal>Submit dialog</button>
-  <button data-go="perm" data-modal>Permissions</button>
-</div>
+<dialog id="pd" aria-labelledby="ph">
+  <h3 id="ph">Allow access for this exam</h3>
+  <div class="mute">The exam is proctored. Your computer will ask you to confirm each one — choose <b>Allow</b>.</div>
+  <ul class="perm">
+    <li><span class="dev" style="padding:0;border:0"><span class="ic"><svg><use href="#i-cam"/></svg></span></span><div><b>Camera</b><div class="sm mute">Your face, checked by AI and your invigilator</div></div></li>
+    <li><span class="dev" style="padding:0;border:0"><span class="ic"><svg><use href="#i-mic"/></svg></span></span><div><b>Microphone</b><div class="sm mute">Sound in the room</div></div></li>
+    <li><span class="dev" style="padding:0;border:0"><span class="ic"><svg><use href="#i-screen"/></svg></span></span><div><b>Entire screen</b><div class="sm mute">Your whole display, never a single window</div></div></li>
+  </ul>
+  <div class="dact"><button class="btn q" id="pdeny">Deny</button><button class="btn pri" id="pallow">Allow all</button></div>
+</dialog>
+
+<dialog id="dd" aria-labelledby="ddh">
+  <h3 id="ddh">The exam can't start without these</h3>
+  <div class="mute">Proctoring needs your camera, microphone and entire screen for the whole exam. Nothing is recorded until you allow it.</div>
+  <div class="dact"><button class="btn q">Exit</button><button class="btn pri" id="dback">Review again</button></div>
+</dialog>
 
 <script>
-  const views = ["mcq", "qr", "uploaded"];
-  const modals = ["submit", "perm", "denied"];
-  function show(name, isModal) {
-    modals.forEach((m) => document.getElementById(m).classList.toggle("show", m === name));
-    if (!isModal) {
-      views.forEach((v) => document.querySelector(`[data-view="${v}"]`).classList.toggle("show", v === name));
-      const tabs = document.querySelectorAll(".section-tabs button");
-      tabs[0].classList.toggle("on", name === "mcq");
-      tabs[1].classList.toggle("on", name !== "mcq");
-    }
-    document.querySelectorAll("#review button").forEach((b) => b.classList.toggle("on", b.dataset.go === name));
-  }
-  document.querySelectorAll("#review button").forEach((b) =>
-    b.addEventListener("click", () => show(b.dataset.go, b.hasAttribute("data-modal"))));
-  const initial = location.hash.slice(1);
-  if (views.includes(initial) || modals.includes(initial)) show(initial, modals.includes(initial));
-  document.querySelectorAll(".opt").forEach((o) => o.addEventListener("click", () => {
-    o.parentElement.querySelectorAll(".opt").forEach((x) => x.classList.remove("on"));
-    o.classList.add("on");
-  }));
+(function(){
+var N=20,cur=0,qs=[],i,$=function(x){return document.getElementById(x)};
+var T=['Which data structure uses LIFO ordering?','What is the time complexity of binary search?','Which traversal of a binary search tree visits keys in sorted order?','Draw the AVL tree after inserting 30, 20, 40, 10, 25, 5 in that order. Show each rotation.','Which SQL clause filters grouped rows?'];
+var O=[['Queue','Stack','Heap','Graph'],['O(n)','O(log n)','O(n log n)','O(1)'],['Pre-order','In-order','Post-order','Level-order'],[],['WHERE','HAVING','ORDER BY','LIMIT']];
+for(i=0;i<N;i++){var k=i%5;qs.push({t:T[k],o:O[k],a:null,m:false,v:i===0,s:O[k].length===0,up:false})}
+function grid(){var f=$('se').value.toLowerCase(),h='';qs.forEach(function(q,j){if(f&&String(j+1)!==f&&q.t.toLowerCase().indexOf(f)<0)return;var c='n '+(q.a!==null?'a ':q.v?'v ':'')+(q.m?'m ':'')+(j===cur?'cur':'');h+='<button class="'+c+'" data-i="'+j+'" aria-label="Question '+(j+1)+'">'+(j+1)+'</button>'});$('gr').innerHTML=h}
+function stats(){var a=0,m=0,v=0;qs.forEach(function(q){if(q.a!==null)a++;if(q.m)m++;if(q.v)v++});$('sA').textContent=a;$('sR').textContent=N-a;$('sM').textContent=m;$('sV').textContent=v;$('pb').style.width=a/N*100+'%';$('pt').textContent=a+'/'+N+' complete';return{a:a,m:m}}
+function qr(){var h='',r=7,x,y;function f(x,y){var a=[[0,0],[18,0],[0,18]];for(var k=0;k<3;k++){var dx=x-a[k][0],dy=y-a[k][1];if(dx>=0&&dx<7&&dy>=0&&dy<7)return Math.max(Math.abs(dx-3),Math.abs(dy-3))!==2}return null}for(y=0;y<25;y++)for(x=0;x<25;x++){var v=f(x,y);if(v===null){r=(r*1103515245+12345)&0x7fffffff;v=(r>>8)%2===0}if(v)h+='<rect x="'+x+'" y="'+y+'" width="1" height="1" fill="#1A1814"/>'}return h}
+function render(){var q=qs[cur];q.v=true;var b='<div class="qh"><h2 style="margin:0">Question '+(cur+1)+' of '+N+'</h2><span class="badge">'+(q.s?'8 marks':'1 mark')+'</span></div><p class="qt">'+q.t+'</p>';
+if(q.s){
+  if(q.up){b+='<p class="hint mute sm">Written answer.</p><div class="up"><div class="uh"><span class="pill g"><i></i>Answer received from your phone</span><span class="sm mute">2 pages · 10:42</span></div><div class="got"><div class="pg"></div><div class="pg"></div><div class="nv" style="margin-left:auto"><button class="btn">View pages</button><button class="btn q" id="reup">Upload again</button></div></div></div>'}
+  else{b+='<p class="hint mute sm">Written answer. Write on paper, then upload a photo from your phone.</p><div class="up"><div class="uh"><span class="sm mute">Upload from your phone</span><span class="pill w"><i></i>Waiting for upload</span></div><div class="ub"><svg class="qr" viewBox="0 0 25 25" shape-rendering="crispEdges" role="img" aria-label="QR code">'+qr()+'</svg><ol><li>Scan this code with your phone camera.</li><li>The link is tied to your exam session.</li><li>Photograph your paper in good light and tap Submit.</li><li>Your answer appears here automatically. <button class="btn q sm" id="sim" style="padding:0 4px;text-decoration:underline">Preview received state</button></li></ol></div></div>'}
+}
+else{b+='<p class="hint mute sm">Select one answer.</p>';q.o.forEach(function(o,j){b+='<label class="opt"><input type="radio" name="o" value="'+j+'"'+(q.a===j?' checked':'')+'><span>'+o+'</span></label>'})}
+b+='<div class="ft"><label><input type="checkbox" id="mk"'+(q.m?' checked':'')+' style="accent-color:var(--warnc)"> Mark for review</label><button class="btn" id="cl"'+(q.a===null?' disabled':'')+'>Clear response</button></div><div class="ft" style="border:0;margin:0;padding-top:0"><div class="nv"><button class="btn" id="pv"'+(cur?'':' disabled')+'>Previous</button>'+(cur<N-1?'<button class="btn pri" id="nx">Save and next</button>':'<button class="btn ok" id="sb">Submit exam</button>')+'</div><button class="btn q" id="sb2">Submit exam</button></div>';
+$('qp').innerHTML=b;grid();stats()}
+$('qp').addEventListener('change',function(e){var q=qs[cur];if(e.target.name==='o'){q.a=+e.target.value;render()}if(e.target.id==='mk'){q.m=e.target.checked;render()}});
+$('qp').addEventListener('click',function(e){var q=qs[cur],id=e.target.id;if(id==='cl'){q.a=null;render()}if(id==='pv'){cur--;render()}if(id==='nx'){cur++;render()}if(id==='sb'||id==='sb2')openDlg();if(id==='sim'){q.up=true;q.a=-1;render()}if(id==='reup'){q.up=false;q.a=null;render()}});
+$('gr').addEventListener('click',function(e){var b=e.target.closest('.n');if(b){cur=+b.dataset.i;render()}});
+$('se').addEventListener('input',grid);
+var sec=265,t=$('t');function tick(){var m=Math.floor(sec/60),x=sec%60;t.textContent=(m<10?'0':'')+m+':'+(x<10?'0':'')+x;t.className='timer'+(sec<=60?' c':sec<=300?' w':'')}
+setInterval(function(){if(sec>0){sec--;tick()}},1000);tick();
+function toast(h,t,hi){var d=document.createElement('div');d.className='toast'+(hi?' hi':'');d.setAttribute('role','alert');d.innerHTML='<div><b>'+h+'</b>'+t+'</div><button class="x" aria-label="Dismiss">×</button>';d.querySelector('.x').onclick=function(){d.remove()};$('toasts').appendChild(d)}
+toast('Face not visible (2 times)','Camera may be covered or you left the frame. Logged at 22:36:29. 6 flags this session.',true);
+function rng(a){var o=[],i=0;while(i<a.length){var j=i;while(j+1<a.length&&a[j+1]===a[j]+1)j++;o.push(j>i+1?a[i]+'–'+a[j]:a.slice(i,j+1).join(', '));i=j+1}return o.join(', ')}
+function openDlg(){var s=stats(),u=[];qs.forEach(function(q,j){if(q.a===null)u.push(j+1)});$('dA').textContent=s.a;$('dU').textContent=N-s.a;$('dM').textContent=s.m;$('dl').textContent=u.length?'Unanswered: '+rng(u):'All questions answered.';$('dg').showModal()}
+$('dc').onclick=function(){$('dg').close()};$('dok').onclick=function(){$('dg').close();setBanner('Exam submitted. You can close this window.','good')};
+function setBanner(m,c){var b=$('banner');b.textContent=m;b.className=m?'on '+c:''}
 
-  const grid = document.getElementById("grid");
-  const unanswered = [9, 14, 22, 23, 24], review = [4, 21];
-  for (let i = 1; i <= 24; i++) {
-    const c = document.createElement("button");
-    c.className = "cell" + (unanswered.includes(i) ? "" : " done") + (review.includes(i) ? " flagged" : "") + (i === 7 ? " current" : "");
-    c.textContent = i;
-    grid.appendChild(c);
-  }
-
-  // decorative QR-like pattern
-  const svg = document.getElementById("qrsvg");
-  let seed = 7;
-  const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
-  const finder = (x, y) => `<rect x="${x}" y="${y}" width="7" height="7" fill="#1A1814"/><rect x="${x+1}" y="${y+1}" width="5" height="5" fill="#fff"/><rect x="${x+2}" y="${y+2}" width="3" height="3" fill="#1A1814"/>`;
-  let s = "";
-  for (let y = 0; y < 29; y++) for (let x = 0; x < 29; x++) {
-    const inFinder = (x < 8 && y < 8) || (x > 20 && y < 8) || (x < 8 && y > 20);
-    if (!inFinder && rnd() > 0.52) s += `<rect x="${x}" y="${y}" width="1" height="1" fill="#1A1814"/>`;
-  }
-  svg.innerHTML = s + finder(0, 0) + finder(22, 0) + finder(0, 22);
-
-  // live countdown
-  let left = 42 * 60 + 18;
-  const t = document.querySelector("#timer b");
-  setInterval(() => {
-    left = Math.max(0, left - 1);
-    const h = String(Math.floor(left / 3600)).padStart(2, "0");
-    const m = String(Math.floor(left % 3600 / 60)).padStart(2, "0");
-    const sec = String(left % 60).padStart(2, "0");
-    t.textContent = `${h}:${m}:${sec}`;
-  }, 1000);
-</script>
-</body>
-</html>
+/* setup screen */
+function pill(id,s){var p=$(id);p.className='pill '+(s==='ok'?'g':s==='bad'?'b':'pn');p.textContent=s==='ok'?'Allowed':s==='bad'?'Blocked':'Not allowed yet'}
+function setup(c,m,s,fix){pill('pc',c);pill('pm',m);pill('ps',s);$('fix').hidden=!fix;var all=c==='ok'&&m==='ok'&&s==='ok';$('contBtn').hidden=!all;$('allowBtn').hidden=all;$('srec').textContent=c==='ok'?'● Live':'Camera off'}
+function show(v){$('exam').hidden=v!=='exam';$('sv').hidden=$('t').hidden=v!=='exam';$('setup').hidden=v!=='setup';$('toasts').hidden=v!=='exam';$('view').value=v}
+$('allowBtn').onclick=function(){$('pd').showModal()};
+$('pallow').onclick=function(){$('pd').close();setup('ok','ok','ok',false)};
+$('pdeny').onclick=function(){$('pd').close();$('dd').showModal()};
+$('dback').onclick=function(){$('dd').close();$('pd').showModal()};
+$('view').onchange=function(){show(this.value);$('st').value=''};
+$('st').onchange=function(){var v=this.value,sv=$('sv');sv.innerHTML='<i></i>All changes saved';setBanner('','');['pd','dd','dg'].forEach(function(d){if($(d).open)$(d).close()});
+var c=$('cc');c.className='chip';c.lastElementChild.textContent='Connected';
+if(v==='off'){show('exam');sv.innerHTML='<i style="background:var(--warnc)"></i>Offline';setBanner('Connection lost. Your answers are stored on this device and will sync when you reconnect. Do not close this window.','warn')}
+if(v==='fail'){show('exam');sv.innerHTML='<i style="background:#E0857A"></i>Not saved';setBanner('Your last change could not be saved. Retrying automatically. Keep this window open.','bad')}
+if(v==='cam'){show('exam');c.className='chip b';c.lastElementChild.textContent='Blocked';setBanner('Camera access is blocked. Your invigilator has been notified. Allow the camera for Vignan Exam Browser in System Settings.','bad')}
+if(v==='end'){show('exam');sec=0;tick();setBanner('Time is up. Your answers have been submitted automatically.','bad')}
+if(v==='perm'){show('setup');setup('n','n','n',false);$('pd').showModal()}
+if(v==='denied'){show('setup');setup('n','n','n',false);$('dd').showModal()}
+if(v==='screenoff'){show('setup');setup('ok','ok','bad',true)}
+if(v==='ready'){show('setup');setup('ok','ok','ok',false)}};
+var h=location.hash.slice(1);
+render();
+if(h){var opt=[].some.call($('st').options,function(o){return o.value===h});if(opt){$('st').value=h;$('st').onchange()}else if(h==='setup'){show('setup')}else if(h==='submit'){openDlg()}else if(h==='written'){cur=3;render()}}
+})();
+</script></body></html>
