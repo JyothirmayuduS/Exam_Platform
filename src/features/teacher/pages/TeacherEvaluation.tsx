@@ -22,7 +22,6 @@ import {
 import useLiveAttempts from "@/features/teacher/hooks/useLiveAttempts";
 import useTeacherExams from "@/features/teacher/hooks/useTeacherExams";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
-import ProctorAI from "@/features/proctoring/components/ProctorAI";
 import AIIntegrityCard from "@/features/proctoring/components/AIIntegrityCard";
 import { RecordingReviewModal } from "@/features/proctoring/components/RecordingReview";
 import { uploadArtifactBlob, getArtifactObjectUrl } from "@/shared/services/examStorage";
@@ -529,8 +528,6 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
   const cam = useEvaluatorCamera();
   const [manualScores, setManualScores] = useState<Record<string, number>>({});
   const [feedback, setFeedback] = useState<Record<string, string>>({});
-  const [pipMin, setPipMin] = useState(false);
-  const [showDelegateModal, setShowDelegateModal] = useState(false);
   const [reviewRec, setReviewRec] = useState<{ attemptId: string; roll: string; name: string } | null>(null);
 
   const cid = candidate.id;
@@ -611,52 +608,60 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
     notify("Flagged for moderation — logged in the violation report.");
   };
 
+  const manualDone = manualQs.length - unscored.length;
+  const openRecording = () => setReviewRec({ attemptId: candidate.id, roll: candidate.roll, name: candidate.name });
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-paper">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line bg-paper-raised px-5 py-3 lg:px-8">
-        <div className="flex min-w-0 items-center gap-4">
-          <button onClick={onClose} className="shrink-0 border border-line-strong px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">← Roster</button>
-          <div className="min-w-0"><p className="font-mono text-[10px] uppercase tracking-widest text-forest">Evaluation session · monitored</p><h2 className="truncate font-serif text-lg font-semibold">{candidate.name} <span className="font-mono text-[11px] font-normal text-ink-soft">{candidate.roll}</span></h2></div>
+      <header className="flex shrink-0 items-center gap-4 border-b border-line bg-paper-raised px-4 py-2.5 lg:px-6">
+        <button onClick={onClose} className="shrink-0 border border-line-strong px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft hover:border-forest hover:text-ink">← Roster</button>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate font-serif text-lg font-semibold leading-tight">
+            {candidate.name} <span className="font-mono text-[11px] font-normal text-ink-soft">{candidate.roll}</span>
+          </h2>
+          <p className="truncate font-mono text-[10px] uppercase tracking-wider text-ink-soft">
+            {candidate.exam} · submitted {candidate.submittedAgo}
+            {candidate.flags.length > 0 && <span className="text-alert"> · {candidate.flags.length} proctoring flags</span>}
+          </p>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
-          <div className="flex items-center gap-1">
-            <button onClick={() => prevCand && onNavigate(prevCand.id)} disabled={!prevCand} title={prevCand ? `Previous · ${prevCand.name}` : "First in queue"} className="border border-line-strong px-2.5 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft enabled:hover:border-forest enabled:hover:text-ink disabled:opacity-40">‹ Prev</button>
-            <span className="px-1.5 font-mono text-[10px] text-ink-soft" title="Position in grading queue">{position} / {queue.length}</span>
-            <button onClick={() => nextCand && onNavigate(nextCand.id)} disabled={!nextCand} title={nextCand ? `Next · ${nextCand.name}` : "Last in queue"} className="border border-line-strong px-2.5 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft enabled:hover:border-forest enabled:hover:text-ink disabled:opacity-40">Next ›</button>
-          </div>
-          <div className="hidden text-right sm:block"><p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Running score</p><p className="font-serif text-lg">{awarded} <span className="text-[12px] text-ink-soft">/ {max}</span></p></div>
-          <RecPill state={cam.state} seconds={cam.seconds} />
+        <div className="hidden items-center gap-1 md:flex">
+          <button onClick={() => prevCand && onNavigate(prevCand.id)} disabled={!prevCand} title={prevCand ? `Previous · ${prevCand.name}` : "First in queue"} className="border border-line-strong px-2.5 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft enabled:hover:border-forest enabled:hover:text-ink disabled:opacity-40">‹</button>
+          <span className="px-2 font-mono text-[10px] tabular-nums text-ink-soft" title="Position in grading queue">{position} of {queue.length}</span>
+          <button onClick={() => nextCand && onNavigate(nextCand.id)} disabled={!nextCand} title={nextCand ? `Next · ${nextCand.name}` : "Last in queue"} className="border border-line-strong px-2.5 py-2 font-mono text-[10px] uppercase tracking-wider text-ink-soft enabled:hover:border-forest enabled:hover:text-ink disabled:opacity-40">›</button>
+        </div>
+        <div className="shrink-0 border-l border-line pl-4 text-right">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Score</p>
+          <p className="font-serif text-xl leading-tight tabular-nums">{awarded}<span className="text-[13px] text-ink-soft"> / {max}</span></p>
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto xl:flex-row xl:overflow-hidden">
-        <main className="min-w-0 px-5 py-7 lg:px-10 xl:flex-1 xl:overflow-y-auto">
-          <div className="mx-auto max-w-3xl">
-            <div className="flex items-center justify-between"><p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">{candidate.exam}</p><p className="font-mono text-[10px] text-ink-soft">Submitted {candidate.submittedAgo}</p></div>
-            <h1 className="mt-2 font-serif text-3xl font-semibold">Answer paper</h1>
-            {candidate.flags.length > 0 && <IntegrityBanner flags={candidate.flags} onOpenRecording={() => setReviewRec({ attemptId: candidate.id, roll: candidate.roll, name: candidate.name })} />}
-            <QuestionStrip paper={paper} cid={cid} manualScores={manualScores} onJump={jumpTo} />
-            <div className="mt-5 space-y-5">
-              {paper.map((q) => (
-                <QuestionCard
-                  key={q.id} q={q} cid={cid} manualScores={manualScores} feedback={feedback} setScore={setScore} setFeedback={setFb}
-                  commentRequired={commentsMandatory && !commented.has(String(q.id))}
-                  showMissing={showMissing}
-                  onCommentSaved={() => setCommented((cur) => new Set(cur).add(String(q.id)))}
-                />
-              ))}
-            </div>
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[210px_minmax(0,1fr)_330px] lg:overflow-hidden">
+        <nav aria-label="Questions" className="hidden border-r border-line bg-paper-raised lg:block lg:overflow-y-auto">
+          <QuestionNav paper={paper} cid={cid} manualScores={manualScores} onJump={jumpTo} manualDone={manualDone} manualCount={manualQs.length} />
+        </nav>
+
+        <main className="min-w-0 px-5 py-6 lg:overflow-y-auto lg:px-10">
+          <div className="mx-auto max-w-3xl space-y-5">
+            {paper.map((q) => (
+              <QuestionCard
+                key={q.id} q={q} cid={cid} manualScores={manualScores} feedback={feedback} setScore={setScore} setFeedback={setFb}
+                commentRequired={commentsMandatory && !commented.has(String(q.id))}
+                showMissing={showMissing}
+                onCommentSaved={() => setCommented((cur) => new Set(cur).add(String(q.id)))}
+              />
+            ))}
+            {paper.length === 0 && <p className="py-16 text-center text-[13px] text-ink-soft">This paper has no questions.</p>}
           </div>
         </main>
 
-        <aside className="w-full border-t border-line bg-paper-raised xl:w-[340px] xl:shrink-0 xl:overflow-y-auto xl:border-l xl:border-t-0">
-          <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} blockers={blockers} saving={savingGrade} commentsMandatory={commentsMandatory} onFinish={() => void finish(false)} onFinishNext={() => void finish(true)} onDelegate={() => setShowDelegateModal(true)} onFlagModeration={flagModeration} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
-          <div className="mt-4"><AIIntegrityCard attemptId={cid} /></div>
-          <CandidateFacts candidate={candidate} />
+        <aside className="border-t border-line bg-paper-raised lg:overflow-y-auto lg:border-l lg:border-t-0">
+          <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} blockers={blockers} saving={savingGrade} commentsMandatory={commentsMandatory} onFinish={() => void finish(false)} onFinishNext={() => void finish(true)} onFlagModeration={flagModeration} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
+          <IntegrityPanel flags={candidate.flags} onOpenRecording={openRecording} />
+          <div className="border-b border-line p-4"><AIIntegrityCard attemptId={cid} /></div>
+          <EvaluatorCamera cam={cam} profileName={profileName} />
         </aside>
       </div>
 
-      <CameraPip cam={cam} minimized={pipMin} onToggle={() => setPipMin((v) => !v)} profileName={profileName} notify={notify} />
       {reviewRec && (
         <RecordingReviewBridge
           attemptId={reviewRec.attemptId}
@@ -691,68 +696,34 @@ function RecordingReviewBridge({ attemptId, roll, name, onClose }: {
   return <RecordingReviewModal examId={examId} roll={roll} name={name} violations={violations} onClose={onClose} />;
 }
 
-function RecPill({ state, seconds }: { state: CamState; seconds: number }) {
-  const live = state === "live";
-  return (
-    <div className={`flex items-center gap-2 border px-3 py-2 ${live ? "border-alert/40 bg-alert/5" : "border-line-strong bg-paper"}`}>
-      <span className={`h-2 w-2 rounded-none ${live ? "animate-pulse bg-alert" : "bg-ink-soft"}`} />
-      <span className="font-mono text-[10px] uppercase tracking-wider text-ink-soft">{live ? "Rec" : state === "connecting" ? "Cam…" : "Cam off"}</span>
-      {live && <span className="tabular font-mono text-[11px] text-ink">{fmt(seconds)}</span>}
-    </div>
-  );
-}
-
-function CameraPip({ cam, minimized, onToggle, profileName, notify }: { cam: ReturnType<typeof useEvaluatorCamera>; minimized: boolean; onToggle: () => void; profileName: string; notify: (m: string) => void }) {
-  const { videoRef, state, seconds, stream } = cam;
-  const [faceWarning, setFaceWarning] = useState(false);
+/** Self-view of the evaluator's camera. Display only: no AI checks run on the evaluator. */
+function EvaluatorCamera({ cam, profileName }: { cam: ReturnType<typeof useEvaluatorCamera>; profileName: string }) {
+  const { videoRef, state } = cam;
+  const [hidden, setHidden] = useState(false);
   const showVideo = state === "connecting" || state === "live";
-  const status = state === "live" ? `Rec ${fmt(seconds)}` : state === "connecting" ? "Connecting" : state === "denied" ? "Blocked" : "Camera off";
   return (
-    <div className="absolute bottom-4 left-4 z-40 w-[210px] overflow-hidden border border-[#30493a] bg-[#1f3027] shadow-[0_12px_30px_-12px_rgba(0,0,0,0.5)] sm:w-[240px]">
-      <div className="flex items-center justify-between bg-[#223528] px-2.5 py-1.5">
-        <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-wider text-paper/85">
-          <span className={`h-1.5 w-1.5 rounded-none ${state === "live" ? "animate-pulse bg-alert" : "bg-paper/50"}`} />
-          {status}
-        </span>
-        <button onClick={onToggle} className="px-1 font-mono text-[12px] leading-none text-paper/70 hover:text-paper" title={minimized ? "Expand self-view" : "Minimize self-view"}>{minimized ? "▢" : "—"}</button>
+    <section className="p-4">
+      <div className="flex items-center justify-between">
+        <p className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+          <span className={`h-1.5 w-1.5 ${state === "live" ? "bg-success" : "bg-ink-soft"}`} />
+          Your camera
+        </p>
+        {showVideo && <button onClick={() => setHidden((v) => !v)} className="font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:text-ink">{hidden ? "Show" : "Hide"}</button>}
       </div>
-      <div className={minimized ? "hidden" : "relative aspect-video"}>
-        {showVideo ? (
-          <>
-            <video ref={videoRef} autoPlay playsInline muted className={`h-full w-full -scale-x-100 object-cover ${faceWarning ? 'opacity-30' : ''}`} />
-            {stream && (
-              <ProctorAI
-                cameraStream={stream}
-                active={state === "live"}
-                onViolation={(v) => {
-                  if (v.type === "no_face" || v.type === "partial_face") setFaceWarning(true);
-                  if (v.type !== "gaze_away") {
-                    notify(`AI Alert: ${v.label}`);
-                  }
-                }}
-                onStatus={(s) => {
-                  if (s.faceCount > 0) setFaceWarning(false);
-                }}
-              />
-            )}
-            {faceWarning && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-alert/90 p-3 text-center text-paper">
-                <p className="font-serif text-[14px] font-medium leading-tight text-white">Face not detected</p>
-                <p className="mt-1 font-mono text-[9px] uppercase tracking-wider text-paper/80">Please stay in frame</p>
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="flex h-full flex-col items-center justify-center px-3 text-center text-paper">
-            <span className="flex h-8 w-8 items-center justify-center rounded-none border border-paper/40 font-serif text-[13px]">V</span>
-            <p className="mt-2 font-mono text-[9px] uppercase tracking-wider text-paper/80">{state === "denied" ? "Camera blocked" : "No camera"}</p>
-            {(state === "denied" || state === "unavailable") && <button onClick={cam.retry} className="mt-2 border border-paper/40 px-2 py-1 font-mono text-[8px] uppercase tracking-wider text-paper/90 hover:bg-paper/10">Enable camera</button>}
-          </div>
-        )}
-        {state === "connecting" && <div className="absolute inset-0 flex items-center justify-center bg-[#1f3027]/70 font-mono text-[9px] uppercase tracking-wider text-paper/80">Starting camera…</div>}
-        <span className="absolute bottom-1.5 right-1.5 bg-ink/70 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper">Evaluator · {profileName}</span>
-      </div>
-    </div>
+      {showVideo ? (
+        <div className={hidden ? "hidden" : "relative mt-3 aspect-video overflow-hidden border border-line bg-ink"}>
+          <video ref={videoRef} autoPlay playsInline muted className="h-full w-full -scale-x-100 object-cover" />
+          {state === "connecting" && <div className="absolute inset-0 flex items-center justify-center font-mono text-[9px] uppercase tracking-wider text-paper/80">Starting camera…</div>}
+          <span className="absolute bottom-1.5 left-1.5 bg-ink/70 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider text-paper">{profileName}</span>
+        </div>
+      ) : (
+        <div className="mt-3 flex items-center justify-between gap-3 border border-line px-3 py-2.5 text-[12px] text-ink-soft">
+          {state === "denied" ? "Camera blocked in browser" : "No camera available"}
+          {(state === "denied" || state === "unavailable") && <button onClick={cam.retry} className="font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">Try again</button>}
+        </div>
+      )}
+      <p className="mt-2 text-[11px] text-ink-soft">Shown only to you. Nothing is recorded or analysed.</p>
+    </section>
   );
 }
 
@@ -760,7 +731,7 @@ function flagName(f: Flag): string {
   return f.label.replace(/^\[[^\]]+\]\s*/, "").replace(/\s*\([^)]*\)\s*$/, "").replace(/\s+—.*$/, "").trim() || f.type || "Flag";
 }
 
-function IntegrityBanner({ flags, onOpenRecording }: { flags: Flag[]; onOpenRecording: () => void }) {
+function IntegrityPanel({ flags, onOpenRecording }: { flags: Flag[]; onOpenRecording: () => void }) {
   const [open, setOpen] = useState(false);
   const groups = useMemo(() => {
     const m = new Map<string, { name: string; count: number; critical: number }>();
@@ -775,62 +746,84 @@ function IntegrityBanner({ flags, onOpenRecording }: { flags: Flag[]; onOpenReco
   }, [flags]);
   const critical = flags.filter((f) => f.severity === "critical").length;
   return (
-    <section className="mt-5 border border-line bg-paper">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-l-2 border-alert px-4 py-3">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-alert">Proctoring · check before you finalise</p>
-          <p className="mt-0.5 text-[13px]">
-            <span className="font-medium tabular-nums">{flags.length}</span> flag{flags.length === 1 ? "" : "s"}
-            {critical > 0 && <> · <span className="tabular-nums text-alert">{critical} high severity</span></>}
-            <span className="text-ink-soft"> · {flags[0]?.at?.replace(/^at /, "")} to {flags[flags.length - 1]?.at?.replace(/^at /, "")}</span>
+    <section className="border-b border-line p-4">
+      <div className="flex items-center justify-between">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exam integrity</p>
+        <button onClick={onOpenRecording} className="font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">Watch recording →</button>
+      </div>
+      {flags.length === 0 ? (
+        <p className="mt-2 text-[12.5px] text-success">No proctoring flags during the exam.</p>
+      ) : (
+        <>
+          <p className="mt-2 text-[13px]">
+            <span className="font-medium tabular-nums">{flags.length}</span> flags
+            {critical > 0 && <span className="text-alert"> · {critical} high severity</span>}
           </p>
-        </div>
-        <button onClick={onOpenRecording} className="shrink-0 border border-alert px-3 py-2 font-mono text-[9px] uppercase tracking-wider text-alert hover:bg-alert/10">Open recording</button>
-      </div>
-      <div className="flex flex-wrap gap-1.5 border-t border-line px-4 py-3">
-        {groups.map((g) => (
-          <span key={g.name} className={`inline-flex items-center gap-1.5 border px-2 py-1 text-[11.5px] ${g.critical ? "border-alert/40 text-alert" : "border-line text-ink"}`}>
-            <span className={`h-1.5 w-1.5 ${g.critical ? "bg-alert" : "bg-amber"}`} />
-            {g.name}
-            <span className="font-mono text-[10px] tabular-nums text-ink-soft">×{g.count}</span>
-          </span>
-        ))}
-      </div>
-      <button onClick={() => setOpen((v) => !v)} className="w-full border-t border-line px-4 py-2 text-left font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:text-ink">
-        {open ? "Hide timeline ▴" : `Show full timeline (${flags.length}) ▾`}
-      </button>
-      {open && (
-        <ol className="max-h-72 overflow-y-auto border-t border-line">
-          {flags.map((f, i) => (
-            <li key={i} className="flex items-center gap-3 border-b border-line/60 px-4 py-1.5 text-[12px] last:border-0">
-              <span className="w-14 shrink-0 font-mono text-[10px] tabular-nums text-ink-soft">{f.at?.replace(/^at /, "")}</span>
-              <span className={`h-1.5 w-1.5 shrink-0 ${f.severity === "critical" ? "bg-alert" : "bg-amber"}`} />
-              <span className="min-w-0 truncate" title={f.label}>{f.label.replace(/^\[[^\]]+\]\s*/, "")}</span>
-            </li>
-          ))}
-        </ol>
+          <ul className="mt-2 space-y-1">
+            {groups.map((g) => (
+              <li key={g.name} className="flex items-center justify-between gap-2 text-[12px]">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className={`h-1.5 w-1.5 shrink-0 ${g.critical ? "bg-alert" : "bg-amber"}`} />
+                  <span className="truncate" title={g.name}>{g.name}</span>
+                </span>
+                <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink-soft">{g.count}</span>
+              </li>
+            ))}
+          </ul>
+          <button onClick={() => setOpen((v) => !v)} className="mt-3 font-mono text-[9px] uppercase tracking-wider text-ink-soft hover:text-ink">
+            {open ? "Hide timeline ▴" : "Show timeline ▾"}
+          </button>
+          {open && (
+            <ol className="mt-2 max-h-64 overflow-y-auto border border-line bg-paper">
+              {flags.map((f, i) => (
+                <li key={i} className="flex items-center gap-2 border-b border-line/60 px-2.5 py-1.5 text-[11.5px] last:border-0">
+                  <span className="w-11 shrink-0 font-mono text-[10px] tabular-nums text-ink-soft">{f.at?.replace(/^at /, "")}</span>
+                  <span className={`h-1.5 w-1.5 shrink-0 ${f.severity === "critical" ? "bg-alert" : "bg-amber"}`} />
+                  <span className="min-w-0 truncate" title={f.label}>{flagName(f)}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
       )}
     </section>
   );
 }
 
-function QuestionStrip({ paper, cid, manualScores, onJump }: { paper: Question[]; cid: string; manualScores: Record<string, number>; onJump: (qid: string) => void }) {
+function QuestionNav({ paper, cid, manualScores, onJump, manualDone, manualCount }: {
+  paper: Question[]; cid: string; manualScores: Record<string, number>; onJump: (qid: string) => void; manualDone: number; manualCount: number;
+}) {
   return (
-    <div className="sticky top-0 z-10 -mx-1 mt-6 flex flex-wrap items-center gap-1.5 border-b border-line bg-paper px-1 py-3">
-      <span className="mr-1 font-mono text-[9px] uppercase tracking-widest text-ink-soft">Jump to</span>
-      {paper.map((q) => {
-        const auto = isAuto(q);
-        const scored = manualScores[key(cid, q.id)] != null;
-        const tone = auto
-          ? q.verdict === "correct" ? "border-success/50 text-success" : q.verdict === "wrong" ? "border-alert/50 text-alert" : "border-line text-ink-soft"
-          : scored ? "border-forest bg-forest text-paper" : "border-amber bg-amber/10 text-amber";
-        const title = auto ? `Q${q.no} · auto · ${q.verdict}` : scored ? `Q${q.no} · scored` : `Q${q.no} · needs your score`;
-        return <button key={q.id} onClick={() => onJump(q.id)} title={title} className={`h-7 min-w-[28px] border px-1.5 font-mono text-[10px] tabular-nums ${tone}`}>{q.no}</button>;
-      })}
-      <span className="ml-auto hidden gap-3 font-mono text-[9px] uppercase tracking-wider text-ink-soft sm:flex">
-        <span><span className="mr-1 inline-block h-2 w-2 bg-amber/60" />To score</span>
-        <span><span className="mr-1 inline-block h-2 w-2 bg-forest" />Scored</span>
-      </span>
+    <div className="p-4">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Questions</p>
+      {manualCount > 0 && (
+        <div className="mt-3">
+          <p className="text-[12px]"><span className="font-medium tabular-nums">{manualDone}</span> of {manualCount} written answers scored</p>
+          <div className="mt-1.5 h-1 bg-line"><div className="h-full bg-forest" style={{ width: `${(manualDone / manualCount) * 100}%` }} /></div>
+        </div>
+      )}
+      <ol className="mt-4 space-y-1">
+        {paper.map((q) => {
+          const auto = isAuto(q);
+          const scored = manualScores[key(cid, q.id)] != null;
+          const value = auto ? autoScore(q) : scored ? manualScores[key(cid, q.id)] : null;
+          const status = auto
+            ? q.verdict === "correct" ? { text: "Correct", tone: "text-success" } : q.verdict === "wrong" ? { text: "Wrong", tone: "text-alert" } : { text: "Skipped", tone: "text-ink-soft" }
+            : scored ? { text: "Scored", tone: "text-forest" } : { text: "To score", tone: "text-amber" };
+          return (
+            <li key={q.id}>
+              <button onClick={() => onJump(q.id)} className={`flex w-full items-center gap-2.5 border px-2.5 py-2 text-left hover:border-forest ${!auto && !scored ? "border-amber/50 bg-amber/5" : "border-transparent"}`}>
+                <span className="w-5 shrink-0 font-mono text-[11px] tabular-nums text-ink-soft">{q.no}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px]">{typeLabel(q.type)}</span>
+                  <span className={`block font-mono text-[9px] uppercase tracking-wider ${status.tone}`}>{status.text}</span>
+                </span>
+                <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink-soft">{value ?? "–"}/{q.marks}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }
@@ -850,7 +843,7 @@ function QuestionCard({ q, cid, manualScores, feedback, setScore, setFeedback, c
   const badge = auto ? autoBadge : scored ? `Scored · ${score}/${q.marks}` : "Needs review";
   const badgeTone = auto ? (full ? "text-success" : score <= 0 ? "text-alert" : "text-amber") : scored ? "text-forest" : "text-amber";
   return (
-    <section id={`q-${q.id}`} className={`scroll-mt-16 border bg-paper ${showMissing && !auto && !scored ? "border-amber" : "border-line"}`}>
+    <section id={`q-${q.id}`} className={`scroll-mt-6 border bg-paper ${showMissing && !auto && !scored ? "border-amber" : "border-line"}`}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper-raised px-4 py-3">
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Question {q.no} · {typeLabel(q.type)} · {q.marks} marks</p>
         <span className={`font-mono text-[10px] uppercase tracking-wider ${badgeTone}`}>{auto ? "◆ " : ""}{badge}</span>
@@ -1219,10 +1212,10 @@ function VoicePlayButton({ voiceKey }: { voiceKey: string }) {
   return <audio controls src={url} className="h-8 w-44" />;
 }
 
-function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount, blockers, saving, commentsMandatory, onFinish, onFinishNext, onDelegate, onFlagModeration, hasNext, nextName }: {
+function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount, blockers, saving, commentsMandatory, onFinish, onFinishNext, onFlagModeration, hasNext, nextName }: {
   awarded: number; max: number; autoTotal: number; manualTotal: number; gradedManual: number; manualCount: number;
   blockers: string[]; saving: boolean; commentsMandatory: boolean;
-  onFinish: () => void; onFinishNext: () => void; onDelegate: () => void; onFlagModeration: () => void; hasNext: boolean; nextName?: string;
+  onFinish: () => void; onFinishNext: () => void; onFlagModeration: () => void; hasNext: boolean; nextName?: string;
 }) {
   const done = blockers.length === 0;
   return (
@@ -1239,29 +1232,12 @@ function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manu
       <div className="mt-4 grid gap-2">
         {hasNext && <button onClick={onFinishNext} disabled={saving} className={`border border-forest bg-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-light disabled:opacity-50 ${done ? "" : "opacity-60"}`}>{saving ? "Saving…" : <>Save &amp; next / {nextName}</>}</button>}
         <button onClick={onFinish} disabled={saving} className={`border border-forest px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-success/5 disabled:opacity-50 ${done ? "" : "opacity-60"}`}>{saving ? "Saving…" : hasNext ? "Save & close" : "Save & finish"}</button>
-        <button onClick={onDelegate} className="border border-line-strong px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-ink hover:border-forest hover:text-forest">Delegate for cross-check</button>
         <button onClick={onFlagModeration} className="border border-alert/50 text-alert bg-alert/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider hover:bg-alert/10">Flag for Moderation</button>
       </div>
     </div>
   );
 }
 
-function CandidateFacts({ candidate }: { candidate: Candidate }) {
-  return (
-    <div className="p-4">
-      <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Candidate</p>
-      <div className="mt-3 flex items-center gap-3">
-        <span className="flex h-10 w-10 items-center justify-center border border-line-strong font-serif text-ink-soft">{candidate.initials}</span>
-        <div><p className="font-serif text-[15px] font-medium">{candidate.name}</p><p className="font-mono text-[10px] text-ink-soft">{candidate.roll}</p></div>
-      </div>
-      <div className="mt-4 space-y-2 text-[12px]">
-        <Row label="Exam" value={candidate.exam} />
-        <Row label="Submitted" value={candidate.submittedAgo} />
-        <Row label="Proctoring" value={candidate.flags.length ? `${candidate.flags.length} flag(s)` : "Clean"} />
-      </div>
-    </div>
-  );
-}
 
 
 
