@@ -32,6 +32,7 @@ export default function ProctorCamera({
   const [state, setState] = useState<ProctorState>("connecting");
   const [retryCount, setRetryCount] = useState(0);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const handleRef = useRef<ProctorHandle | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   // True when localStreamRef holds tracks WE created (must stop on teardown);
@@ -77,21 +78,29 @@ export default function ProctorCamera({
     // is caught and handled gracefully instead of propagating as an unhandled
     // promise rejection that leaves the component in an undefined state.
     let handle: Awaited<ReturnType<typeof startProctorPublishing>> = null;
+    // State events count only while this attempt is the current one.
+    const onState = (s: ProctorState) => { if (gen === connectGen.current) setState(s); };
+    const publishing = startProctorPublishing({ room, identity, screenStream, localStream: initialStream, onState });
     try {
       // Race the connect against a 15-second timeout so we never wait forever
       // on a hung LiveKit server (e.g., during maintenance).
       const CONNECT_TIMEOUT_MS = 15_000;
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Proctor connection timed out after 15s")), CONNECT_TIMEOUT_MS)
-      );
-      handle = await Promise.race([
-        startProctorPublishing({ room, identity, screenStream, localStream: initialStream, onState: setState }),
-        timeoutPromise,
-      ]);
+      let timer = 0;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error("Proctor connection timed out after 15s")), CONNECT_TIMEOUT_MS);
+      });
+      try {
+        handle = await Promise.race([publishing, timeoutPromise]);
+      } finally {
+        window.clearTimeout(timer);
+      }
     } catch (err) {
+      // A connect that lost the race may still finish later; nobody owns it.
+      publishing.then((late) => late?.stop(), () => {});
       if (gen !== connectGen.current) return;
       // Classify the error so the logs are actionable.
       const message = err instanceof Error ? err.message : String(err);
+      setLinkError(message);
       const isAuth    = message.toLowerCase().includes("auth") || message.toLowerCase().includes("permission");
       const isTimeout = message.toLowerCase().includes("timed out");
       const category  = isAuth ? "auth" : isTimeout ? "timeout" : "network";
@@ -127,6 +136,7 @@ export default function ProctorCamera({
       return;
     }
     handleRef.current = handle;
+    setLinkError(handle ? null : "live video is not configured");
 
     if (handle?.stream) {
       if (!localStreamRef.current) {
@@ -205,14 +215,18 @@ export default function ProctorCamera({
 
   // Auto-reconnect when camera dies
   useEffect(() => {
-    if (state !== "disconnected") return;
-    const delay = Math.min(2000 * (retryCount + 1), 10000); // 2s, 4s, 6s… max 10s
+    // Local-only after a failed video link keeps retrying, more slowly.
+    const linkDown = state === "local-only" && linkError !== null;
+    if (state !== "disconnected" && !linkDown) return;
+    const delay = linkDown
+      ? Math.min(5000 * (retryCount + 1), 30000)
+      : Math.min(2000 * (retryCount + 1), 10000); // 2s, 4s, 6s… max 10s
     const id = setTimeout(() => {
       setRetryCount((c) => c + 1);
       void connect();
     }, delay);
     return () => clearTimeout(id);
-  }, [state, retryCount, connect]);
+  }, [state, retryCount, connect, linkError]);
 
   // Per-second proctoring screenshot capture & Video Recording
   useEffect(() => {
@@ -349,7 +363,7 @@ export default function ProctorCamera({
 
   const label =
     state === "connected" ? "Proctor live" :
-    state === "local-only" ? "Camera on" :
+    state === "local-only" ? (linkError ? "Camera on · proctor link down" : "Camera on") :
     state === "reconnecting" ? `Reconnecting (${retryCount})…` :
     state === "disconnected" ? "Camera lost" :
     "Connecting…";
@@ -397,6 +411,11 @@ export default function ProctorCamera({
           <span className="font-mono text-[9px] text-alert">Retrying…</span>
         )}
       </div>
+      {linkError && state !== "connected" && (
+        <p className="px-0.5 font-mono text-[9px] leading-snug text-alert" title={linkError}>
+          Video link failed: {linkError.length > 90 ? `${linkError.slice(0, 90)}…` : linkError}
+        </p>
+      )}
 
       {/* Proctor message notification */}
       {lastMessage && (

@@ -21,7 +21,8 @@ export type ProctorHandle = {
   stop: () => void;
 };
 
-/** Ask the Edge Function for a short-lived LiveKit access token. */
+/** Ask the Edge Function for a short-lived LiveKit access token. Throws with a
+ *  readable reason (shown on the camera tile) instead of failing silently. */
 export async function fetchProctorToken(
   room: string,
   identity: string,
@@ -31,9 +32,17 @@ export async function fetchProctorToken(
   const { data, error } = await db.functions.invoke("livekit-token", {
     body: { room, identity, canPublish: true, canSubscribe: false },
   });
-  if (error || !data?.token) return null;
+  if (error) {
+    let detail = error.message;
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.text === "function") {
+      try { detail = `${ctx.status} ${(await ctx.text()).slice(0, 160)}`; } catch { /* body already read */ }
+    }
+    throw new Error(`video token request failed: ${detail}`);
+  }
+  if (!data?.token) throw new Error("video token request returned no token");
   const url = resolveLivekitUrl(data.url as string | undefined, env.livekitUrl);
-  if (!url) return null;
+  if (!url) throw new Error("no LiveKit server URL configured");
   return { token: data.token as string, url };
 }
 
@@ -65,10 +74,14 @@ export async function startProctorPublishing(opts: {
   if (!creds) return null;
 
   const room = new Room({ adaptiveStream: true, dynacast: true });
-  opts.onState?.("connecting");
-  room.on(RoomEvent.Reconnecting, () => opts.onState?.("reconnecting"));
-  room.on(RoomEvent.Reconnected, () => opts.onState?.("connected"));
-  room.on(RoomEvent.Disconnected, () => opts.onState?.("disconnected"));
+  // A room we tore down ourselves must not report "disconnected": the caller
+  // treats that as a dropped link and reconnects, killing its newer room.
+  let stopped = false;
+  const report = (s: ProctorState) => { if (!stopped) opts.onState?.(s); };
+  report("connecting");
+  room.on(RoomEvent.Reconnecting, () => report("reconnecting"));
+  room.on(RoomEvent.Reconnected, () => report("connected"));
+  room.on(RoomEvent.Disconnected, () => report("disconnected"));
 
   // MediaStreamTracks WE own (created or cloned) — stopped on teardown. The
   // caller's original stream tracks are NEVER stopped.
@@ -137,7 +150,7 @@ export async function startProctorPublishing(opts: {
     // so the proctor grid can show each candidate's screen next to their camera.
     // A screen failure is logged but never takes down the camera feed.
     await attemptPublish(opts.screenStream?.getVideoTracks()[0], Track.Source.ScreenShare, "screen");
-    opts.onState?.("connected");
+    report("connected");
 
     // The published local stream: caller's stream when reused (preview keeps
     // working even though LiveKit encodes the clones), else the tracks we
@@ -149,16 +162,19 @@ export async function startProctorPublishing(opts: {
       room,
       stream: published ?? null,
       stop: () => {
+        stopped = true;
         void room.disconnect();
         for (const t of ownedTracks) t.stop();
         ownedTracks = [];
       },
     };
   } catch (err) {
-    // Connect / camera / publish failed — tear down and let the caller fall back
-    // to a local-only preview instead of throwing an unhandled rejection.
+    // Connect / camera / publish failed — tear down and let the caller fall
+    // back to a local-only preview, showing why.
+    stopped = true;
     void room.disconnect();
+    for (const t of ownedTracks) t.stop();
     console.warn("[proctor] LiveKit publishing failed, falling back to local-only:", err);
-    return null;
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }

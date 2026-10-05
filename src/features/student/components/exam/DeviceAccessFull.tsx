@@ -26,6 +26,9 @@ type DeviceAccessFullProps = {
   onReRequest?: () => void;
   /** Open the OS privacy pane for the blocked device. */
   onOpenMediaSettings?: (kind: "camera" | "microphone" | "screen") => void;
+  /** macOS Screen Recording is off; it only applies after a restart of the exam browser. */
+  screenNeedsRestart?: boolean;
+  onRestart?: () => void;
   previewRef: RefObject<HTMLVideoElement | null>;
   onRequest: () => void;
   onScreenGranted?: (stream: MediaStream) => void;
@@ -44,15 +47,23 @@ export default function DeviceAccessFull({
   inKiosk = false,
   onReRequest,
   onOpenMediaSettings,
+  screenNeedsRestart = false,
+  onRestart,
   previewRef,
   onRequest,
-  onScreenGranted,
   onContinue,
   onExit,
 }: DeviceAccessFullProps) {
   const audio = useAudioTest();
   const [risks, setRisks] = useState<DeviceRisk[]>([]);
   const [scanDone, setScanDone] = useState(false);
+  const untouched = cam === "idle" && mic === "idle" && screen === "idle";
+  const [prompt, setPrompt] = useState<"ask" | "declined" | null>(untouched ? "ask" : null);
+
+  const allowAll = () => {
+    setPrompt(null);
+    onRequest();
+  };
 
   // Run device detection scan once cam is granted
   useEffect(() => {
@@ -148,16 +159,53 @@ export default function DeviceAccessFull({
                 )}
               </div>
             )}
+
+            {screen === "denied" && inKiosk && screenNeedsRestart && (
+              <div className="border border-alert/40 bg-alert/5 p-3 text-[12px]">
+                <p className="mb-1 font-mono text-[10px] uppercase tracking-wider text-alert">Screen recording is off</p>
+                <ol className="mb-3 list-decimal space-y-0.5 pl-4 text-soft">
+                  <li>Click <strong>Open screen settings</strong></li>
+                  <li>Turn on <strong>Vignan Exam Browser</strong> under Screen &amp; System Audio Recording</li>
+                  <li>Come back and click <strong>Restart exam browser</strong> (macOS applies it only after a restart)</li>
+                </ol>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => onOpenMediaSettings?.("screen")}
+                    className="border border-alert bg-alert/10 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/20"
+                  >
+                    Open screen settings
+                  </button>
+                  {onRestart && (
+                    <button
+                      onClick={onRestart}
+                      className="border border-forest bg-forest px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest/90"
+                    >
+                      Restart exam browser
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
         <button
-          onClick={onRequest}
+          onClick={allowAll}
           disabled={requesting}
           className="w-full border border-line py-3 font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-raised disabled:opacity-60"
         >
           {requesting ? "Requesting access…" : "Allow camera, microphone & screen"}
         </button>
+
+        {prompt && (
+          <PermissionPrompt
+            declined={prompt === "declined"}
+            onAllow={allowAll}
+            onDeny={() => setPrompt("declined")}
+            onReview={() => setPrompt("ask")}
+            onExit={onExit}
+          />
+        )}
 
         {/* ── Audio level test ── */}
         {mic === "granted" && (
@@ -243,6 +291,64 @@ export default function DeviceAccessFull({
         >
           {!devicesReady ? "Grant permissions to continue" : blockers.length > 0 ? "Resolve issues to continue" : <><span>Continue</span><FiArrowRight aria-hidden /></>}
         </button>
+      </div>
+    </div>
+  );
+}
+
+function PermissionPrompt({
+  declined,
+  onAllow,
+  onDeny,
+  onReview,
+  onExit,
+}: {
+  declined: boolean;
+  onAllow: () => void;
+  onDeny: () => void;
+  onReview: () => void;
+  onExit?: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 px-6" role="dialog" aria-modal="true" aria-labelledby="perm-title">
+      <div className="w-full max-w-md border border-line bg-paper p-6">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Exam permissions</p>
+        {declined ? (
+          <>
+            <h2 id="perm-title" className="mt-1 font-serif text-xl font-semibold">The exam can't start without these</h2>
+            <p className="mt-2 text-[13px] text-soft">
+              Proctoring needs your camera, microphone and full screen for the whole exam. Nothing is shared until you allow it.
+            </p>
+            <div className="mt-6 flex gap-2">
+              {onExit && (
+                <button onClick={onExit} className="flex-1 border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-raised">
+                  Exit
+                </button>
+              )}
+              <button onClick={onReview} className="flex-1 border border-forest bg-forest py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-forest/90">
+                Review again
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 id="perm-title" className="mt-1 font-serif text-xl font-semibold">Allow access for this exam</h2>
+            <ul className="mt-4 space-y-2 text-[13px]">
+              <li className="flex items-start gap-2 border border-line px-3 py-2"><FiCheck className="mt-0.5 text-forest" aria-hidden /><span><strong>Camera</strong> — your face, checked by AI and your invigilator</span></li>
+              <li className="flex items-start gap-2 border border-line px-3 py-2"><FiCheck className="mt-0.5 text-forest" aria-hidden /><span><strong>Microphone</strong> — room audio</span></li>
+              <li className="flex items-start gap-2 border border-line px-3 py-2"><FiCheck className="mt-0.5 text-forest" aria-hidden /><span><strong>Entire screen</strong> — your full display, not a single window</span></li>
+            </ul>
+            <p className="mt-3 text-[12px] text-soft">Your computer may ask you to confirm each one. Choose Allow / OK.</p>
+            <div className="mt-6 flex gap-2">
+              <button onClick={onDeny} className="flex-1 border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-raised">
+                Deny
+              </button>
+              <button onClick={onAllow} className="flex-1 border border-forest bg-forest py-2.5 font-mono text-[11px] uppercase tracking-wider text-paper hover:bg-forest/90">
+                Allow all
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -24,7 +24,7 @@
       "icons/icon.icns"
     ],
     "macOS": {
-      "signingIdentity": "-",
+      "signingIdentity": "Vignan Exam Browser Local Signing",
       "entitlements": "entitlements.macOS.plist",
       "infoPlist": "Info.plist"
     },

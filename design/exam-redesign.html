@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Exam page redesign — Vignan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #F7F5F0; --raised: #EDEAE2; --raised2: #E3E0D6;
+    --ink: #1A1814; --soft: #6E6B63; --line: #C8C3B8;
+    --forest: #284B34; --forest-soft: #3D6B4B;
+    --amber: #B7791F; --alert: #9B2C2C; --success: #2F6844;
+    --serif: 'Source Serif 4', Georgia, serif;
+    --sans: Inter, system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--paper); color: var(--ink); font: 14px/1.6 var(--sans); }
+  button { font: inherit; cursor: pointer; border-radius: 2px; }
+  .mono { font-family: var(--mono); }
+  .label { font: 500 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--soft); }
+
+  /* review switcher (not part of the design) */
+  .review { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 100;
+    display: flex; gap: 2px; background: var(--ink); padding: 4px; border-radius: 2px; }
+  .review button { background: transparent; color: #cfcbc2; border: 0; padding: 6px 12px; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+  .review button.on { background: var(--paper); color: var(--ink); }
+
+  /* header */
+  header { position: sticky; top: 0; z-index: 10; height: 60px; display: flex; align-items: center; gap: 24px;
+    padding: 0 28px; background: var(--paper); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .crest { width: 28px; height: 28px; background: var(--forest); color: var(--paper); display: grid; place-items: center; font: 700 14px var(--serif); border-radius: 2px; }
+  .exam-title { font: 600 16px/1.2 var(--serif); }
+  .exam-sub { font: 400 11px var(--mono); color: var(--soft); }
+  .spacer { flex: 1; }
+  .saved { display: flex; align-items: center; gap: 6px; font: 400 11px var(--mono); color: var(--soft); }
+  .dot { width: 6px; height: 6px; background: var(--success); display: inline-block; }
+  .timer { display: flex; align-items: baseline; gap: 8px; padding: 6px 14px; border: 1px solid var(--line); }
+  .timer b { font: 600 20px var(--mono); letter-spacing: .02em; }
+  .timer.low { border-color: var(--amber); color: var(--amber); }
+  .btn { border: 1px solid var(--ink); background: var(--ink); color: var(--paper); padding: 9px 18px; font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+  .btn.forest { background: var(--forest); border-color: var(--forest); }
+  .btn.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+  .btn.ghost:hover { background: var(--raised); }
+
+  /* layout */
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 0; min-height: calc(100vh - 60px); }
+  .work { padding: 32px 48px 120px; max-width: 860px; width: 100%; margin: 0 auto; }
+  aside { border-left: 1px solid var(--line); background: var(--raised); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+  .section-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); margin-bottom: 28px; }
+  .section-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 16px; font: 500 12px var(--sans); color: var(--soft); border-radius: 0; }
+  .section-tabs button.on { color: var(--ink); border-bottom-color: var(--forest); }
+  .section-tabs .count { font: 400 10px var(--mono); margin-left: 6px; }
+
+  .q-meta { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .q-num { font: 600 12px var(--mono); color: var(--forest); }
+  .chip { font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .08em; padding: 3px 8px; border: 1px solid var(--line); color: var(--soft); }
+  .flag { margin-left: auto; background: none; border: 1px solid var(--line); padding: 5px 10px; font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--soft); }
+  .flag.on { border-color: var(--amber); color: var(--amber); }
+  .q-text { font: 400 20px/1.5 var(--serif); margin-bottom: 24px; }
+  .q-text code { font: 15px var(--mono); background: var(--raised); padding: 1px 6px; }
+
+  .options { display: grid; gap: 10px; }
+  .opt { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; border: 1px solid var(--line); background: var(--paper); text-align: left; width: 100%; }
+  .opt:hover { border-color: var(--forest-soft); }
+  .opt .key { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: 1px solid var(--line); font: 600 12px var(--mono); }
+  .opt.on { border-color: var(--forest); background: #EEF1EC; }
+  .opt.on .key { background: var(--forest); border-color: var(--forest); color: var(--paper); }
+
+  .q-foot { display: flex; align-items: center; gap: 10px; margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .q-foot .hint { font: 400 11px var(--mono); color: var(--soft); }
+
+  /* subjective / QR */
+  .qr-card { display: grid; grid-template-columns: 180px 1fr; gap: 24px; border: 1px solid var(--line); background: var(--paper); padding: 20px; }
+  .qr { width: 180px; height: 180px; border: 1px solid var(--line); padding: 10px; background: #fff; }
+  .qr svg { width: 100%; height: 100%; }
+  .steps { list-style: none; counter-reset: s; display: grid; gap: 10px; margin: 12px 0 16px; }
+  .steps li { counter-increment: s; display: flex; gap: 10px; font-size: 13px; }
+  .steps li::before { content: counter(s); width: 20px; height: 20px; flex: none; display: grid; place-items: center; border: 1px solid var(--line); font: 600 10px var(--mono); }
+  .waiting { display: flex; align-items: center; gap: 8px; font: 500 11px var(--mono); color: var(--amber); text-transform: uppercase; letter-spacing: .08em; }
+  .waiting .dot { background: var(--amber); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .uploaded { border: 1px solid var(--success); background: #EEF2EE; padding: 16px; display: grid; grid-template-columns: 120px 1fr; gap: 16px; }
+  .thumb { height: 150px; border: 1px solid var(--line); background: #fbfaf7; position: relative; }
+  .thumb::after { content: "page 1"; position: absolute; bottom: 6px; left: 6px; font: 10px var(--mono); color: var(--soft); }
+  .ok { display: flex; align-items: center; gap: 8px; font: 600 11px var(--mono); color: var(--success); text-transform: uppercase; letter-spacing: .08em; }
+  textarea { width: 100%; min-height: 120px; border: 1px solid var(--line); background: var(--paper); padding: 12px; font: 14px/1.6 var(--sans); border-radius: 2px; resize: vertical; margin-top: 16px; }
+
+  /* right rail */
+  .card { background: var(--paper); border: 1px solid var(--line); }
+  .card-h { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .cam { aspect-ratio: 4 / 3; background: var(--ink); position: relative; display: grid; place-items: center; color: #8d897f; font: 11px var(--mono); }
+  .cam .live { position: absolute; top: 8px; left: 8px; display: flex; align-items: center; gap: 6px; color: var(--paper); font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+  .cam .live .dot { background: #d9534f; animation: pulse 1.4s infinite; }
+  .feeds { display: grid; grid-template-columns: 1fr 1fr 1fr; border-top: 1px solid var(--line); }
+  .feeds div { padding: 8px 10px; font: 500 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; display: flex; align-items: center; gap: 6px; }
+  .feeds div + div { border-left: 1px solid var(--line); }
+  .notice { padding: 10px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--soft); }
+  .notice.warn { color: var(--amber); background: #FBF4E8; }
+
+  .progress-bar { height: 4px; background: var(--raised2); margin: 10px 12px 4px; }
+  .progress-bar span { display: block; height: 100%; background: var(--forest); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); padding: 8px 12px 12px; }
+  .stats b { display: block; font: 600 18px var(--mono); }
+  .stats small { font: 400 10px var(--mono); color: var(--soft); text-transform: uppercase; letter-spacing: .06em; }
+
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; padding: 12px; }
+  .cell { aspect-ratio: 1; border: 1px solid var(--line); background: var(--paper); font: 500 11px var(--mono); display: grid; place-items: center; position: relative; padding: 0; }
+  .cell.done { background: var(--forest); border-color: var(--forest); color: var(--paper); }
+  .cell.flagged::after { content: ""; position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; background: var(--amber); }
+  .cell.current { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; padding: 0 12px 12px; font: 400 10px var(--mono); color: var(--soft); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border: 1px solid var(--line); margin-right: 5px; vertical-align: -1px; }
+
+  /* modal */
+  .scrim { position: fixed; inset: 0; background: rgba(26, 24, 20, .6); display: none; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
+  .scrim.show { display: flex; }
+  .modal { width: 100%; max-width: 460px; background: var(--paper); border: 1px solid var(--line); padding: 28px; }
+  .modal h2 { font: 600 22px/1.2 var(--serif); margin: 6px 0 10px; }
+  .modal p { color: var(--soft); font-size: 13px; }
+  .perm-list { list-style: none; display: grid; gap: 8px; margin: 18px 0 10px; }
+  .perm-list li { display: flex; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); font-size: 13px; }
+  .perm-list .ico { width: 22px; height: 22px; flex: none; border: 1px solid var(--forest); color: var(--forest); display: grid; place-items: center; font: 600 11px var(--mono); }
+  .modal .row { display: flex; gap: 8px; margin-top: 22px; }
+  .modal .row .btn { flex: 1; padding: 12px; }
+  .summary { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); margin: 16px 0 6px; }
+  .summary div { padding: 12px; text-align: center; }
+  .summary div + div { border-left: 1px solid var(--line); }
+  .summary b { display: block; font: 600 22px var(--mono); }
+  .summary small { font: 400 10px var(--mono); color: var(--soft); text-transform: uppercase; letter-spacing: .06em; }
+  .unanswered { font: 400 12px var(--mono); color: var(--amber); }
+
+  [data-view] { display: none; }
+  [data-view].show { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="crest">V</div>
+    <div>
+      <div class="exam-title">Data Structures — Mid-semester II</div>
+      <div class="exam-sub">CSE · Section B · Roll 221FA04312</div>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="saved"><span class="dot"></span>All answers saved · 12s ago</div>
+  <div class="timer" id="timer"><span class="label">Time left</span><b>00:42:18</b></div>
+  <button class="btn forest" onclick="show('submit', true)">Submit exam</button>
+</header>
+
+<main>
+  <section class="work">
+    <nav class="section-tabs">
+      <button class="on">Part A · Multiple choice<span class="count">18/20</span></button>
+      <button>Part B · Written<span class="count">1/4</span></button>
+    </nav>
+
+    <!-- MCQ -->
+    <div data-view="mcq" class="show">
+      <div class="q-meta">
+        <span class="q-num">Q 07 / 24</span>
+        <span class="chip">MCQ · 2 marks</span>
+        <button class="flag" onclick="this.classList.toggle('on')">⚑ Mark for review</button>
+      </div>
+      <p class="q-text">What is the worst-case time complexity of inserting a key into a binary search tree with <code>n</code> nodes that is not self-balancing?</p>
+      <div class="options">
+        <button class="opt"><span class="key">A</span><span>O(1)</span></button>
+        <button class="opt"><span class="key">B</span><span>O(log n)</span></button>
+        <button class="opt on"><span class="key">C</span><span>O(n)</span></button>
+        <button class="opt"><span class="key">D</span><span>O(n log n)</span></button>
+      </div>
+      <div class="q-foot">
+        <button class="btn ghost">← Previous</button>
+        <button class="btn ghost">Clear response</button>
+        <span class="spacer"></span>
+        <span class="hint">Keys A–D select · ← → move</span>
+        <button class="btn forest">Save &amp; next →</button>
+      </div>
+    </div>
+
+    <!-- Subjective with QR (waiting) -->
+    <div data-view="qr">
+      <div class="q-meta">
+        <span class="q-num">Q 21 / 24</span>
+        <span class="chip">Written · 8 marks</span>
+        <button class="flag">⚑ Mark for review</button>
+      </div>
+      <p class="q-text">Draw the AVL tree after inserting 30, 20, 40, 10, 25, 5 in that order. Show each rotation you perform.</p>
+      <div class="qr-card">
+        <div class="qr"><svg viewBox="0 0 29 29" shape-rendering="crispEdges" id="qrsvg"></svg></div>
+        <div>
+          <div class="label">Upload from your phone</div>
+          <ol class="steps">
+            <li>Write your answer on paper.</li>
+            <li>Scan this code with your phone camera.</li>
+            <li>Photograph each page and tap Upload.</li>
+          </ol>
+          <div class="waiting"><span class="dot"></span>Waiting for upload</div>
+          <p style="margin-top:10px;font-size:12px;color:var(--soft)">The answer appears here on its own. You can keep working on other questions.</p>
+        </div>
+      </div>
+      <textarea placeholder="Optional: type a note for the examiner"></textarea>
+      <div class="q-foot">
+        <button class="btn ghost">← Previous</button>
+        <span class="spacer"></span>
+        <button class="btn forest">Save &amp; next →</button>
+      </div>
+    </div>
+
+    <!-- Subjective uploaded -->
+    <div data-view="uploaded">
+      <div class="q-meta">
+        <span class="q-num">Q 21 / 24</span>
+        <span class="chip">Written · 8 marks</span>
+        <button class="flag">⚑ Mark for review</button>
+      </div>
+      <p class="q-text">Draw the AVL tree after inserting 30, 20, 40, 10, 25, 5 in that order. Show each rotation you perform.</p>
+      <div class="uploaded">
+        <div class="thumb"></div>
+        <div>
+          <div class="ok">✓ Answer received from phone</div>
+          <p style="margin:8px 0 14px;font-size:13px;color:var(--soft)">2 pages · uploaded 10:42 AM · saved to your answer sheet</p>
+          <div style="display:flex;gap:8px">
+            <button class="btn ghost">View pages</button>
+            <button class="btn ghost">Replace upload</button>
+          </div>
+        </div>
+      </div>
+      <div class="q-foot">
+        <button class="btn ghost">← Previous</button>
+        <span class="spacer"></span>
+        <button class="btn forest">Save &amp; next →</button>
+      </div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="card">
+      <div class="card-h"><span class="label">Proctoring</span><span class="label" style="color:var(--success)">● Connected</span></div>
+      <div class="cam"><span class="live"><span class="dot"></span>Live</span>camera preview</div>
+      <div class="feeds">
+        <div><span class="dot"></span>Camera</div>
+        <div><span class="dot"></span>Mic</div>
+        <div><span class="dot"></span>Screen</div>
+      </div>
+      <div class="notice warn">Keep your face in view. Looking away was noted at 10:31.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><span class="label">Progress</span><span class="mono" style="font-size:11px;color:var(--soft)">19 of 24</span></div>
+      <div class="progress-bar"><span style="width:79%"></span></div>
+      <div class="stats">
+        <div><b>19</b><small>Answered</small></div>
+        <div><b style="color:var(--amber)">2</b><small>Review</small></div>
+        <div><b>5</b><small>Left</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><span class="label">Questions</span></div>
+      <div class="grid" id="grid"></div>
+      <div class="legend">
+        <span><i style="background:var(--forest);border-color:var(--forest)"></i>Answered</span>
+        <span><i></i>Not answered</span>
+        <span><i style="background:var(--amber);border-color:var(--amber)"></i>Review</span>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<!-- Submit dialog -->
+<div class="scrim" id="submit">
+  <div class="modal">
+    <div class="label">Submit exam</div>
+    <h2>Submit your answers?</h2>
+    <p>You cannot change answers after submitting.</p>
+    <div class="summary">
+      <div><b>19</b><small>Answered</small></div>
+      <div><b style="color:var(--amber)">2</b><small>Review</small></div>
+      <div><b>5</b><small>Not answered</small></div>
+    </div>
+    <p class="unanswered">Not answered: Q 9, 14, 22, 23, 24</p>
+    <div class="row">
+      <button class="btn ghost" onclick="show('mcq')">Keep working</button>
+      <button class="btn forest">Submit now</button>
+    </div>
+  </div>
+</div>
+
+<!-- Permission modal -->
+<div class="scrim" id="perm">
+  <div class="modal">
+    <div class="label">Exam permissions</div>
+    <h2>Allow access for this exam</h2>
+    <ul class="perm-list">
+      <li><span class="ico">✓</span><span><b>Camera</b> — your face, checked by AI and your invigilator</span></li>
+      <li><span class="ico">✓</span><span><b>Microphone</b> — room audio</span></li>
+      <li><span class="ico">✓</span><span><b>Entire screen</b> — your full display, not a single window</span></li>
+    </ul>
+    <p>Your computer may ask you to confirm each one. Choose Allow / OK.</p>
+    <div class="row">
+      <button class="btn ghost" onclick="show('denied', true)">Deny</button>
+      <button class="btn forest" onclick="show('mcq')">Allow all</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="denied">
+  <div class="modal">
+    <div class="label">Exam permissions</div>
+    <h2>The exam can't start without these</h2>
+    <p>Proctoring needs your camera, microphone and full screen for the whole exam. Nothing is shared until you allow it.</p>
+    <div class="row">
+      <button class="btn ghost">Exit</button>
+      <button class="btn forest" onclick="show('perm', true)">Review again</button>
+    </div>
+  </div>
+</div>
+
+<div class="review" id="review">
+  <button data-go="mcq" class="on">MCQ</button>
+  <button data-go="qr">Written · QR</button>
+  <button data-go="uploaded">Written · uploaded</button>
+  <button data-go="submit" data-modal>Submit dialog</button>
+  <button data-go="perm" data-modal>Permissions</button>
+</div>
+
+<script>
+  const views = ["mcq", "qr", "uploaded"];
+  const modals = ["submit", "perm", "denied"];
+  function show(name, isModal) {
+    modals.forEach((m) => document.getElementById(m).classList.toggle("show", m === name));
+    if (!isModal) {
+      views.forEach((v) => document.querySelector(`[data-view="${v}"]`).classList.toggle("show", v === name));
+      const tabs = document.querySelectorAll(".section-tabs button");
+      tabs[0].classList.toggle("on", name === "mcq");
+      tabs[1].classList.toggle("on", name !== "mcq");
+    }
+    document.querySelectorAll("#review button").forEach((b) => b.classList.toggle("on", b.dataset.go === name));
+  }
+  document.querySelectorAll("#review button").forEach((b) =>
+    b.addEventListener("click", () => show(b.dataset.go, b.hasAttribute("data-modal"))));
+  const initial = location.hash.slice(1);
+  if (views.includes(initial) || modals.includes(initial)) show(initial, modals.includes(initial));
+  document.querySelectorAll(".opt").forEach((o) => o.addEventListener("click", () => {
+    o.parentElement.querySelectorAll(".opt").forEach((x) => x.classList.remove("on"));
+    o.classList.add("on");
+  }));
+
+  const grid = document.getElementById("grid");
+  const unanswered = [9, 14, 22, 23, 24], review = [4, 21];
+  for (let i = 1; i <= 24; i++) {
+    const c = document.createElement("button");
+    c.className = "cell" + (unanswered.includes(i) ? "" : " done") + (review.includes(i) ? " flagged" : "") + (i === 7 ? " current" : "");
+    c.textContent = i;
+    grid.appendChild(c);
+  }
+
+  // decorative QR-like pattern
+  const svg = document.getElementById("qrsvg");
+  let seed = 7;
+  const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+  const finder = (x, y) => `<rect x="${x}" y="${y}" width="7" height="7" fill="#1A1814"/><rect x="${x+1}" y="${y+1}" width="5" height="5" fill="#fff"/><rect x="${x+2}" y="${y+2}" width="3" height="3" fill="#1A1814"/>`;
+  let s = "";
+  for (let y = 0; y < 29; y++) for (let x = 0; x < 29; x++) {
+    const inFinder = (x < 8 && y < 8) || (x > 20 && y < 8) || (x < 8 && y > 20);
+    if (!inFinder && rnd() > 0.52) s += `<rect x="${x}" y="${y}" width="1" height="1" fill="#1A1814"/>`;
+  }
+  svg.innerHTML = s + finder(0, 0) + finder(22, 0) + finder(0, 22);
+
+  // live countdown
+  let left = 42 * 60 + 18;
+  const t = document.querySelector("#timer b");
+  setInterval(() => {
+    left = Math.max(0, left - 1);
+    const h = String(Math.floor(left / 3600)).padStart(2, "0");
+    const m = String(Math.floor(left % 3600 / 60)).padStart(2, "0");
+    const sec = String(left % 60).padStart(2, "0");
+    t.textContent = `${h}:${m}:${sec}`;
+  }, 1000);
+</script>
+</body>
+</html>

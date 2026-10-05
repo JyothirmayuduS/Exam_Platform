@@ -7,14 +7,21 @@ type CaptureHandle = {
 };
 
 /**
- * Capture the student's display inside the Exam Browser without the macOS
- * "Share This Window" picker. After Screen Recording is allowed (the same
- * system dialog as Camera/Microphone), frames come from a native screenshot
- * command and are published as a canvas MediaStream for LiveKit.
+ * Capture the student's whole main display inside the Exam Browser. There is
+ * no picker: the student cannot choose a window or another screen. Frames come
+ * from a native screenshot command and are published as a canvas MediaStream.
+ *
+ * Returns "denied" when macOS Screen Recording is off for the app. Without it
+ * screencapture still succeeds but returns only the wallpaper, so the frames
+ * must not be treated as a working share.
  */
-export async function startNativeDisplayStream(): Promise<CaptureHandle | null> {
+export async function startNativeDisplayStream(): Promise<CaptureHandle | "denied" | null> {
   if (!isTauri()) return null;
-  await invoke("screen_capture_permission_prompt").catch(() => {});
+  const status = await invoke<string>("screen_capture_status").catch(() => "granted");
+  if (status !== "granted") {
+    await invoke("screen_capture_permission_prompt").catch(() => {});
+    return "denied";
+  }
   await invoke("set_window_sharing", { allow: true }).catch(() => {});
   await new Promise((r) => setTimeout(r, 60));
 

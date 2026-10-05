@@ -2,15 +2,25 @@
 import { AccessToken } from "https://esm.sh/livekit-server-sdk@2.7.2";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") ?? "*";
-const CORS = {
-  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+// Comma-separated list (or "*"). The exam kiosk's own origins are always
+// allowed: its page is served from the app bundle, not the web domain.
+const KIOSK_ORIGINS = ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
+const ALLOWED = (Deno.env.get("ALLOWED_ORIGIN") ?? "*").split(",").map((s) => s.trim().replace(/\/$/, "")).filter(Boolean);
+const CORS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Vary": "Origin",
 };
 
+function allowOrigin(origin: string | null): string {
+  if (ALLOWED.includes("*")) return "*";
+  if (origin && (ALLOWED.includes(origin) || KIOSK_ORIGINS.includes(origin))) return origin;
+  return ALLOWED[0] ?? "*";
+}
+
 Deno.serve(async (req: Request) => {
+  CORS["Access-Control-Allow-Origin"] = allowOrigin(req.headers.get("Origin"));
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 

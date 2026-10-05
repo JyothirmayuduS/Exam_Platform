@@ -3,7 +3,7 @@ import { FiCamera, FiAlertTriangle } from "react-icons/fi";
 import { QRCodeSVG } from "qrcode.react";
 import { getSupabase } from "@/shared/data/supabase";
 import { uploadSubjectiveAnswer } from "@/shared/services/subjectiveUpload";
-import { isUploadHandled, markUploadHandled } from "@/features/student/services/uploadedAnswers";
+import { markUploadHandled, shouldApplyUpload } from "@/features/student/services/uploadedAnswers";
 
 function getPublicBase(): string {
   const envUrl = import.meta.env.VITE_APP_BASE_URL as string | undefined;
@@ -35,6 +35,8 @@ type Props = {
    *  never a 1-hour signed URL, which expires while the exam is still open
    *  and made the answer look "uploaded but missing" on revisit. */
   onAnswerUploaded?: (pathOrUrl: string) => void;
+  /** The question's answer as the exam currently holds it. */
+  currentAnswer?: unknown;
 };
 
 export default function SubjectiveQRBlock({
@@ -46,7 +48,10 @@ export default function SubjectiveQRBlock({
   studentName,
   examName,
   onAnswerUploaded,
+  currentAnswer,
 }: Props) {
+  const currentAnswerRef = useRef(currentAnswer);
+  currentAnswerRef.current = currentAnswer;
   const base = getPublicBase();
   const [token] = useState<string>(() => {
     const generateToken = () => typeof crypto !== 'undefined' && crypto.randomUUID 
@@ -102,7 +107,7 @@ export default function SubjectiveQRBlock({
       return false;
     }
     const path = data?.pdf_storage_path as string | undefined;
-    if (!path || isUploadHandled(attemptId, path)) return false;
+    if (!path || !shouldApplyUpload(attemptId, path, currentAnswerRef.current)) return false;
     markUploadHandled(attemptId, path);
     // The answer keeps the storage PATH; signed URLs are minted at render.
     onUploadedRef.current?.(path);

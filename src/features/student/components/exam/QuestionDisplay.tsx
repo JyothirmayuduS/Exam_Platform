@@ -230,6 +230,7 @@ export default function QuestionDisplay({
                     studentName={studentName}
                     examName={examName}
                     questionText={question.text}
+                    currentAnswer={answer}
                     onAnswerUploaded={(url) => {
                       onSelectOption(`[Uploaded answer: ${url}]` as unknown as number);
                       onAnswerUploaded?.(url);

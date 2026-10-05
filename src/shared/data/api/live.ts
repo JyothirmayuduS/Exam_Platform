@@ -11,7 +11,7 @@ export async function listLiveAttempts(examId?: string | null): Promise<LiveAtte
   if (!db) return [];
   let query = db
     .from("attempts")
-    .select("id,exam_id,state,answered,total,minutes_used,score,answers,paper,started_at,submitted_at,auto_saved_at,consent_at,user_agent,student:students(id,roll,full_name,email)")
+    .select("id,exam_id,state,answered,total,minutes_used,score,answers,paper,started_at,submitted_at,auto_saved_at,consent_at,user_agent,student:students(id,roll,full_name,email,auth_id)")
     .order("auto_saved_at", { ascending: false });
   if (examId) query = query.eq("exam_id", examId);
   const { data, error } = await query;
@@ -43,6 +43,7 @@ export async function listLiveAttempts(examId?: string | null): Promise<LiveAtte
                 roll: String((student as Record<string, unknown>).roll),
                 full_name: String((student as Record<string, unknown>).full_name),
                 email: ((student as Record<string, unknown>).email as string | null) ?? null,
+                auth_id: ((student as Record<string, unknown>).auth_id as string | null) ?? null,
               }
             : null,
           violations: [],
@@ -60,7 +61,7 @@ export async function listLiveAttempts(examId?: string | null): Promise<LiveAtte
     if (!examId) return attempts; // all-exams mode: enrolled-but-idle rows are not synthesized per exam
     const { data: enrolledData } = await db
       .from("enrollments")
-      .select("student_id, student:students(id, roll, full_name)")
+      .select("student_id, student:students(id, roll, full_name, auth_id)")
       .eq("exam_id", examId);
 
     if (enrolledData) {
@@ -88,6 +89,7 @@ export async function listLiveAttempts(examId?: string | null): Promise<LiveAtte
               id: String((st as Record<string, unknown>).id),
               roll: String((st as Record<string, unknown>).roll),
               full_name: String((st as Record<string, unknown>).full_name),
+              auth_id: ((st as Record<string, unknown>).auth_id as string | null) ?? null,
               email: ((st as Record<string, unknown>).email as string | null) ?? null,
             },
             violations: [],

@@ -36,6 +36,7 @@ type Tile = {
   status: string;
   progress: number;
   studentId?: string;
+  authId?: string | null;
 };
 
 const NAV = [
@@ -71,7 +72,7 @@ function attemptToTile(a: LiveAttempt): Tile {
     time = diffMin === 0 ? "just now" : `${diffMin}m ago`;
   }
 
-  return { id: a.id, name, roll, initials: initialsOf(name), severity, reason, time, status, progress: pct, studentId: a.student?.id };
+  return { id: a.id, name, roll, initials: initialsOf(name), severity, reason, time, status, progress: pct, studentId: a.student?.id, authId: a.student?.auth_id ?? null };
 }
 
 type ViewMode = "split" | "camera" | "screen";
@@ -265,6 +266,7 @@ export default function ProctorGrid() {
     return (t: Tile) =>
       (t.studentId ? byId.get(t.studentId.toLowerCase()) : null) ??
       (t.roll && t.roll !== "—" ? byRoll.get(t.roll.toLowerCase()) : null) ??
+      (t.authId ? byId.get(t.authId.toLowerCase()) : null) ??
       null;
   }, [feeds]);
 

@@ -220,38 +220,38 @@ fn exit_app() {
     std::process::exit(0);
 }
 
-/// Re-trigger the OS-level camera/microphone permission dialog from inside the
-/// kiosk. In a normal browser the site can re-prompt via getUserMedia, but a
-/// macOS TCC "Don't Allow" answer is remembered by the BUNDLE ID and the
-/// webview never asks again — the only escape is requestAccessForMediaType
-/// from native code (which surfaces the dialog again when the answer is still
-/// undecided) plus a shortcut into System Settings. Windows WebView2 grants
-/// web media permissions implicitly, so this resolves to "granted" there.
+#[cfg(target_os = "macos")]
+#[link(name = "AVFoundation", kind = "framework")]
+extern "C" {}
+
+#[cfg(target_os = "macos")]
+fn av_media_type(kind: &str) -> *mut objc2::runtime::AnyObject {
+    let media_type = if kind == "microphone" { "soun" } else { "vide" };
+    let c = std::ffi::CString::new(media_type).unwrap();
+    unsafe { objc2::msg_send![objc2::class!(NSString), stringWithUTF8String: c.as_ptr()] }
+}
+
+#[cfg(target_os = "macos")]
+fn av_status(kind: &str) -> String {
+    unsafe {
+        let status: isize = objc2::msg_send![objc2::class!(AVCaptureDevice), authorizationStatusForMediaType: av_media_type(kind)];
+        match status {
+            3 => "granted",
+            1 | 2 => "denied",
+            _ => "prompt",
+        }
+        .to_string()
+    }
+}
+
+/// Current OS camera/microphone permission without prompting. A macOS TCC
+/// "Don't Allow" is remembered by bundle id; only System Settings undoes it.
+/// Windows WebView2 grants web media permissions implicitly.
 #[tauri::command]
 fn media_permission_prompt(kind: String) -> String {
     #[cfg(target_os = "macos")]
     {
-        use objc2::runtime::AnyObject;
-        let media_type = if kind == "microphone" { "soun" } else { "vide" };
-        unsafe {
-            let cls = objc2::class!(AVCaptureDevice);
-            let sel_type: *mut AnyObject = objc2::msg_send![objc2::class!(NSString), stringWithUTF8String: std::ffi::CString::new(media_type).unwrap().as_ptr()];
-            let dev: *mut AnyObject = objc2::msg_send![cls, deviceWithMediaType: sel_type];
-            if dev.is_null() {
-                return "unavailable".to_string();
-            }
-            let status: i64 = objc2::msg_send![dev, authorizationStatusForMediaType: sel_type];
-            match status {
-                // Authorized.
-                3 => "granted".to_string(),
-                // Denied or Restricted: only System Settings can change this.
-                1 | 2 => "denied".to_string(),
-                // NotDetermined (0): the web layer's next getUserMedia call
-                // surfaces the native WKWebView prompt itself — no native
-                // requestAccess block needed here.
-                _ => "prompt".to_string(),
-            }
-        }
+        av_status(&kind)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -259,6 +259,149 @@ fn media_permission_prompt(kind: String) -> String {
         // WebView2 does not gate getUserMedia behind an OS dialog.
         "granted".to_string()
     }
+}
+
+/// Show the native camera / microphone dialog (when not yet decided) and wait
+/// for the student's answer. Returns "granted", "denied" or "prompt" (timed out).
+#[tauri::command]
+async fn request_media_access(kind: String) -> String {
+    #[cfg(target_os = "macos")]
+    {
+        let current = av_status(&kind);
+        if current != "prompt" {
+            return current;
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        {
+            let tx = std::sync::Mutex::new(Some(tx));
+            let handler = block2::RcBlock::new(move |granted: objc2::runtime::Bool| {
+                if let Some(tx) = tx.lock().ok().and_then(|mut t| t.take()) {
+                    let _ = tx.send(granted.as_bool());
+                }
+            });
+            unsafe {
+                let _: () = objc2::msg_send![objc2::class!(AVCaptureDevice), requestAccessForMediaType: av_media_type(&kind), completionHandler: &*handler];
+            }
+        }
+        let answer = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(120)))
+            .await
+            .ok()
+            .and_then(|r| r.ok());
+        match answer {
+            Some(true) => "granted".to_string(),
+            Some(false) => "denied".to_string(),
+            None => av_status(&kind),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = kind;
+        "granted".to_string()
+    }
+}
+
+/// While the student answers OS permission dialogs the kiosk must not cover
+/// them or steal focus back; see begin_permission_phase.
+static PERMISSION_PHASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn in_permission_phase() -> bool {
+    PERMISSION_PHASE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(target_os = "macos")]
+fn set_kiosk_presentation(locked: bool) {
+    use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        let app = NSApplication::sharedApplication(mtm);
+        let opts = if locked {
+            NSApplicationPresentationOptions::HideDock
+                | NSApplicationPresentationOptions::HideMenuBar
+                | NSApplicationPresentationOptions::DisableAppleMenu
+                | NSApplicationPresentationOptions::DisableProcessSwitching
+                | NSApplicationPresentationOptions::DisableForceQuit
+                | NSApplicationPresentationOptions::DisableSessionTermination
+                | NSApplicationPresentationOptions::DisableHideApplication
+        } else {
+            NSApplicationPresentationOptions::empty()
+        };
+        app.setPresentationOptions(opts);
+    }
+}
+
+/// Lower the kiosk so macOS permission dialogs and System Settings appear in
+/// front of it: normal window level, not always-on-top, out of fullscreen,
+/// presentation options relaxed, and no focus re-grab.
+#[tauri::command]
+fn begin_permission_phase(app: tauri::AppHandle) {
+    PERMISSION_PHASE.store(true, std::sync::atomic::Ordering::SeqCst);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = handle.get_webview_window("exam") {
+            let _ = win.set_always_on_top(false);
+            #[cfg(target_os = "macos")]
+            if let Ok(ns_win) = win.ns_window() {
+                unsafe {
+                    let ns_win = ns_win as *mut objc2::runtime::AnyObject;
+                    let _: () = objc2::msg_send![ns_win, setLevel: 0_isize];
+                }
+            }
+            let _ = win.set_fullscreen(false);
+            let _ = win.maximize();
+        }
+        #[cfg(target_os = "macos")]
+        set_kiosk_presentation(false);
+    });
+}
+
+/// Restore the full lockdown after the permission dialogs are answered.
+#[tauri::command]
+fn end_permission_phase(app: tauri::AppHandle) {
+    PERMISSION_PHASE.store(false, std::sync::atomic::Ordering::SeqCst);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        set_kiosk_presentation(true);
+        if let Some(win) = handle.get_webview_window("exam") {
+            let _ = win.set_fullscreen(true);
+            let _ = win.set_always_on_top(true);
+            #[cfg(target_os = "macos")]
+            if let Ok(ns_win) = win.ns_window() {
+                unsafe {
+                    let ns_win = ns_win as *mut objc2::runtime::AnyObject;
+                    let _: () = objc2::msg_send![ns_win, setLevel: 1000_isize];
+                }
+            }
+            let _ = win.set_focus();
+        }
+    });
+}
+
+/// Screen Recording permission without prompting.
+#[tauri::command]
+fn screen_capture_status() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+        }
+        if unsafe { CGPreflightScreenCaptureAccess() } { "granted".into() } else { "denied".into() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "granted".to_string()
+    }
+}
+
+/// Restart the exam browser (macOS applies a new Screen Recording grant only
+/// to a fresh process). The exit flag stops the watchdog from spawning a
+/// second copy.
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    let flag_path = std::env::temp_dir().join("vignan_exit.flag");
+    let _ = std::fs::write(flag_path, "1");
+    enable_task_manager();
+    app.restart();
 }
 
 /// Request screen capture permission natively.
@@ -356,37 +499,17 @@ fn open_media_settings(kind: String) -> Result<(), String> {
 fn set_window_sharing(app: tauri::AppHandle, allow: bool) {
     #[cfg(target_os = "macos")]
     {
-        // TCC: if we are about to present the picker, make sure the OS has been
-        // asked for screen recording permission. CGRequestScreenCaptureAccess
-        // is a no-op when already granted and shows the system prompt / System
-        // Settings redirect when not yet determined or denied.
-        if allow {
-            #[link(name = "CoreGraphics", kind = "framework")]
-            extern "C" {
-                fn CGRequestScreenCaptureAccess() -> bool;
-            }
-            unsafe { CGRequestScreenCaptureAccess(); }
-        }
-
+        // Only the capture visibility changes here. The window level belongs
+        // to begin/end_permission_phase, and the screen is captured natively
+        // (no system picker), so the window never has to drop below it.
         if let Some(win) = app.get_webview_window("exam") {
             if let Ok(ns_win) = win.ns_window() {
                 unsafe {
                     let ns_win = ns_win as *mut objc2::runtime::AnyObject;
-
-                    // Toggle the sharing type:
                     //   0 = NSWindowSharingNone      (excluded from capture APIs)
                     //   1 = NSWindowSharingReadOnly  (visible to capture APIs)
                     let sharing_type: isize = if allow { 1 } else { 0 };
                     let _: () = objc2::msg_send![ns_win, setSharingType: sharing_type];
-
-                    // Toggle the window level:
-                    // At kiosk level 1000 the macOS system screen-picker sheet
-                    // renders *behind* the exam window on macOS 13+. Lower to
-                    // NSNormalWindowLevel (0) while the picker is open so the
-                    // picker's system UI can appear on top. Restore immediately
-                    // after the picker closes (allow = false).
-                    let level: isize = if allow { 0 } else { 1000 };
-                    let _: () = objc2::msg_send![ns_win, setLevel: level];
                 }
             }
         }
@@ -564,7 +687,12 @@ fn main() {
             screen_capture_excluded,
             lockdown_log_probe,
             set_window_sharing,
-            capture_display_jpeg
+            capture_display_jpeg,
+            request_media_access,
+            begin_permission_phase,
+            end_permission_phase,
+            screen_capture_status,
+            relaunch_app
         ])
         // Register first so a second process exits before other plugins start.
         // Its deep-link feature forwards Windows/Linux argv to the same plugin
@@ -608,17 +736,9 @@ fn main() {
             #[cfg(target_os = "macos")]
             {
                 // Lock down macOS to create a true kiosk mode (disables Cmd+Tab, Dock, Menu Bar, Spaces)
-                use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
+                set_kiosk_presentation(true);
                 if let Some(mtm) = objc2::MainThreadMarker::new() {
-                    let app = NSApplication::sharedApplication(mtm);
-                    let opts = NSApplicationPresentationOptions::HideDock
-                        | NSApplicationPresentationOptions::HideMenuBar
-                        | NSApplicationPresentationOptions::DisableAppleMenu
-                        | NSApplicationPresentationOptions::DisableProcessSwitching
-                        | NSApplicationPresentationOptions::DisableForceQuit
-                        | NSApplicationPresentationOptions::DisableSessionTermination
-                        | NSApplicationPresentationOptions::DisableHideApplication;
-                    app.setPresentationOptions(opts);
+                    let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
 
                     // Replace the default main menu (File/Edit/… with Quit ≘ Cmd+Q
                     // and Close ≘ Cmd+W accelerators) with an empty menu. JS
@@ -776,6 +896,9 @@ fn main() {
             std::thread::spawn(move || {
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(3));
+                    if in_permission_phase() {
+                        continue;
+                    }
                     let apps = check_prohibited_apps();
                     if !apps.is_empty() {
                         let list = apps.join(", ");
@@ -795,6 +918,11 @@ fn main() {
         .on_window_event(|window, event| {
             match event {
                 WindowEvent::Focused(false) => {
+                    // A macOS permission dialog or System Settings is in front
+                    // on purpose; grabbing focus back would hide it.
+                    if in_permission_phase() {
+                        return;
+                    }
                     // Re-assert the lockdown if the student tries to minimize or unfocus.
                     let _ = window.set_fullscreen(true);
                     let _ = window.set_always_on_top(true);

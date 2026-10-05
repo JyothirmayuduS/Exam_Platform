@@ -27,6 +27,8 @@ type Student = {
   /** Attempt start (ISO) — used by the session report's snapshot timeline. */
   startedAt: string | null;
   studentId?: string;
+  /** Auth user id — LiveKit identity when the token function could not resolve a roll. */
+  authId?: string | null;
   attemptId: string;
   // Real attempt UUID (null for enrolled candidates who haven't started —
   // their placeholder id looks like `enrolled-<uuid>` and can't hit the DB).
@@ -56,6 +58,7 @@ function attemptToStudent(a: LiveAttempt): Student {
     violation: activeVio,
     startedAt: a.started_at,
     studentId: a.student?.id,
+    authId: a.student?.auth_id ?? null,
     attemptId: a.id,
     realAttemptId,
     violations: [...(a.violations ?? [])],
@@ -291,6 +294,7 @@ export default function TeacherProctoring() {
     return (s: Student) =>
       (s.studentId ? byId.get(s.studentId.toLowerCase()) : null) ??
       (s.roll && s.roll !== "—" ? byRoll.get(s.roll.toLowerCase()) : null) ??
+      (s.authId ? byId.get(s.authId.toLowerCase()) : null) ??
       null;
   }, [feeds]);
 

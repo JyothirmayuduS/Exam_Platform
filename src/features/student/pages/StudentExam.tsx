@@ -26,13 +26,22 @@ import {
   type PaperSlot,
 } from "@/shared/data/examApi";
 import { lockdownReady, isTauri, downloadUrl, osLabel, detectOS, probeInstaller } from "@/shared/platform/platform";
-import { launchExamInLockdown, openStudentSide, mediaPermissionStatus, openMediaSettings } from "@/shared/platform/lockdownBridge";
+import {
+  launchExamInLockdown,
+  openStudentSide,
+  mediaPermissionStatus,
+  openMediaSettings,
+  requestMediaAccess,
+  beginPermissionPhase,
+  endPermissionPhase,
+  relaunchExamBrowser,
+} from "@/shared/platform/lockdownBridge";
 import { defaultWatermarkText, renderWatermarkTemplate } from "@/shared/services/watermark";
 import ExamWatermark from "@/features/student/components/exam/ExamWatermark";
 import useExamState from "@/features/student/hooks/useExamState";
 import useExamTimer from "@/features/student/hooks/useExamTimer";
 import useSectionTimer from "@/features/student/hooks/useSectionTimer";
-import { isUploadHandled, markUploadHandled, uploadAnswer } from "@/features/student/services/uploadedAnswers";
+import { markUploadHandled, shouldApplyUpload, uploadAnswer } from "@/features/student/services/uploadedAnswers";
 import { getSupabase } from "@/shared/data/supabase";
 import { autoGradeAttempt, describeNegative, groupBySection, releaseTiming, type AutoGradeResult, type ReleaseSettings, questionKind, KIND_LABEL, sectionWindows, type NegativeSettings, type QuestionKind } from "@/shared/domain/exam";
 import useAutosave from "@/features/student/hooks/useAutosave";
@@ -186,6 +195,8 @@ function StudentExamSession() {
   const [mic, setMic] = useState<"idle" | "granted" | "denied">("idle");
   const [screen, setScreen] = useState<"idle" | "granted" | "denied">("idle");
   const [requesting, setRequesting] = useState(false);
+  const [screenNeedsRestart, setScreenNeedsRestart] = useState(false);
+  const permissionPhaseRef = useRef(false);
   const previewRef = useRef<HTMLVideoElement | null>(null);
   // Hidden webcam video for the student's per-second snapshot timeline
   const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -390,6 +401,8 @@ function StudentExamSession() {
     counts,
     markVisited,
   } = useExamState(questions);
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
 
   // Sections are real groupings of the student's own paper (mirrors the
   // reference layout where e.g. "Descriptive" and "MCQ" are separate).
@@ -437,7 +450,7 @@ function StudentExamSession() {
       for (const row of data ?? []) {
         const qid = String(row.question_id);
         const path = row.pdf_storage_path as string | null;
-        if (!path || !ids.has(qid) || isUploadHandled(attemptId, path)) continue;
+        if (!path || !ids.has(qid) || !shouldApplyUpload(attemptId, path, answersRef.current[qid])) continue;
         markUploadHandled(attemptId, path);
         setAnswer(qid, uploadAnswer(path));
       }
@@ -1083,32 +1096,50 @@ function StudentExamSession() {
     setCam("idle");
     setMic("idle");
     setScreen("idle");
+    setScreenNeedsRestart(false);
+
+    const kiosk = isTauri();
+    if (kiosk) {
+      // The kiosk window sits above everything; lower it so the macOS
+      // dialogs are visible inside the exam browser instead of behind it.
+      permissionPhaseRef.current = true;
+      await beginPermissionPhase();
+      await requestMediaAccess("camera");
+      await requestMediaAccess("microphone");
+    }
 
     let screenLocalStream: MediaStream | null = null;
     try {
-      if (isTauri()) {
+      if (kiosk) {
+        // The whole main display only; the window/screen picker never shows.
         const native = await startNativeDisplayStream();
-        if (native) {
-          screenLocalStream = native.stream;
-        }
-      }
-      if (!screenLocalStream) {
-        if (isTauri()) {
-          await invoke("set_window_sharing", { allow: true }).catch(() => {});
-          await new Promise((r) => setTimeout(r, 80));
-        }
+        if (native === "denied") setScreenNeedsRestart(true);
+        else if (native) screenLocalStream = native.stream;
+      } else {
         const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: DisplayMediaStreamOptions) => Promise<MediaStream> };
         if (typeof md.getDisplayMedia === "function") {
-          screenLocalStream = await md.getDisplayMedia({ video: true, audio: false });
+          const shared = await md.getDisplayMedia({
+            video: { displaySurface: "monitor" },
+            audio: false,
+            monitorTypeSurfaces: "include",
+            selfBrowserSurface: "exclude",
+            surfaceSwitching: "exclude",
+          } as DisplayMediaStreamOptions);
+          const surface = shared.getVideoTracks()[0]?.getSettings().displaySurface;
+          if (surface && surface !== "monitor") {
+            shared.getTracks().forEach((t) => t.stop());
+            alert("Please share your entire screen, not a window or tab.");
+          } else {
+            screenLocalStream = shared;
+          }
         }
-        // Keep sharing allowed in the kiosk for the whole exam so native
-        // frames include the exam window. Re-lock happens on submit.
       }
     } catch (e) {
       console.warn("Screen share request failed", e);
     }
 
     // Camera + mic
+    let camMicOk = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 } },
@@ -1136,6 +1167,7 @@ function StudentExamSession() {
       }
 
       accessStreamRef.current = stream;
+      camMicOk = stream.getVideoTracks().length > 0 && stream.getAudioTracks().length > 0;
       setCam(stream.getVideoTracks().length ? "granted" : "denied");
       setMic(stream.getAudioTracks().length ? "granted" : "denied");
       if (previewRef.current) previewRef.current.srcObject = stream;
@@ -1155,9 +1187,22 @@ function StudentExamSession() {
     } else {
       setScreen("denied");
     }
-    
+
+    // Keep the window lowered while something is still blocked so System
+    // Settings stays reachable; restore the lockdown once all three work.
+    if (kiosk && screenLocalStream && camMicOk) {
+      permissionPhaseRef.current = false;
+      await endPermissionPhase();
+    }
+
     setRequesting(false);
   }
+
+  useEffect(() => {
+    if (step === "access" || !permissionPhaseRef.current) return;
+    permissionPhaseRef.current = false;
+    void endPermissionPhase();
+  }, [step]);
 
   const handleScreenGranted = useCallback((stream: MediaStream) => {
     screenStreamRef.current = stream;
@@ -1184,12 +1229,6 @@ function StudentExamSession() {
     setRequesting(true);
     // Small delay so the user sees the "Checking…" state (feedback)
     await new Promise((r) => setTimeout(r, 300));
-    if (isTauri()) {
-      // If the user clicked "Block" in the WKWebView prompt, the only way
-      // to clear the cache and get the prompt again is to reload the window.
-      window.location.reload();
-      return;
-    }
     await requestDevices();
   }
 
@@ -1481,6 +1520,8 @@ function StudentExamSession() {
         inKiosk={isTauri()}
         onReRequest={() => void reRequestPermissions()}
         onOpenMediaSettings={openKioskMediaSettings}
+        screenNeedsRestart={screenNeedsRestart}
+        onRestart={() => void relaunchExamBrowser()}
         previewRef={previewRef}
         onRequest={requestDevices}
         onScreenGranted={handleScreenGranted}

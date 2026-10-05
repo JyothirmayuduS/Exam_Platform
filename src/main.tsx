@@ -9,7 +9,7 @@ import * as Sentry from "@sentry/react";
 import LogRocket from 'logrocket';
 import { AuthProvider } from './features/auth/auth'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { examPathFromDeepLink, getLaunchUrl, hasSessionHandoff, hydrateSessionFromDeepLink, onVignanDeepLink } from './shared/platform/lockdownBridge'
+import { examPathFromDeepLink, getLaunchUrl, hasSessionHandoff, hydrateSessionFromDeepLink, onVignanDeepLink, RESUME_PATH_KEY } from './shared/platform/lockdownBridge'
 
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN?.replace(/^[\"']|[\"']$/g, '');
 const LOGROCKET_ID = import.meta.env.VITE_LOGROCKET_ID?.replace(/^[\"']|[\"']$/g, '');
@@ -149,6 +149,21 @@ if (probeEnabled && inTauri) {
   window.setTimeout(report, 2000);
 }
 
+/** One-shot path saved by relaunchExamBrowser; ignored once older than 10 minutes. */
+function takeResumePath(): string | null {
+  try {
+    const raw = localStorage.getItem(RESUME_PATH_KEY);
+    if (!raw) return null;
+    localStorage.removeItem(RESUME_PATH_KEY);
+    const { path, at } = JSON.parse(raw) as { path?: unknown; at?: unknown };
+    if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) return null;
+    if (typeof at !== "number" || Date.now() - at > 10 * 60_000) return null;
+    return path;
+  } catch {
+    return null;
+  }
+}
+
 async function boot() {
   if (inTauri) {
     // Kiosk: land on the exam entry path, subscribe to OS URL events, then
@@ -164,9 +179,13 @@ async function boot() {
       // exam/roll into the entry path BEFORE mounting so the first render
       // already points at the right exam (no flash of wrong content).
       const url = await getLaunchUrl().catch(() => null);
+      const resume = takeResumePath();
       if (url) {
         await hydrateSessionFromDeepLink(url);
         applyDeeplink(url, false);
+      } else if (resume) {
+        // Relaunched by the exam itself (Screen Recording grant): back to it.
+        window.history.replaceState(null, "", resume);
       } else {
         // Cold kiosk start with NO vignan-exam:// link: the exam page needs
         // BOTH an exam reference and a signed-in student, and neither exists

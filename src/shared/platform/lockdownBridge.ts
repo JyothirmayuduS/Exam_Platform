@@ -232,6 +232,74 @@ export async function isScreenCaptureExcluded(): Promise<boolean> {
   }
 }
 
+type MediaAnswer = "granted" | "denied" | "prompt";
+
+/** Show the native camera/microphone dialog if undecided and wait for the answer. */
+export async function requestMediaAccess(kind: "camera" | "microphone"): Promise<MediaAnswer | null> {
+  if (!inKiosk()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<MediaAnswer>("request_media_access", { kind });
+  } catch {
+    return null;
+  }
+}
+
+/** Screen Recording permission without prompting. */
+export async function screenCaptureStatus(): Promise<"granted" | "denied" | null> {
+  if (!inKiosk()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<"granted" | "denied">("screen_capture_status");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lower the kiosk window so macOS permission dialogs and System Settings show
+ * in front of it. Always pair with endPermissionPhase.
+ */
+export async function beginPermissionPhase(): Promise<void> {
+  if (!inKiosk()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("begin_permission_phase");
+  } catch {
+    /* not available in this shell build */
+  }
+}
+
+export async function endPermissionPhase(): Promise<void> {
+  if (!inKiosk()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("end_permission_phase");
+  } catch {
+    /* not available in this shell build */
+  }
+}
+
+export const RESUME_PATH_KEY = "vignan.resumePath";
+
+/**
+ * Restart the exam browser so a new Screen Recording grant takes effect, then
+ * return to the current page.
+ */
+export async function relaunchExamBrowser(): Promise<void> {
+  if (!inKiosk()) return;
+  try {
+    localStorage.setItem(
+      RESUME_PATH_KEY,
+      JSON.stringify({ path: location.pathname + location.search, at: Date.now() }),
+    );
+  } catch {
+    /* storage unavailable: the relaunch still lands on the login page */
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("relaunch_app");
+}
+
 /** Check and request the native macOS screen recording permission. */
 export async function screenCapturePermissionStatus(): Promise<"granted" | "denied" | "prompt" | null> {
   if (!inKiosk()) return null;

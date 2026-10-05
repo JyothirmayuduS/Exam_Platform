@@ -302,7 +302,7 @@ serve(async (req) => {
     // has no attempt row yet — the files are still stored and the session is
     // still completed, so the upload never hard-fails).
     if (submissionAttemptId) {
-      await supabaseAdmin.from("question_submissions").insert({
+      const { error: subErr } = await supabaseAdmin.from("question_submissions").insert({
         attempt_id: submissionAttemptId,
         question_id: session.question_id,
         student_id: session.student_id,
@@ -312,6 +312,9 @@ serve(async (req) => {
         mime_type: pdfPath ? "application/pdf" : "image/jpeg",
         file_size: 0,
       });
+      // Without this row the exam screen never sees the upload; fail so the
+      // session resets and the phone retries.
+      if (subErr) throw new Error(`question_submissions insert failed: ${subErr.message}`);
       // Record the answer on the attempt too, so grading has it even if the
       // exam screen never syncs it back. A typed answer is never replaced.
       const { data: att } = await supabaseAdmin.from("attempts").select("answers").eq("id", submissionAttemptId).maybeSingle();
