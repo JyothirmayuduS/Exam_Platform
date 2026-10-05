@@ -54,6 +54,7 @@ type StudentRow = {
   attemptId?: string;
   state?: string;
   counts?: Counts;
+  latestAt?: number;
 };
 
 type Counts = { recordings: number; screenshots: number; violations: number; report: number; answers: number };
@@ -63,6 +64,17 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 function stripSlash(folder: string): string {
   return folder.replace(/\/+$/, "");
 }
+
+/** Capture time from the object name (`snap_<ms>.jpg`, `<ms>_<type>.jpg`);
+ *  lastModified is the upload time, and queued frames upload in bursts. */
+function artifactTime(a: R2Artifact): number {
+  const m = /^(?:snap_)?(\d{12,})(?:_|\.)/.exec(a.name);
+  if (m) return Number(m[1]);
+  const t = a.lastModified ? Date.parse(a.lastModified) : NaN;
+  return Number.isFinite(t) ? t : 0;
+}
+
+const newestFirst = (a: R2Artifact, b: R2Artifact) => artifactTime(b) - artifactTime(a);
 
 function kindCounts(arts: R2Artifact[] | null): Counts {
   const c = { recordings: 0, screenshots: 0, violations: 0, report: 0, answers: 0 };
@@ -142,7 +154,12 @@ export default function EvidenceBrowser() {
         if (meta && seg === storageFolderSegment(meta.id, meta.name)) row.folder = seg;
         grouped.set(key, row);
       }
-      setExams([...grouped.values()]);
+      // Newest exam first: teacher exams arrive ordered by created_at desc;
+      // folders with no DB match keep their place after them.
+      const rank = new Map(teacherExams.map((e, i) => [e.id, i]));
+      setExams([...grouped.values()].sort(
+        (a, b) => (rank.get(a.examId ?? "") ?? Infinity) - (rank.get(b.examId ?? "") ?? Infinity),
+      ));
     })();
     return () => { alive = false; };
   }, []);
@@ -225,13 +242,16 @@ export default function EvidenceBrowser() {
             const i = cursor;
             cursor += 1;
             const arts = await listCandidateArtifacts(selectedExam.folders, rows[i].roll, selectedExam.examId, rows[i].studentId);
-            if (alive) rows[i].counts = kindCounts(arts);
+            if (alive) {
+              rows[i].counts = kindCounts(arts);
+              rows[i].latestAt = (arts ?? []).reduce((max, a) => Math.max(max, artifactTime(a)), 0);
+            }
           }
         })());
       }
       await Promise.all(workers);
       if (!alive) return;
-      setStudents(rows);
+      setStudents(rows.sort((a, b) => (b.latestAt ?? 0) - (a.latestAt ?? 0)));
     })();
     return () => { alive = false; };
   }, [selectedExam]);
@@ -408,9 +428,10 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
   }, [exam.folders, exam.examId, student.roll, student.studentId, student.attemptId]);
 
   const recordings = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "recordings"), [artifacts]);
-  const screenshots = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "screenshots").sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? "")), [artifacts]);
-  const answerFiles = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "subjective"), [artifacts]);
-  const violationFrames = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "violations").sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? "")), [artifacts]);
+  const screenshots = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "screenshots").sort(newestFirst), [artifacts]);
+  const answerFiles = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "subjective").sort(newestFirst), [artifacts]);
+  const violationFrames = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "violations").sort(newestFirst), [artifacts]);
+  const violationLog = useMemo(() => [...violations].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)), [violations]);
 
   const runZip = async () => {
     if (zipping) return;
@@ -518,7 +539,7 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
           <div className="border border-line bg-paper p-5">
             <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Violation log</p>
             <div className="mt-3 space-y-2">
-              {violations.map((v) => (
+              {violationLog.map((v) => (
                 <div key={v.id} className="flex items-start justify-between gap-3 border-l-2 border-alert pl-3">
                   <div className="min-w-0">
                     <p className="text-[12px] font-medium text-ink">{v.description || v.violation_type}</p>
@@ -568,9 +589,9 @@ function SnapshotGallery({ screenshots, violationFrames }: { screenshots: R2Arti
   }
 
   const items: { art: R2Artifact; flagged: boolean }[] = [
-    ...violationFrames.map((a) => ({ art: a, flagged: true })),
+    ...violationFrames.slice(0, 60).map((a) => ({ art: a, flagged: true })),
     ...screenshots.slice(0, 54).map((a) => ({ art: a, flagged: false })),
-  ];
+  ].sort((a, b) => newestFirst(a.art, b.art));
 
   const openItem = items.find((i) => i.art.key === openKey) ?? null;
 
@@ -579,7 +600,8 @@ function SnapshotGallery({ screenshots, violationFrames }: { screenshots: R2Arti
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
         {items.map(({ art, flagged }) => {
           const url = urls.get(art.key);
-          const when = art.lastModified ? new Date(art.lastModified).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+          const at = artifactTime(art);
+          const when = at ? new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
           return (
             <button
               key={art.key}
@@ -618,7 +640,7 @@ function SnapshotGallery({ screenshots, violationFrames }: { screenshots: R2Arti
             <div className="mt-2 flex items-center justify-between gap-4">
               <p className="min-w-0 truncate font-mono text-[10px] text-ink-soft">
                 {openItem.flagged ? `Flagged frame · ${openItem.art.name}` : openItem.art.name}
-                {openItem.art.lastModified ? ` · ${new Date(openItem.art.lastModified).toLocaleString()}` : ""}
+                {artifactTime(openItem.art) ? ` · ${new Date(artifactTime(openItem.art)).toLocaleString()}` : ""}
               </p>
               <a
                 href={urls.get(openItem.art.key) ?? ""}

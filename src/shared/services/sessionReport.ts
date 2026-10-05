@@ -104,7 +104,9 @@ export type SnapshotEntry = {
 const SNAPS_PER_ROW = 3;
 
 function snapEpochFromKey(key: string): number | null {
-  const m = /snap_(\d{10,})\.jpe?g$/i.exec(key);
+  // Interval frames are `snap_<ms>.jpg`; violation/AI evidence is `<ms>_<type>.jpg`.
+  // Upload time (lastModified) is not capture time — queued frames flush in bursts.
+  const m = /(?:^|\/)(?:snap_)?(\d{12,})(?:_[^/]*)?\.jpe?g$/i.exec(key);
   if (!m) return null;
   const n = Number(m[1]);
   return Number.isFinite(n) ? n : null;
