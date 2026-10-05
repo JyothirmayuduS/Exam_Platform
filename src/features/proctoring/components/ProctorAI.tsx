@@ -39,6 +39,10 @@ import {
 } from "@/features/proctoring/domain";
 import type { BBox, Detection, FaceGeometry, ProctorCategory, RiskLevel } from "@/features/proctoring/domain";
 import { phoneLikelihood, PHONE_VERIFY_MIN, type PixelStats } from "@/features/proctoring/domain/phoneVerifier";
+import { blendshapeScores, HEAD_POSE, LOOK_DOWN, lookDownScore, poseFromMatrix, type HeadPose } from "@/features/proctoring/domain/headPose";
+import { LipActivity, LIPS, mouthOpenRatio } from "@/features/proctoring/domain/lipActivity";
+import { ABSENCE_LABEL, AbsenceMonitor, classifyAbsence, frameStats } from "@/features/proctoring/domain/absence";
+import { DARK_BUD, earPatches, isDarkEarbud, type EarPatch } from "@/features/proctoring/domain/darkEarbud";
 import { env } from "@/shared/data/env";
 import ProctorDebugOverlay from "@/features/proctoring/components/ProctorDebugOverlay";
 
@@ -233,21 +237,28 @@ type GazeTracker = {
   calibSamples: number; // samples accumulated before baseline locks
   awayStreak: number;  // consecutive off-neutral samples (decays on neutral)
   clearStreak: number; // consecutive neutral samples since last flag
+  poseYaw: number;     // neutral absolute head pose (degrees)
+  posePitch: number;
+  poseSamples: number;
 };
 
 function freshGaze(): GazeTracker {
-  return { pitch: 0, yaw: 0, calibrated: false, calibSamples: 0, awayStreak: 0, clearStreak: 0 };
+  return { pitch: 0, yaw: 0, calibrated: false, calibSamples: 0, awayStreak: 0, clearStreak: 0, poseYaw: 0, posePitch: 0, poseSamples: 0 };
 }
 
 // Calibrate from ~GAZE.CALIBRATE_SAMPLES near-neutral frames (~2 s) so a
 // glance-down at start doesn't become the "looking at screen" baseline.
 // After lock, only adapt while clearly neutral AND not mid-away streak.
-function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number): void {
+function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number, pose: HeadPose | null): void {
   if (t.calibrated) {
     if (dev < GAZE.DEVIATION * 0.6 && t.awayStreak === 0) {
       const k = 0.03;
       t.pitch += k * (g.pitch - t.pitch);
       t.yaw   += k * (g.yaw - t.yaw);
+      if (pose) {
+        t.poseYaw += k * (pose.yaw - t.poseYaw);
+        t.posePitch += k * (pose.pitch - t.posePitch);
+      }
     }
     return;
   }
@@ -256,6 +267,11 @@ function updateGazeBaseline(t: GazeTracker, g: GazeEst, dev: number): void {
   const n = t.calibSamples;
   t.pitch += (g.pitch - t.pitch) / n;
   t.yaw += (g.yaw - t.yaw) / n;
+  if (pose) {
+    t.poseSamples += 1;
+    t.poseYaw += (pose.yaw - t.poseYaw) / t.poseSamples;
+    t.posePitch += (pose.pitch - t.posePitch) / t.poseSamples;
+  }
   if (n >= GAZE.CALIBRATE_SAMPLES) t.calibrated = true;
 }
 
@@ -475,6 +491,36 @@ function whiteEarbudAt(video: HTMLVideoElement, ear: BBox, face: BBox): Detectio
   }
 }
 
+let sampleCanvas: HTMLCanvasElement | null = null;
+
+/** RGBA pixels of a normalized region of the video, scaled to w×h. */
+function sampleVideo(video: HTMLVideoElement, box: BBox, w: number, h: number): Uint8ClampedArray | null {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return null;
+  try {
+    sampleCanvas ??= document.createElement("canvas");
+    sampleCanvas.width = w;
+    sampleCanvas.height = h;
+    const ctx = sampleCanvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    const x0 = Math.max(0, box.x), y0 = Math.max(0, box.y);
+    const x1 = Math.min(1, box.x + box.width), y1 = Math.min(1, box.y + box.height);
+    if (x1 - x0 < 0.005 || y1 - y0 < 0.005) return null;
+    ctx.drawImage(video, x0 * vw, y0 * vh, (x1 - x0) * vw, (y1 - y0) * vh, 0, 0, w, h);
+    return ctx.getImageData(0, 0, w, h).data;
+  } catch {
+    return null;
+  }
+}
+
+function darkEarbudAt(video: HTMLVideoElement, ear: EarPatch): Detection | null {
+  const px = sampleVideo(video, ear.box, DARK_BUD.SIZE, DARK_BUD.SIZE);
+  if (!px || !isDarkEarbud(px)) return null;
+  return { kind: "earbuds", label: "dark earbud at ear", score: 0.6, bbox: ear.box };
+}
+
+const FULL_FRAME: BBox = { x: 0, y: 0, width: 1, height: 1 };
 const EDGE_LEFT: BBox = { x: 0, y: 0.15, width: 0.4, height: 0.85 };
 const EDGE_RIGHT: BBox = { x: 0.6, y: 0.15, width: 0.4, height: 0.85 };
 
@@ -531,6 +577,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   const lastEarbudsAck = useRef(0);
   const lastEarbudsVisualAck = useRef(0);
   const faceGeoRef = useRef<FaceGeometry | null>(null);
+  const earPatchRef = useRef<{ at: number; patches: EarPatch[] } | null>(null);
   const cropTurn = useRef(0);
   const frameDims = useRef(""); // diag: log the frame size once per change
   // rAF fps measurement (diagnostics)
@@ -784,8 +831,8 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
                   baseOptions: { modelAssetPath: source, delegate },
                   runningMode: "VIDEO",
                   numFaces: 3,
-                  outputFaceBlendshapes: false,
-                  outputFacialTransformationMatrixes: false,
+                  outputFaceBlendshapes: true,
+                  outputFacialTransformationMatrixes: true,
                 }),
               "Loading gaze tracker…",
             ),
@@ -854,7 +901,9 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     if (!active || status.loading) return;
     let running = true;
     const gaze = freshGaze();
-    let noFaceStreak = 0;
+    const absence = new AbsenceMonitor();
+    const lips = new LipActivity();
+    let lastLipEmit = 0;
     let multiFaceStreak = 0;
     let framingStreak = 0;
     let lastFraming: Framing = "ok";
@@ -891,11 +940,20 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
       if (landmarkRef.current && now - tGaze.current > GAZE_MS) {
         tGaze.current = now;
         try {
-          const { faceLandmarks } = landmarkRef.current.detectForVideo(video, now) as { faceLandmarks: Array<Array<{ x: number; y: number; z: number }>> };
+          const lmResult = landmarkRef.current.detectForVideo(video, now) as {
+            faceLandmarks: Array<Array<{ x: number; y: number; z: number }>>;
+            faceBlendshapes?: Array<{ categories?: Array<{ categoryName?: string; score?: number }> }>;
+            facialTransformationMatrixes?: Array<{ data?: number[] }>;
+          };
+          const { faceLandmarks } = lmResult;
           landmarksVisible = faceLandmarks.length > 0;
           faceGeoRef.current = landmarksVisible ? faceGeometryFromLandmarks(faceLandmarks[0], now) : null;
+          earPatchRef.current = landmarksVisible ? { at: now, patches: earPatches(faceLandmarks[0]) } : null;
+          if (!landmarksVisible) lips.reset();
           if (landmarksVisible) {
             const lms = faceLandmarks[0];
+            const pose = poseFromMatrix(lmResult.facialTransformationMatrixes?.[0]?.data);
+            const blend = blendshapeScores(lmResult.faceBlendshapes?.[0]?.categories);
 
             // Seating check: ~1 s of bad framing shows the student a hint; it is
             // logged once per ~6 s while it lasts.
@@ -912,17 +970,33 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
 
             const g = estimateGaze(lms);
             const pitchDelta = g.pitch - gaze.pitch; // + = looking down (nose lower)
-            const yawDelta = g.yaw - gaze.yaw;
             const devPitch = Math.abs(pitchDelta);
-            const devYaw   = Math.abs(yawDelta);
-            const lookingDown = pitchDelta >= GAZE.PITCH_DOWN;
-            const lookingAwayYaw = devYaw >= GAZE.DEVIATION;
-            const lookingAwayPitch = lookingDown || pitchDelta <= -GAZE.DEVIATION;
-            const dev = Math.max(devPitch, devYaw);
-            updateGazeBaseline(gaze, g, lookingDown ? Math.max(dev, GAZE.DEVIATION) : dev);
+            // Absolute pose when the landmarker provides it: the ratio yaw
+            // reads a rolled, tilted-down head as a turn.
+            const usePose = pose !== null && gaze.poseSamples > 0;
+            const posePitchRel = usePose ? pose.pitch - gaze.posePitch : 0;
+            const downScore = usePose ? lookDownScore(blend, posePitchRel) : 0;
+            // Turn strength in "threshold units": >= 1 means turned away.
+            const yawUnits = usePose
+              ? (pose.yaw - gaze.poseYaw) / HEAD_POSE.TURN_DEG
+              : (g.yaw - gaze.yaw) / GAZE.DEVIATION;
+            const lookingDown = pitchDelta >= GAZE.PITCH_DOWN || downScore >= LOOK_DOWN.MIN;
+            const lookingAwayYaw = Math.abs(yawUnits) >= 1;
+            const lookingUp = usePose ? posePitchRel <= -HEAD_POSE.UP_DEG : pitchDelta <= -GAZE.DEVIATION;
+            const dev = Math.max(devPitch, Math.abs(yawUnits) * GAZE.DEVIATION);
+            updateGazeBaseline(gaze, g, lookingDown ? Math.max(dev, GAZE.DEVIATION) : dev, pose);
+
+            // Talking: repeated lip open/close while roughly facing the camera.
+            if (Math.abs(yawUnits) < 1.5) {
+              const cycles = lips.update(mouthOpenRatio(lms), now);
+              if (cycles >= LIPS.MIN_CYCLES && now - lastLipEmit >= LIPS.REPEAT_MS) {
+                lastLipEmit = now;
+                emit("audio_detected", "Lip movement — student appears to be talking", 0.75);
+              }
+            }
 
             if (gaze.calibrated) {
-              const neutral = !lookingAwayYaw && !lookingAwayPitch;
+              const neutral = !lookingAwayYaw && !lookingDown && !lookingUp;
               if (neutral) {
                 gaze.awayStreak = Math.max(0, gaze.awayStreak - 1);
                 gaze.clearStreak += 1;
@@ -933,17 +1007,19 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
               }
 
               let dir: AIStatus["gazeDirection"] = "center";
-              if (gaze.awayStreak >= GAZE.SUSTAIN_SAMPLES) {
+              if (gaze.awayStreak >= GAZE.SUSTAIN_SAMPLES && !neutral) {
                 // Prefer pitch-down when the head tilts toward the desk/phone —
                 // that is the signal students report as "not detecting look down".
                 if (lookingDown) {
                   dir = "down";
-                } else if (devYaw >= devPitch) {
-                  dir = yawDelta < 0 ? "left" : "right";
+                } else if (lookingAwayYaw) {
+                  dir = yawUnits < 0 ? "left" : "right";
                 } else {
-                  dir = pitchDelta < 0 ? "up" : "down";
+                  dir = "up";
                 }
-                const conf = Math.min(1, (lookingDown ? Math.max(devPitch, GAZE.PITCH_DOWN) : dev) / (GAZE.DEVIATION * 3));
+                const conf = lookingDown
+                  ? Math.min(1, Math.max(downScore / (LOOK_DOWN.MIN * 1.5), Math.max(devPitch, GAZE.PITCH_DOWN) / (GAZE.DEVIATION * 3)))
+                  : Math.min(1, dev / (GAZE.DEVIATION * 3));
                 // Re-emit whenever the short gate allows — continuous look-down /
                 // look-away logging, not one flag then a long silent window.
                 if (gaze.awayStreak === GAZE.SUSTAIN_SAMPLES || gaze.awayStreak % 2 === 0) {
@@ -1054,8 +1130,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         try {
           const { detections } = faceDetRef.current.detectForVideo(video, now) as { detections: Array<{ categories: Array<{ score: number }> }> };
           const confident = detections.filter(d => d.categories[0]?.score >= FACE.MIN_CONF).length;
-          if (confident === 0 && !landmarksVisible) noFaceStreak += 1;
-          else noFaceStreak = 0;
+          const absent = absence.update(confident === 0 && !landmarksVisible, now);
           if (confident > 1) multiFaceStreak += 1;
           else multiFaceStreak = 0;
 
@@ -1063,13 +1138,13 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           const phoneCoveringFace = trackerRef.current?.live.some(
             (t) => t.kind === "phone" && now - t.lastSeen <= 1_500 && t.bbox.width * t.bbox.height >= 0.05,
           );
-          if (noFaceStreak === FACE.SUSTAIN || (noFaceStreak > FACE.SUSTAIN && noFaceStreak % 6 === 0)) {
+          if (absent) {
             if (phoneCoveringFace) {
               emit("possible_phone_use", "Face hidden behind a phone held up to the camera", 0.9);
-            } else if (noFaceStreak === FACE.SUSTAIN) {
-              emit("no_face", "No face visible — camera may be covered or the student left", 0.9);
             } else {
-              emit("no_face", "Still no face visible in the camera", 0.9);
+              const px = sampleVideo(video, FULL_FRAME, 32, 24);
+              const kind = px ? classifyAbsence(frameStats(px)) : "out_of_frame";
+              emit("no_face", ABSENCE_LABEL[kind][absent], 0.9);
             }
           }
           if (multiFaceStreak === FACE.SUSTAIN) {
@@ -1114,6 +1189,12 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
                 const white = whiteEarbudAt(video, ear, face.face);
                 if (white) dets.push(white);
               }
+            }
+            const ears = earPatchRef.current && now - earPatchRef.current.at <= 700 ? earPatchRef.current.patches : [];
+            for (const ear of ears) {
+              if (ear.visible < DARK_BUD.MIN_VISIBLE) continue;
+              const dark = darkEarbudAt(video, ear);
+              if (dark) dets.push(dark);
             }
             dets = refineDetections(dets, face, now);
           }
