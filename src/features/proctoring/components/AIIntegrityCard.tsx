@@ -88,7 +88,7 @@ function toneFor(verdict?: string, score?: number): { tone: Tone; label: string;
   return { tone: "text-amber", label: "Review", chip: "border-amber/40 bg-amber/5 text-amber" };
 }
 
-export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
+export default function AIIntegrityCard({ attemptId, plain = false }: { attemptId: string; plain?: boolean }) {
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(false);
   const [state, setState] = useState<"idle" | "error" | "unconfigured" | "notdeployed">("idle");
@@ -138,10 +138,11 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
   const incidents = report?.summary?.incidents ?? [];
 
   return (
-    <div className="border border-line bg-paper">
-      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+    <div className={plain ? "" : "border border-line bg-paper"}>
+      <div className={`flex items-center justify-between ${plain ? "pb-2" : "border-b border-line px-4 py-3"}`}>
         <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-widest text-ink">AI Integrity Report</span>
+          {!plain && <span className="font-mono text-[10px] uppercase tracking-widest text-ink">AI Integrity Report</span>}
+          {plain && !report && <span className="text-[12px] text-soft">Not generated yet</span>}
           {report && (
             <span className={`border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${meta.chip}`}>
               {meta.label}
@@ -157,7 +158,7 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
         </button>
       </div>
 
-      <div className="px-4 py-3">
+      <div className={plain ? "" : "px-4 py-3"}>
         {loading && (
           <p className="flex items-center gap-2 text-[12px] text-soft">
             <span className="h-3 w-3 animate-spin rounded-none border border-forest border-t-transparent" />
@@ -202,7 +203,7 @@ export default function AIIntegrityCard({ attemptId }: { attemptId: string }) {
                 </p>
                 <ul className="space-y-1">
                   {incidents.slice(0, 8).map((inc, i) => (
-                    <li key={i} className="flex items-start justify-between gap-3 border border-line/60 px-2.5 py-1.5">
+                    <li key={i} className="flex items-start justify-between gap-3 border border-line/60 bg-paper px-2.5 py-1.5">
                       <span className="min-w-0 text-[11px] text-ink">
                         <span className="text-soft">{String(inc.type ?? "event").toUpperCase()}</span>
                         {inc.note ? <span className="text-soft"> — {inc.note}</span> : null}

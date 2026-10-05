@@ -24,15 +24,19 @@ export async function publishExam(
 /** Trigger the Supabase Edge Function to send emails to students */
 
 
-export async function triggerExamEmail(examId: string): Promise<{ ok: boolean; error?: string }> {
+export async function triggerExamEmail(
+  examId: string,
+  studentIds?: string[],
+): Promise<{ ok: boolean; sent: number; failed: number; error?: string }> {
   const db = getSupabase();
-  if (!db) return { ok: false, error: "offline" };
+  if (!db) return { ok: false, sent: 0, failed: 0, error: "offline" };
   const appBaseUrl = typeof window !== "undefined" ? window.location.origin : undefined;
-  const { error } = await db.functions.invoke("send-exam-email", {
-    body: { examId, appBaseUrl }
+  const { data, error } = await db.functions.invoke("send-exam-email", {
+    body: { examId, appBaseUrl, studentIds },
   });
-  
-  return error ? { ok: false, error: String(error.message ?? error) } : { ok: true };
+  if (error) return { ok: false, sent: 0, failed: 0, error: String(error.message ?? error) };
+  const res = (data ?? {}) as { sent?: number; failed?: number };
+  return { ok: true, sent: Number(res.sent ?? 0), failed: Number(res.failed ?? 0) };
 }
 
 /**

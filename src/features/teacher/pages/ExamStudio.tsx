@@ -28,6 +28,7 @@ import {
   linkQuestionsToExam,
   unlinkQuestionFromExam,
   listStudentsByBatch,
+  bulkEnrollStudents,
   getExamRoster,
   publishExam,
   triggerExamEmail,
@@ -442,6 +443,7 @@ export default function ExamStudio({
                 <code className="min-w-0 flex-1 truncate border border-line bg-raised px-3 py-3 font-mono text-[12px]">{result.link}</code>
                 <button onClick={() => { navigator.clipboard?.writeText(result.link).catch(() => undefined); notify("Join link copied"); }} className="border border-forest bg-forest px-4 py-3 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-soft">Copy link</button>
               </div>
+              {result.notified === -1 && <p className="mt-3 border border-line bg-raised px-4 py-3 text-[12px] text-soft">Emails are still sending. You'll see a notification when they finish.</p>}
               {typeof result.notified === "number" && result.notified > 0 && <p className="mt-3 border border-forest bg-success/5 px-4 py-3 text-[12px]">Join link emailed to {result.notified} students.</p>}
               {typeof result.notified === "number" && result.notified === 0 && <p className="mt-3 border border-line bg-raised px-4 py-3 text-[12px] text-soft">No email sent — share the join link above.</p>}
             </div>
@@ -665,7 +667,7 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
   s: S; studentLink: string; onClose: () => void; notify: (m: string) => void;
   onResult: (r: { status: string; when?: string; link: string; notified?: number }) => void;
 }) {
-  const [roster, setRoster] = useState<{ roll: string; full_name: string; email: string }[]>([]);
+  const [roster, setRoster] = useState<{ id: string; roll: string; full_name: string; email: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<"all" | "manual">("all");
   const [selected, setSelected] = useState<string[]>([]);
@@ -679,7 +681,7 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
     let active = true;
     void listStudentsByBatch(exam.batch).then((rows) => {
       if (!active) return;
-      setRoster(rows.map((r) => ({ roll: r.roll, full_name: r.full_name, email: r.email })));
+      setRoster(rows.map((r) => ({ id: r.id, roll: r.roll, full_name: r.full_name, email: r.email })));
       setLoading(false);
     });
     return () => { active = false; };
@@ -690,9 +692,31 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
   const emails = mode === "all" ? roster.map((r) => r.email).filter(Boolean) : selected.map((roll) => roster.find((r) => r.roll === roll)?.email).filter((e): e is string => Boolean(e));
   const ready = pool > 0;
 
+  const [steps, setSteps] = useState<PublishStep[] | null>(null);
+  const [outcome, setOutcome] = useState<{ status: string; when?: string; notified: number; emailPending: boolean } | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const emailing = steps?.some((st) => st.key === "email" && st.state === "running") ?? false;
+  useEffect(() => {
+    if (!emailing) return;
+    setElapsed(0);
+    const id = window.setInterval(() => setElapsed((x) => x + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [emailing]);
+  const setStep = (k: PublishStep["key"], patch: Partial<PublishStep>) =>
+    setSteps((cur) => cur?.map((st) => (st.key === k ? { ...st, ...patch } : st)) ?? cur);
+
+  const chosen = mode === "all" ? roster : roster.filter((r) => selected.includes(r.roll));
+
   const publish = async (status: "published" | "scheduled", whenIso: string | null, whenLabel?: string) => {
     if (busy) return;
+    if (mode === "manual" && chosen.length === 0) { notify("Pick at least one student, or choose the entire batch."); return; }
     setBusy(true);
+    const sendEmail = notifyStudents && emails.length > 0;
+    setSteps([
+      { key: "publish", label: status === "scheduled" ? `Scheduling for ${whenLabel}` : "Publishing the exam", state: "running" },
+      { key: "enroll", label: `Giving ${chosen.length} student${chosen.length === 1 ? "" : "s"} access`, state: "waiting" },
+      { key: "email", label: sendEmail ? `Emailing the join link to ${emails.length}` : "Email skipped — share the link yourself", state: sendEmail ? "waiting" : "skipped" },
+    ]);
     const record: ExamRecord = {
       ...exam,
       name,
@@ -706,15 +730,39 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
       settings: { ...s } as unknown as Record<string, unknown>,
     };
     const res = await publishExam(record);
-    let notified = 0;
-    if (res.ok && notifyStudents && emails.length > 0) {
-      const emailRes = await triggerExamEmail(exam.id);
-      if (emailRes.ok) notified = emails.length;
+    if (!res.ok) {
+      setStep("publish", { state: "failed", detail: res.error });
+      setBusy(false);
+      return;
     }
+    setStep("publish", { state: "done", detail: status === "scheduled" ? `Opens ${whenLabel}` : "Live now" });
+
+    setStep("enroll", { state: "running" });
+    const enrolled = await bulkEnrollStudents(exam.id, chosen.map((r) => ({ id: r.id })));
+    if (enrolled.error) setStep("enroll", { state: "failed", detail: enrolled.error });
+    else setStep("enroll", { state: "done", detail: `${enrolled.count} can open the exam` });
     setBusy(false);
-    if (!res.ok) { notify("Publish failed: " + res.error); return; }
-    notify(status === "scheduled" ? `Scheduled for ${whenLabel}` : notifyStudents && notified ? `Published — join link emailed to ${notified} students` : "Published — students can start now");
-    onResult({ status, when: whenLabel, link: studentLink, notified: notifyStudents ? notified : 0 });
+
+    if (!sendEmail) {
+      setOutcome({ status, when: whenLabel, notified: 0, emailPending: false });
+      return;
+    }
+    setOutcome({ status, when: whenLabel, notified: 0, emailPending: true });
+    setStep("email", { state: "running" });
+    const mail = await triggerExamEmail(exam.id, chosen.map((r) => r.id));
+    if (!mail.ok) {
+      setStep("email", { state: "failed", detail: mail.error ?? "Email service unavailable" });
+      notify("Exam published, but the emails could not be sent. Share the join link instead.");
+    } else {
+      setStep("email", { state: mail.failed ? "failed" : "done", detail: mail.failed ? `${mail.sent} sent · ${mail.failed} failed` : `${mail.sent} sent` });
+      notify(mail.failed ? `Join link emailed to ${mail.sent}; ${mail.failed} failed` : `Join link emailed to ${mail.sent} students`);
+    }
+    setOutcome((cur) => (cur ? { ...cur, notified: mail.sent, emailPending: false } : cur));
+  };
+
+  const finish = () => {
+    if (!outcome) return;
+    onResult({ status: outcome.status, when: outcome.when, link: studentLink, notified: outcome.emailPending ? -1 : outcome.notified });
   };
 
   const visibleEmails = expanded ? emails : emails.slice(0, 5);
@@ -724,8 +772,18 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
       <div className="w-full max-w-2xl border border-line bg-paper shadow-2xl">
         <div className="flex items-start justify-between border-b border-line px-6 py-5">
           <div><h2 className="font-serif text-2xl font-semibold">Publish &amp; share — {name}</h2><p className="mt-1 text-[12px] text-soft">{exam.id} · {exam.batch} · {pool} questions · {duration} min</p></div>
-          <button onClick={onClose} aria-label="Close" className="text-xl leading-none text-soft hover:text-ink">×</button>
+          <button onClick={onClose} disabled={busy} aria-label="Close" className="text-xl leading-none text-soft hover:text-ink disabled:opacity-30">×</button>
         </div>
+        {steps ? (
+          <PublishProgress
+            steps={steps}
+            elapsed={elapsed}
+            canFinish={!!outcome}
+            emailing={emailing}
+            onRetry={() => { setSteps(null); setOutcome(null); }}
+            onFinish={finish}
+          />
+        ) : (<>
         <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
           <div className="grid grid-cols-2 gap-px border border-line bg-line sm:grid-cols-4">
             <div className="bg-paper px-4 py-3"><p className="font-serif text-xl">{pool}</p><p className="font-mono text-[9px] uppercase tracking-wider text-soft">Questions</p></div>
@@ -796,7 +854,54 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
             <button onClick={() => void publish("published", null)} disabled={!ready || busy} className={`inline-flex items-center justify-center gap-2 border px-6 py-3 font-mono text-[10px] uppercase tracking-wider ${ready && !busy ? "border-forest bg-forest text-paper hover:bg-forest-soft" : "cursor-not-allowed border-line bg-line/30 text-soft"}`}>{busy ? "Publishing…" : notifyStudents && emails.length > 0 ? <><FiMail /> Publish &amp; email {emails.length}</> : <><FiCheck /> Publish now</>}</button>
           </div>
         </div>
+        </>)}
       </div>
     </div>
+  );
+}
+
+type PublishStep = { key: "publish" | "enroll" | "email"; label: string; state: "waiting" | "running" | "done" | "failed" | "skipped"; detail?: string };
+
+function PublishProgress({ steps, elapsed, canFinish, emailing, onRetry, onFinish }: {
+  steps: PublishStep[]; elapsed: number; canFinish: boolean; emailing: boolean; onRetry: () => void; onFinish: () => void;
+}) {
+  const publishFailed = steps[0].state === "failed";
+  return (
+    <>
+      <ol className="px-6 py-6">
+        {steps.map((st, i) => (
+          <li key={st.key} className="flex gap-4">
+            <div className="flex flex-col items-center">
+              <span className={`flex h-7 w-7 shrink-0 items-center justify-center border font-mono text-[11px] ${
+                st.state === "done" ? "border-forest bg-forest text-paper"
+                : st.state === "failed" ? "border-alert text-alert"
+                : st.state === "running" ? "border-forest text-forest"
+                : "border-line text-soft"}`}>
+                {st.state === "done" ? <FiCheck /> : st.state === "failed" ? <FiX /> : st.state === "running" ? <span className="h-3 w-3 animate-spin border border-forest border-t-transparent" /> : i + 1}
+              </span>
+              {i < steps.length - 1 && <span className={`my-1 w-px flex-1 ${st.state === "done" ? "bg-forest" : "bg-line"}`} />}
+            </div>
+            <div className="pb-6">
+              <p className={`text-[14px] ${st.state === "waiting" || st.state === "skipped" ? "text-soft" : "font-medium"}`}>{st.label}</p>
+              <p className={`mt-0.5 text-[12px] ${st.state === "failed" ? "text-alert" : "text-soft"}`}>
+                {st.state === "running" && st.key === "email" ? `Sending through Gmail… ${elapsed}s. Large batches can take a minute.` : st.state === "running" ? "Working…" : st.detail ?? (st.state === "waiting" ? "Waiting" : "")}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-6 py-4">
+        <p className="text-[12px] text-soft">
+          {publishFailed ? "Nothing was published. Fix the problem and try again." : emailing ? "The exam is already live. You can continue while emails send." : canFinish ? "All done." : "Please wait…"}
+        </p>
+        {publishFailed ? (
+          <button onClick={onRetry} className="border border-forest px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-forest/5">Back</button>
+        ) : (
+          <button onClick={onFinish} disabled={!canFinish} className="border border-forest bg-forest px-5 py-3 font-mono text-[10px] uppercase tracking-wider text-paper hover:bg-forest-soft disabled:opacity-40">
+            {emailing ? "Continue — emails keep sending" : "Get join link"}
+          </button>
+        )}
+      </div>
+    </>
   );
 }

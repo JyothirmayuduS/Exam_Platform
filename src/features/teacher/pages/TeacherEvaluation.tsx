@@ -661,11 +661,17 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
           </div>
         </main>
 
-        <aside className="border-t border-line bg-paper-raised lg:overflow-y-auto lg:border-l lg:border-t-0">
+        <aside className="flex flex-col border-t border-line bg-paper-raised lg:min-h-0 lg:border-l lg:border-t-0">
           <EvaluatorCamera cam={cam} profileName={profileName} />
-          <ScoreSummary awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} blockers={blockers} saving={savingGrade} commentsMandatory={commentsMandatory} onFinish={() => void finish(false)} onFinishNext={() => void finish(true)} onFlagModeration={flagModeration} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
-          <IntegrityPanel flags={candidate.flags} onOpenRecording={openRecording} />
-          <div className="p-5"><AIIntegrityCard attemptId={cid} /></div>
+          <div className="flex-1 lg:overflow-y-auto">
+            <GradeBreakdown awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} />
+            <IntegrityPanel flags={candidate.flags} onOpenRecording={openRecording} />
+            <section className="px-5 py-5">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">AI integrity report</p>
+              <div className="mt-3"><AIIntegrityCard attemptId={cid} plain /></div>
+            </section>
+          </div>
+          <SaveBar blockers={blockers} saving={savingGrade} commentsMandatory={commentsMandatory} manualCount={manualQs.length} onFinish={() => void finish(false)} onFinishNext={() => void finish(true)} onFlagModeration={flagModeration} hasNext={Boolean(nextUngraded)} nextName={nextUngraded?.name} />
         </aside>
       </div>
 
@@ -755,7 +761,7 @@ function IntegrityPanel({ flags, onOpenRecording }: { flags: Flag[]; onOpenRecor
     <section className="border-b border-line px-5 py-5">
       <div className="flex items-center justify-between">
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Exam integrity</p>
-        <button onClick={onOpenRecording} className="font-mono text-[9px] uppercase tracking-wider text-forest hover:underline">Watch recording →</button>
+        <button onClick={onOpenRecording} className="border border-line-strong bg-paper px-2.5 py-1.5 font-mono text-[9px] uppercase tracking-wider text-forest hover:border-forest">▶ Recording</button>
       </div>
       {flags.length === 0 ? (
         <p className="mt-2 text-[12.5px] text-success">No proctoring flags during the exam.</p>
@@ -1222,47 +1228,57 @@ function VoicePlayButton({ voiceKey }: { voiceKey: string }) {
   return <audio controls src={url} className="h-8 w-44" />;
 }
 
-function ScoreSummary({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount, blockers, saving, commentsMandatory, onFinish, onFinishNext, onFlagModeration, hasNext, nextName }: {
+function GradeBreakdown({ awarded, max, autoTotal, manualTotal, gradedManual, manualCount }: {
   awarded: number; max: number; autoTotal: number; manualTotal: number; gradedManual: number; manualCount: number;
-  blockers: string[]; saving: boolean; commentsMandatory: boolean;
-  onFinish: () => void; onFinishNext: () => void; onFlagModeration: () => void; hasNext: boolean; nextName?: string;
 }) {
-  const done = blockers.length === 0;
   const pct = max > 0 ? Math.round((awarded / max) * 100) : 0;
   return (
     <section className="border-b border-line px-5 py-5">
-      <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Grade</p>
-      <div className="mt-2 flex items-baseline justify-between">
-        <p className="font-serif text-[40px] leading-none tabular-nums">{awarded}<span className="text-lg text-ink-soft"> / {max}</span></p>
-        <span className="font-mono text-[13px] tabular-nums text-forest">{pct}%</span>
+      <div className="flex items-baseline justify-between">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Grade</p>
+        <span className="font-mono text-[11px] tabular-nums text-forest">{pct}%</span>
       </div>
+      <p className="mt-2 font-serif text-[40px] leading-none tabular-nums">{awarded}<span className="text-lg text-ink-soft"> / {max}</span></p>
       <div className="mt-3 h-1 bg-line"><div className="h-full bg-forest transition-[width]" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
-      <dl className="mt-4 divide-y divide-line border-y border-line text-[12px]">
-        <div className="flex justify-between py-2"><dt className="text-ink-soft">Objective (auto)</dt><dd className="tabular-nums">{autoTotal}</dd></div>
-        <div className="flex justify-between py-2"><dt className="text-ink-soft">Written (you)</dt><dd className="tabular-nums">{manualTotal}</dd></div>
-        <div className="flex justify-between py-2"><dt className="text-ink-soft">Written answers scored</dt><dd className="tabular-nums">{gradedManual} / {manualCount}</dd></div>
+      <dl className="mt-4 grid grid-cols-3 border border-line bg-paper text-center">
+        <div className="px-2 py-2.5"><dt className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Objective</dt><dd className="mt-0.5 font-serif text-lg tabular-nums">{autoTotal}</dd></div>
+        <div className="border-x border-line px-2 py-2.5"><dt className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Written</dt><dd className="mt-0.5 font-serif text-lg tabular-nums">{manualTotal}</dd></div>
+        <div className="px-2 py-2.5"><dt className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Scored</dt><dd className="mt-0.5 font-serif text-lg tabular-nums">{gradedManual}/{manualCount}</dd></div>
       </dl>
+    </section>
+  );
+}
+
+function SaveBar({ blockers, saving, commentsMandatory, manualCount, onFinish, onFinishNext, onFlagModeration, hasNext, nextName }: {
+  blockers: string[]; saving: boolean; commentsMandatory: boolean; manualCount: number;
+  onFinish: () => void; onFinishNext: () => void; onFlagModeration: () => void; hasNext: boolean; nextName?: string;
+}) {
+  const done = blockers.length === 0;
+  return (
+    <footer className="border-t border-line bg-paper px-5 py-4 shadow-[0_-8px_16px_-12px_rgba(26,24,20,0.18)]">
       {done ? (
-        <p className="mt-4 flex items-center gap-1.5 text-[12px] text-success"><FiCheck aria-hidden /> Ready to save</p>
+        <p className="flex items-center gap-1.5 text-[12px] text-success"><FiCheck aria-hidden /> Ready to save</p>
       ) : (
-        <ul className="mt-4 space-y-1 border-l-2 border-amber pl-3 text-[12px] text-ink">
+        <ul className="space-y-0.5 border-l-2 border-amber pl-3 text-[12px]">
           {blockers.map((b) => <li key={b}>{b}</li>)}
         </ul>
       )}
-      {commentsMandatory && manualCount > 0 && <p className="mt-2 text-[11px] text-ink-soft">Comments are required on written answers for this exam.</p>}
-      <div className="mt-4 grid gap-2">
+      {commentsMandatory && manualCount > 0 && <p className="mt-1.5 text-[11px] text-ink-soft">Comments are required on written answers.</p>}
+      <div className="mt-3 grid gap-2">
         {hasNext && (
           <button onClick={onFinishNext} disabled={saving} className={`flex items-center justify-between border border-forest bg-forest px-4 py-3 text-left text-paper transition hover:bg-forest-soft disabled:opacity-50 ${done ? "" : "opacity-60"}`}>
             <span className="font-mono text-[10px] uppercase tracking-wider">{saving ? "Saving…" : "Save & next"}</span>
-            {!saving && <span className="max-w-[150px] truncate text-[11px] text-paper/80">{nextName} →</span>}
+            {!saving && <span className="max-w-[160px] truncate text-[11px] text-paper/80">{nextName} →</span>}
           </button>
         )}
-        <button onClick={onFinish} disabled={saving} className={`border px-4 py-3 font-mono text-[10px] uppercase tracking-wider transition disabled:opacity-50 ${hasNext ? "border-line-strong text-ink hover:border-forest hover:text-forest" : "border-forest bg-forest text-paper hover:bg-forest-soft"} ${done ? "" : "opacity-60"}`}>
-          {saving ? "Saving…" : hasNext ? "Save & back to roster" : "Save grade"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={onFinish} disabled={saving} className={`flex-1 border px-4 py-2.5 font-mono text-[10px] uppercase tracking-wider transition disabled:opacity-50 ${hasNext ? "border-line-strong text-ink hover:border-forest hover:text-forest" : "border-forest bg-forest py-3 text-paper hover:bg-forest-soft"} ${done ? "" : "opacity-60"}`}>
+            {saving ? "Saving…" : hasNext ? "Save & exit" : "Save grade"}
+          </button>
+          <button onClick={onFlagModeration} title="Flag paper for moderation" className="border border-line-strong px-3 py-2.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:border-alert">Flag</button>
+        </div>
       </div>
-      <button onClick={onFlagModeration} className="mt-3 font-mono text-[9px] uppercase tracking-wider text-alert hover:underline">Flag paper for moderation</button>
-    </section>
+    </footer>
   );
 }
 

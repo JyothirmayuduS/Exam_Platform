@@ -16,6 +16,9 @@ const CORS = {
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
+  pool: true,
+  maxConnections: 5,
+  maxMessages: 100,
   auth: {
     user: Deno.env.get("GMAIL_USER"),
     pass: Deno.env.get("GMAIL_APP_PASSWORD"),
@@ -31,7 +34,7 @@ Deno.serve(async (req) => {
   if (!supabaseUrl || !serviceRole) return json({ error: "Missing Supabase secrets" }, 500);
 
   const db = createClient(supabaseUrl, serviceRole);
-  const { examId, studentEmails, appBaseUrl: reqBaseUrl } = await req.json().catch(() => ({ examId: null, studentEmails: [], appBaseUrl: null }));
+  const { examId, studentEmails, studentIds, appBaseUrl: reqBaseUrl } = await req.json().catch(() => ({ examId: null, studentEmails: [], studentIds: null, appBaseUrl: null }));
 
   if (!examId) return json({ error: "examId is required" }, 400);
 
@@ -43,10 +46,12 @@ Deno.serve(async (req) => {
   if (Array.isArray(studentEmails) && studentEmails.length > 0) {
     recipients = studentEmails.map((email: string) => ({ student_id: "manual", email, full_name: "Student" }));
   } else {
-    const { data } = await db
+    let query = db
       .from("enrollments")
       .select("student_id,student:students(email,full_name,roll,unsubscribed_emails)")
       .eq("exam_id", examId);
+    if (Array.isArray(studentIds) && studentIds.length > 0) query = query.in("student_id", studentIds);
+    const { data } = await query;
 
     recipients = (data ?? [])
       .map((row) => {
