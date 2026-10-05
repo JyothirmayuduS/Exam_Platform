@@ -10,6 +10,20 @@
 
 use tauri::{Manager, WindowEvent};
 
+#[cfg(target_os = "windows")]
+mod winlock;
+
+/// Child process without a console window flashing over the kiosk (this is a
+/// GUI-subsystem app, so console tools would otherwise open one).
+#[cfg(target_os = "windows")]
+fn quiet_command(program: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut cmd = std::process::Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
 const LOCKDOWN_JS: &str = r#"
 (() => {
   if (window.__vignanLockdown) return;
@@ -88,7 +102,8 @@ fn check_prohibited_apps() -> Vec<String> {
     let prohibited = vec![
         "anydesk", "teamviewer", "zoom.us", "zoom.exe", "skype", "discord", "rustdesk",
         "dwservice", "zoho", "logmein", "splashtop", "chrome remote desktop", "vncserver", "vncviewer", "realvnc",
-        "cheatengine", "x64dbg", "wireshark", "processhacker", "ollydbg", "fiddler", "charles"
+        "cheatengine", "x64dbg", "wireshark", "processhacker", "ollydbg", "fiddler", "charles",
+        "obs64", "obs32", "sharex", "snagit", "bandicam", "parsec", "msra.exe", "mstsc.exe"
     ];
     
     let mut found = Vec::new();
@@ -116,18 +131,16 @@ fn check_prohibited_apps() -> Vec<String> {
     found
 }
 
+/// Windows: keyboard hook, hidden taskbar and Ctrl+Alt+Del policies
+/// (Task Manager, lock, sign-out). macOS locks through presentation options.
 #[cfg(target_os = "windows")]
 fn disable_task_manager() {
-    let _ = std::process::Command::new("reg")
-        .args(&["add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", "/v", "DisableTaskMgr", "/t", "REG_DWORD", "/d", "1", "/f"])
-        .output();
+    winlock::lock();
 }
 
 #[cfg(target_os = "windows")]
 fn enable_task_manager() {
-    let _ = std::process::Command::new("reg")
-        .args(&["add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", "/v", "DisableTaskMgr", "/t", "REG_DWORD", "/d", "0", "/f"])
-        .output();
+    winlock::unlock();
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -139,11 +152,10 @@ fn enable_task_manager() {}
 fn detect_vm() -> bool {
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = std::process::Command::new("wmic").args(&["computersystem", "get", "manufacturer,model"]).output() {
-            let out_str = String::from_utf8_lossy(&output.stdout).to_lowercase();
-            if out_str.contains("vmware") || out_str.contains("virtualbox") || out_str.contains("qemu") || out_str.contains("parallels") {
-                return true;
-            }
+        let id = winlock::bios_identity();
+        const VM: &[&str] = &["vmware", "virtualbox", "innotek", "qemu", "kvm", "parallels", "xen", "virtual machine", "bochs"];
+        if VM.iter().any(|v| id.contains(v)) {
+            return true;
         }
     }
     #[cfg(target_os = "macos")]
@@ -209,7 +221,7 @@ fn open_student_side(url: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let status = std::process::Command::new("open").arg(&url).status();
     #[cfg(target_os = "windows")]
-    let status = std::process::Command::new("cmd")
+    let status = quiet_command("cmd")
         .args(["/C", "start", "", &url])
         .status();
     #[cfg(target_os = "linux")]
@@ -267,10 +279,13 @@ fn media_permission_prompt(kind: String) -> String {
     {
         av_status(&kind)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        winlock::media_status(&kind)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = kind;
-        // WebView2 does not gate getUserMedia behind an OS dialog.
         "granted".to_string()
     }
 }
@@ -307,7 +322,13 @@ async fn request_media_access(kind: String) -> String {
             None => av_status(&kind),
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    // WebView2 has no OS dialog; the privacy switches are flipped in place so
+    // the student never leaves the kiosk for Settings.
+    #[cfg(target_os = "windows")]
+    {
+        winlock::request_media(&kind)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = kind;
         "granted".to_string()
@@ -364,6 +385,8 @@ fn begin_permission_phase(app: tauri::AppHandle) {
         }
         #[cfg(target_os = "macos")]
         set_kiosk_presentation(false);
+        #[cfg(target_os = "windows")]
+        winlock::set_bypass(true);
     });
 }
 
@@ -375,6 +398,8 @@ fn end_permission_phase(app: tauri::AppHandle) {
     let _ = app.run_on_main_thread(move || {
         #[cfg(target_os = "macos")]
         set_kiosk_presentation(true);
+        #[cfg(target_os = "windows")]
+        winlock::set_bypass(false);
         if let Some(win) = handle.get_webview_window("exam") {
             let _ = win.set_fullscreen(true);
             let _ = win.set_always_on_top(true);
@@ -496,7 +521,7 @@ fn open_media_settings(kind: String) -> Result<(), String> {
         } else {
             "ms-settings:privacy-webcam"
         };
-        std::process::Command::new("cmd")
+        quiet_command("cmd")
             .args(["/C", "start", "", pane])
             .status()
             .map(|_| ())
@@ -547,14 +572,16 @@ fn set_window_sharing(app: tauri::AppHandle, allow: bool) {
             }
         }
     }
+    // Kiosk frames come from the WebView2 snapshot, which ignores display
+    // affinity, so the window stays excluded from Snipping Tool / PrintScreen
+    // even while the screen is shared.
     #[cfg(target_os = "windows")]
     {
+        let _ = allow;
         if let Some(win) = app.get_webview_window("exam") {
             if let Ok(hwnd) = win.hwnd() {
                 unsafe {
-                    // 0x00 = WDA_NONE (capturable), 0x11 = WDA_EXCLUDEFROMCAPTURE
-                    let affinity: u32 = if allow { 0x00 } else { 0x11 };
-                    SetWindowDisplayAffinity(hwnd.0 as *mut _, affinity);
+                    SetWindowDisplayAffinity(hwnd.0 as *mut _, 0x11);
                 }
             }
         }
@@ -661,6 +688,61 @@ unsafe fn nsimage_jpeg(image: *mut objc2::runtime::AnyObject) -> Option<Vec<u8>>
     Some(std::slice::from_raw_parts(ptr, len).to_vec())
 }
 
+/// JPEG of the kiosk page rendered by WebView2. Needs no permission and is not
+/// affected by WDA_EXCLUDEFROMCAPTURE; the kiosk covers the display with
+/// switching locked, so this is what the student sees.
+#[cfg(target_os = "windows")]
+async fn snapshot_webview(win: &tauri::WebviewWindow) -> Result<Vec<u8>, String> {
+    use webview2_com::CapturePreviewCompletedHandler;
+    use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG;
+    use windows::Win32::UI::Shell::SHCreateMemStream;
+
+    let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
+    win.with_webview(move |wv| unsafe {
+        let started = (|| -> windows::core::Result<()> {
+            let core = wv.controller().CoreWebView2()?;
+            let stream = SHCreateMemStream(None)
+                .ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_OUTOFMEMORY))?;
+            let out = stream.clone();
+            let done = tx.clone();
+            let handler = CapturePreviewCompletedHandler::create(Box::new(move |hr| {
+                let bytes = if hr.is_ok() { read_stream(&out) } else { None };
+                let _ = done.send(bytes);
+                Ok(())
+            }));
+            core.CapturePreview(COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG, &stream, &handler)
+        })();
+        if started.is_err() {
+            let _ = tx.send(None);
+        }
+    })
+    .map_err(|e| format!("snapshot: {e}"))?;
+    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(3)))
+        .await
+        .map_err(|e| format!("snapshot: {e}"))?
+        .map_err(|_| "snapshot timed out".to_string())?
+        .ok_or_else(|| "snapshot failed".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn read_stream(stream: &windows::Win32::System::Com::IStream) -> Option<Vec<u8>> {
+    use windows::Win32::System::Com::STREAM_SEEK_SET;
+    unsafe {
+        stream.Seek(0, STREAM_SEEK_SET, None).ok()?;
+        let mut out = Vec::new();
+        let mut chunk = vec![0u8; 64 * 1024];
+        loop {
+            let mut read = 0u32;
+            let hr = stream.Read(chunk.as_mut_ptr() as *mut _, chunk.len() as u32, Some(&mut read));
+            if hr.is_err() || read == 0 {
+                break;
+            }
+            out.extend_from_slice(&chunk[..read as usize]);
+        }
+        if out.is_empty() { None } else { Some(out) }
+    }
+}
+
 /// JPEG frame for the kiosk screen-share pipeline — never a picker, never a
 /// trip to System Settings. With Screen Recording already granted it is the
 /// whole display; otherwise it is the kiosk page itself.
@@ -670,6 +752,12 @@ async fn capture_display_jpeg(app: tauri::AppHandle) -> Result<String, String> {
     if !screen_recording_granted_cached() {
         return snapshot_exam_window(&app).await.map(|b| jpeg_base64(&b));
     }
+    #[cfg(target_os = "windows")]
+    {
+        let win = app.get_webview_window("exam").ok_or("exam window missing")?;
+        return snapshot_webview(&win).await.map(|b| jpeg_base64(&b));
+    }
+    #[allow(unreachable_code)]
     let _ = &app;
     let path = std::env::temp_dir().join(format!("vignan-scr-{}.jpg", std::process::id()));
     let path_str = path.to_string_lossy().to_string();
@@ -686,21 +774,6 @@ async fn capture_display_jpeg(app: tauri::AppHandle) -> Result<String, String> {
         let _ = std::process::Command::new("sips")
             .args(["-Z", "1280", &path_str])
             .status();
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b=[System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp=New-Object Drawing.Bitmap $b.Width,$b.Height; $g=[Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Left,$b.Top,0,0,$bmp.Size); $bmp.Save('{}',[Drawing.Imaging.ImageFormat]::Jpeg);",
-            path_str.replace('\\', "\\\\").replace('\'', "''")
-        );
-        let status = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .status()
-            .map_err(|e| format!("powershell capture: {e}"))?;
-        if !status.success() {
-            return Err("windows screen capture failed".into());
-        }
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -761,27 +834,6 @@ fn screen_capture_excluded(app: tauri::AppHandle) -> bool {
 unsafe fn get_window_display_affinity(hwnd: *mut std::ffi::c_void, out: &mut u32) -> bool {
     GetWindowDisplayAffinity(hwnd, out) != 0
 }
-
-#[cfg(target_os = "windows")]
-fn enforce_admin_privileges() {
-    // NOTE: Deliberately NON-FATAL. The NSIS bundle installs per-user
-    // (installMode = currentUser), so the app legitimately runs unelevated —
-    // a hard admin requirement here meant the exe flashed and exited silently
-    // on every normal install ("the app never opens"). All lockdown features
-    // (task-manager disable via HKCU, kiosk window, watchdogs) work per-user;
-    // if elevation is available we simply note it.
-    let is_admin = std::process::Command::new("reg")
-        .args(&["query", "HKU\\S-1-5-19"])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false);
-    if !is_admin {
-        println!("NOTICE: running without administrator privileges (per-user install) — continuing.");
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn enforce_admin_privileges() {}
 
 #[cfg(target_os = "windows")]
 extern "system" {
@@ -973,7 +1025,11 @@ fn keyboard_lock_status() -> String {
     {
         if keylock::active() { "granted".into() } else { "denied".into() }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        if winlock::keyboard_active() { "granted".into() } else { "denied".into() }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         "granted".to_string()
     }
@@ -981,13 +1037,25 @@ fn keyboard_lock_status() -> String {
 
 /// (Re)apply the keyboard lock. Never sends the student to System Settings.
 #[tauri::command]
-fn keyboard_lock_request() -> String {
+async fn keyboard_lock_request() -> String {
     #[cfg(target_os = "macos")]
     {
         keylock::start();
         if keylock::active() { "granted".into() } else { "denied".into() }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        winlock::lock();
+        // The hook thread installs itself asynchronously.
+        for _ in 0..20 {
+            if winlock::keyboard_active() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        if winlock::keyboard_active() { "granted".into() } else { "denied".into() }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         "granted".to_string()
     }
@@ -1011,8 +1079,6 @@ fn main() {
         #[cfg(not(target_os = "macos"))]
         std::process::exit(0);
     }
-    enforce_admin_privileges();
-
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             check_prohibited_apps,
@@ -1224,7 +1290,7 @@ fn main() {
             // Spawn Watchdog
             if let Ok(exe) = std::env::current_exe() {
                 let mut watchdog_path = exe.clone();
-                watchdog_path.set_file_name("vignan-watchdog");
+                watchdog_path.set_file_name(format!("vignan-watchdog{}", std::env::consts::EXE_SUFFIX));
                 if watchdog_path.exists() {
                     let _ = std::process::Command::new(watchdog_path)
                         .arg(std::process::id().to_string())
@@ -1243,6 +1309,8 @@ fn main() {
                     if in_permission_phase() {
                         continue;
                     }
+                    #[cfg(target_os = "windows")]
+                    winlock::reassert();
                     let apps = check_prohibited_apps();
                     if !apps.is_empty() {
                         let list = apps.join(", ");

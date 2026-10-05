@@ -1,3 +1,9 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+#[cfg(target_os = "windows")]
+#[path = "../winlock.rs"]
+mod winlock;
+
 use std::env;
 use std::process::Command;
 use std::thread;
@@ -29,6 +35,7 @@ fn main() {
             let flag_path = env::temp_dir().join("vignan_exit.flag");
             if flag_path.exists() {
                 let _ = std::fs::remove_file(flag_path);
+                restore_desktop();
                 std::process::exit(0); // Intentional exit, don't restart
             }
             
@@ -41,6 +48,7 @@ fn main() {
                 }
                 Err(e) => {
                     eprintln!("Watchdog: Failed to restart application: {}", e);
+                    restore_desktop();
                 }
             }
             
@@ -50,4 +58,11 @@ fn main() {
         
         thread::sleep(Duration::from_millis(500));
     }
+}
+
+/// Taskbar and Ctrl+Alt+Del policies back to normal once the exam browser is
+/// gone for good (its own keyboard hook dies with it).
+fn restore_desktop() {
+    #[cfg(target_os = "windows")]
+    winlock::restore_desktop();
 }

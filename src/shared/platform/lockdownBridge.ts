@@ -256,7 +256,7 @@ export async function screenCaptureStatus(): Promise<"granted" | "denied" | null
   }
 }
 
-/** "granted" once the system-wide keyboard lock is running (macOS needs Accessibility for it). */
+/** "granted" once the system-wide keyboard lock is running. */
 export async function keyboardLockStatus(): Promise<"granted" | "denied" | null> {
   if (!inKiosk()) return null;
   try {
@@ -267,7 +267,7 @@ export async function keyboardLockStatus(): Promise<"granted" | "denied" | null>
   }
 }
 
-/** Ask macOS for the Accessibility permission the keyboard lock needs. */
+/** Start the system-wide keyboard lock (no permission prompt on either OS). */
 export async function requestKeyboardLock(): Promise<"granted" | "denied" | null> {
   if (!inKiosk()) return null;
   try {

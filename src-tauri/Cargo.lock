@@ -4294,6 +4294,8 @@ dependencies = [
  "tauri-plugin-deep-link",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
+ "webview2-com",
+ "windows 0.62.2",
 ]
 
 [[package]]

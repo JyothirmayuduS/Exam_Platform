@@ -15,7 +15,7 @@ type DeviceAccessFullProps = {
   cam: AccessState;
   mic: AccessState;
   screen: AccessState;
-  /** Kiosk only: system-wide shortcut lock (macOS Accessibility). */
+  /** Kiosk only: system-wide shortcut lock (macOS hot keys / Windows keyboard hook). */
   keyboard?: AccessState;
   requesting: boolean;
   devicesReady: boolean;

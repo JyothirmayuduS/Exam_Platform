@@ -197,7 +197,7 @@ function StudentExamSession() {
   const [cam, setCam] = useState<"idle" | "granted" | "denied">("idle");
   const [mic, setMic] = useState<"idle" | "granted" | "denied">("idle");
   const [screen, setScreen] = useState<"idle" | "granted" | "denied">("idle");
-  // Kiosk only: the system-wide keyboard lock (macOS Accessibility).
+  // Kiosk only: the system-wide keyboard lock (macOS hot keys / Windows keyboard hook).
   const [keyboard, setKeyboard] = useState<"idle" | "granted" | "denied">(isTauri() ? "idle" : "granted");
   const [requesting, setRequesting] = useState(false);
   const [screenNeedsRestart, setScreenNeedsRestart] = useState(false);
