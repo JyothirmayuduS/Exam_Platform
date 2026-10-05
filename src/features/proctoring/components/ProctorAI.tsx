@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CADENCE,
   PHONE_ACK_MS,
+  EARBUDS_VISUAL_ACK_MS,
   GAZE,
   FACE,
   OBJECT,
@@ -33,8 +34,10 @@ import {
   lowerRegion,
   pushObjectSample,
   proctorDiag,
+  faceGeometryFromLandmarks,
+  refineDetections,
 } from "@/features/proctoring/domain";
-import type { Detection, ProctorCategory, RiskLevel } from "@/features/proctoring/domain";
+import type { BBox, Detection, FaceGeometry, ProctorCategory, RiskLevel } from "@/features/proctoring/domain";
 import { env } from "@/shared/data/env";
 import ProctorDebugOverlay from "@/features/proctoring/components/ProctorDebugOverlay";
 
@@ -266,57 +269,57 @@ function toDetections(
 }
 
 /**
- * Second detection pass on an upscaled crop of the lower desk/hands region.
+ * Extra detection pass on a zoomed crop of one region of the frame.
  *
- * Phones are small objects: the full-frame pass frequently misses a phone that
- * comfortably fills 40% of a quarter-frame crop. We copy the bottom
- * `PHONE_ROI_FRACTION` of the frame to an offscreen canvas (up to the input
- * dimensions MediaPipe already works at), run the IMAGE-mode detector, and map
- * every returned PIXEL box back into FULL-FRAME normalized [0,1] coordinates
- * so it composes with the full-frame pass before identity tracking.
+ * Phones at the frame edge or held low and earbuds are small objects: the
+ * full-frame pass misses them, but the same object fills a large part of a
+ * crop (the detector rescales its input to 320 px). Every returned PIXEL box is
+ * mapped back into FULL-FRAME normalized [0,1] coordinates so it composes with
+ * the full-frame pass before identity tracking. `earMode` reports any
+ * phone-like / ear-worn hit inside an ear crop as earbuds.
  */
-function detectDeskRoi(
-  now: number,
-  vw: number,
-  vh: number,
+function detectRegion(
+  region: BBox,
   video: HTMLVideoElement,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   roiDetector: any,
+  earMode = false,
 ): Detection[] {
-  const roi = lowerRegion(OBJECT.PHONE_ROI_FRACTION); // normalized full-frame ROI
-  const roiX = Math.round(roi.x * vw);
-  const roiY = Math.round(roi.y * vh);
-  const roiW = Math.round(roi.width * vw);
-  const roiH = Math.round(roi.height * vh);
-  if (roiW < 16 || roiH < 16) return [];
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const roiX = Math.round(region.x * vw);
+  const roiY = Math.round(region.y * vh);
+  const roiW = Math.round(region.width * vw);
+  const roiH = Math.round(region.height * vh);
+  if (!roiDetector || roiW < 16 || roiH < 16) return [];
 
   try {
     const canvas = document.createElement("canvas");
     canvas.width = roiW;
     canvas.height = roiH;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const ctx = canvas.getContext("2d");
     if (!ctx) return [];
-    ctx.drawImage(video, -roiX, -roiY);
+    ctx.drawImage(video, roiX, roiY, roiW, roiH, 0, 0, roiW, roiH);
 
-    if (!roiDetector) return [];
     const result = roiDetector.detect(canvas);
     const out: Detection[] = [];
     for (const d of result?.detections ?? []) {
       for (const c of d?.categories ?? []) {
-        const kind = classifyObject(String(c.categoryName ?? ""));
+        const rawLabel = String(c.categoryName ?? "");
+        let kind = classifyObject(rawLabel);
+        if (earMode && (kind === "phone" || kind === "earbuds" || /mouse/i.test(rawLabel))) kind = "earbuds";
+        else if (earMode) continue;
         const score = Number(c.score ?? 0);
         if (!kind || !d.boundingBox) continue;
+        if (score < minConfForKind(kind)) continue;
         const box = d.boundingBox;
-        const minConf = minConfForKind(kind);
-        if (score < minConf) continue;
-        // Crop-local pixels / full-frame normalized.
         const px = Math.max(0, Number(box.originX ?? 0)) + roiX;
         const py = Math.max(0, Number(box.originY ?? 0)) + roiY;
         const pw = Math.max(0, Number(box.width ?? 0));
         const ph = Math.max(0, Number(box.height ?? 0));
         out.push({
           kind,
-          label: String(c.categoryName),
+          label: earMode ? `${rawLabel} (ear crop)` : rawLabel,
           score,
           bbox: {
             x: Math.min(1, px / vw),
@@ -329,9 +332,71 @@ function detectDeskRoi(
     }
     return out;
   } catch {
-    return []; // ROI pass is best-effort — never crash the detection loop
+    return []; // crop pass is best-effort — never crash the detection loop
   }
 }
+
+/**
+ * White earbuds (AirPods-style) read as a compact patch of bright, colourless
+ * pixels inside the ear zone that is far brighter than the cheek. Returns a
+ * synthetic detection so it still needs tracker confirmation like any object.
+ */
+function whiteEarbudAt(video: HTMLVideoElement, ear: BBox, face: BBox): Detection | null {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const S = 48;
+  try {
+    const c = document.createElement("canvas");
+    c.width = S;
+    c.height = S;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    // Cheek reference: centre-left of the face box.
+    ctx.drawImage(video, (face.x + face.width * 0.25) * vw, (face.y + face.height * 0.55) * vh, face.width * 0.15 * vw, face.height * 0.12 * vh, 0, 0, 8, 8);
+    const cheek = ctx.getImageData(0, 0, 8, 8).data;
+    let skin = 0;
+    for (let i = 0; i < cheek.length; i += 4) skin += (cheek[i] + cheek[i + 1] + cheek[i + 2]) / 3;
+    skin /= cheek.length / 4;
+
+    ctx.drawImage(video, ear.x * vw, ear.y * vh, ear.width * vw, ear.height * vh, 0, 0, S, S);
+    const px = ctx.getImageData(0, 0, S, S).data;
+    const gate = Math.max(195, skin + 70);
+    let bright = 0, sx = 0, sy = 0;
+    for (let i = 0, n = 0; i < px.length; i += 4, n++) {
+      const r = px[i], g = px[i + 1], b = px[i + 2];
+      const lum = (r + g + b) / 3;
+      if (lum >= gate && Math.max(r, g, b) - Math.min(r, g, b) < 38) {
+        bright++;
+        sx += n % S;
+        sy += Math.floor(n / S);
+      }
+    }
+    const frac = bright / (S * S);
+    if (frac < 0.006 || frac > 0.07) return null; // none, or a lit wall/window
+    let spread = 0;
+    const mx = sx / bright, my = sy / bright;
+    for (let i = 0, n = 0; i < px.length; i += 4, n++) {
+      const r = px[i], g = px[i + 1], b = px[i + 2];
+      if ((r + g + b) / 3 >= gate && Math.max(r, g, b) - Math.min(r, g, b) < 38) {
+        spread += Math.hypot((n % S) - mx, Math.floor(n / S) - my);
+      }
+    }
+    if (spread / bright > S * 0.18) return null; // scattered highlights, not one object
+    const score = Math.min(0.6, 0.25 + frac * 5);
+    const bw = (Math.sqrt(bright) / S) * ear.width * 1.6;
+    return {
+      kind: "earbuds",
+      label: "white earbud at ear",
+      score,
+      bbox: { x: ear.x + (mx / S) * ear.width - bw / 2, y: ear.y + (my / S) * ear.height - bw / 2, width: bw, height: bw },
+    };
+  } catch {
+    return null;
+  }
+}
+
+const EDGE_LEFT: BBox = { x: 0, y: 0.15, width: 0.4, height: 0.85 };
+const EDGE_RIGHT: BBox = { x: 0.6, y: 0.15, width: 0.4, height: 0.85 };
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function ProctorAI({ cameraStream, active, onViolation, onStatus }: Props) {
@@ -384,6 +449,9 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   const tAudio   = useRef(0);
   const lastAck  = useRef(0);
   const lastEarbudsAck = useRef(0);
+  const lastEarbudsVisualAck = useRef(0);
+  const faceGeoRef = useRef<FaceGeometry | null>(null);
+  const cropTurn = useRef(0);
   const frameDims = useRef(""); // diag: log the frame size once per change
   // rAF fps measurement (diagnostics)
   const fpsFrames = useRef(0);
@@ -743,6 +811,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         try {
           const { faceLandmarks } = landmarkRef.current.detectForVideo(video, now) as { faceLandmarks: Array<Array<{ x: number; y: number; z: number }>> };
           landmarksVisible = faceLandmarks.length > 0;
+          faceGeoRef.current = landmarksVisible ? faceGeometryFromLandmarks(faceLandmarks[0], now) : null;
           if (landmarksVisible) {
             const lms = faceLandmarks[0];
 
@@ -902,10 +971,18 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           if (confident > 1) multiFaceStreak += 1;
           else multiFaceStreak = 0;
 
-          if (noFaceStreak === FACE.SUSTAIN) {
-            emit("no_face", "No face visible — camera may be covered or the student left", 0.9);
-          } else if (noFaceStreak > FACE.SUSTAIN && noFaceStreak % 6 === 0) {
-            emit("no_face", "Still no face visible in the camera", 0.9);
+          // A face hidden behind a phone is not an empty seat.
+          const phoneCoveringFace = trackerRef.current?.live.some(
+            (t) => t.kind === "phone" && now - t.lastSeen <= 1_500 && t.bbox.width * t.bbox.height >= 0.05,
+          );
+          if (noFaceStreak === FACE.SUSTAIN || (noFaceStreak > FACE.SUSTAIN && noFaceStreak % 6 === 0)) {
+            if (phoneCoveringFace) {
+              emit("possible_phone_use", "Face hidden behind a phone held up to the camera", 0.9);
+            } else if (noFaceStreak === FACE.SUSTAIN) {
+              emit("no_face", "No face visible — camera may be covered or the student left", 0.9);
+            } else {
+              emit("no_face", "Still no face visible in the camera", 0.9);
+            }
           }
           if (multiFaceStreak === FACE.SUSTAIN) {
             emit("multiple_faces", `${confident} people detected — only one person is allowed`, 0.9);
@@ -929,13 +1006,28 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           //      full-frame normalized coordinates before tracking.
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const result: any = objDetRef.current.detectForVideo(video, now);
-          const dets: Detection[] = toDetections(result, video);
+          let dets: Detection[] = toDetections(result, video);
 
           if (OBJECT.USE_PHONE_ROI && video.videoWidth > 0 && video.videoHeight > 0) {
-            const roi: Detection[] = detectDeskRoi(now, video.videoWidth, video.videoHeight, video, objDetRoiRef.current);
-            // Merged ROI detections are normalized to the SAME [0,1] full-frame
-            // coordinate space, so they compose cleanly with the full-frame pass.
-            dets.push(...roi);
+            // One zoomed crop per tick keeps the loop fast; each region is
+            // revisited every ~0.5 s.
+            const face = faceGeoRef.current && now - faceGeoRef.current.at <= 700 ? faceGeoRef.current : null;
+            const turn = cropTurn.current++ % 4;
+            if (turn === 0) dets.push(...detectRegion(lowerRegion(OBJECT.PHONE_ROI_FRACTION), video, objDetRoiRef.current));
+            else if (turn === 1) dets.push(...detectRegion(EDGE_LEFT, video, objDetRoiRef.current));
+            else if (turn === 2) dets.push(...detectRegion(EDGE_RIGHT, video, objDetRoiRef.current));
+            else if (face) {
+              for (const ear of face.ears) {
+                dets.push(...detectRegion(ear, video, objDetRoiRef.current, true));
+              }
+            }
+            if (face) {
+              for (const ear of face.ears) {
+                const white = whiteEarbudAt(video, ear, face.face);
+                if (white) dets.push(white);
+              }
+            }
+            dets = refineDetections(dets, face, now);
           }
 
           // Diagnostics: log EVERY raw detection the model returns — benign
@@ -970,7 +1062,16 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
               const outcome = decideObjectEvent(track, gazeFusion.current, now);
               if (outcome.fired) emit(outcome.category, outcome.label, outcome.confidence);
               if (track.kind === "phone") lastAck.current = now; // fresh confirm — reset the heartbeat
+              if (track.kind === "earbuds") lastEarbudsVisualAck.current = now;
             }
+          }
+
+          const earbudsTrack = tracker?.live.find(
+            (t) => t.kind === "earbuds" && t.confirmed && now - t.lastSeen <= 3_000
+          );
+          if (earbudsTrack && now - lastEarbudsVisualAck.current >= EARBUDS_VISUAL_ACK_MS) {
+            lastEarbudsVisualAck.current = now;
+            emit("earbuds_detected", `Earbuds still visible at the ear (${Math.round(earbudsTrack.peak * 100)}% conf)`, earbudsTrack.peak);
           }
 
           // Slow re-acknowledgement while a CONFIRMED phone stays in view.

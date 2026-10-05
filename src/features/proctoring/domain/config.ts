@@ -17,15 +17,18 @@ import type { ProctorCategory } from "@/features/proctoring/domain/types";
 export const CADENCE = {
   GAZE_MS: 150,     // head-pose / gaze estimation — faster for quicker detection
   FACE_MS: 200,     // face count — reduced for faster no-face detection
-  OBJECT_MS: 90,    // object detection (phone / laptop) — 2 hits confirm a
-                    // phone in ~0.2 s of visibility
+  OBJECT_MS: 120,   // object detection: full frame + ONE rotating zoomed crop
+                    // (desk, left edge, right edge, ears) per tick; 2 hits
+                    // confirm a phone in ~0.25 s of visibility
   AUDIO_MS: 80,     // voice RMS — faster for earbud audio detection
 } as const;
 
 // While a CONFIRMED phone stays in view we re-notify at this cadence (well
 // past the per-category cooldown) so the log shows ongoing presence without
 // spamming.
-export const PHONE_ACK_MS = 25_000;
+export const PHONE_ACK_MS = 3_000;
+/** Same heartbeat for earbuds confirmed visually at the ear. */
+export const EARBUDS_VISUAL_ACK_MS = 5_000;
 
 // ── Gaze / head pose ─────────────────────────────────────────────────────────
 export const GAZE = {
@@ -67,7 +70,7 @@ export const OBJECT = {
   // hands top out at very low confidence. The temporal confirmation (MIN_HITS
   // inside CONFIRM_WINDOW_MS) still filters one-frame flukes, so a lower
   // per-sample gate is safe and necessary for consistent detection.
-  PHONE_MIN_CONF: 0.06,
+  PHONE_MIN_CONF: 0.10,
   EARBUDS_MIN_CONF: 0.08,
   LAPTOP_MIN_CONF: 0.30,
   // MediaPipe object detector only sees a phone when it's big enough in the
@@ -92,7 +95,9 @@ export const TRACKING = {
   // Consecutive samples an object may be invisible before its identity is
   // dropped (~1.5 s of short-term persistence at 300 ms cadence). One missed
   // frame must not kill the track; three in a row means it left the frame.
-  MAX_MISSES: 4,
+  // Zoomed crops rotate every 4 ticks, so an edge phone is only seen every
+  // ~0.5 s; 8 misses (~1 s) keeps its identity between visits.
+  MAX_MISSES: 8,
   CONFIRM_WINDOW_MS: 3_000,
   // Keep recent scores per track for smoothing + diagnostics.
   MAX_HISTORY: 12,

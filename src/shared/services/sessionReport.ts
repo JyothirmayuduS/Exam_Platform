@@ -30,6 +30,49 @@ export type ReportRow = {
   }[];
 };
 
+/** Map roster flags into report violations, keeping the real type and offset. */
+export function reportViolationsFromFlags(
+  flags: { label: string; severity: string; at: string; atIso?: string; type?: string; offsetSeconds?: number | null }[],
+): ReportRow["violations"] {
+  return flags.map((f) => ({
+    description: f.label,
+    type: f.type || "flag",
+    severity: f.severity,
+    offset_seconds: f.offsetSeconds ?? null,
+    created_at: f.atIso ?? f.at,
+  }));
+}
+
+/** Progress %, falling back to counting saved answers when `answered` was never written. */
+export function reportProgress(a: { answered: number; total: number; answers?: Record<string, unknown> }): number {
+  if (!a.total) return 0;
+  const saved = Object.values(a.answers ?? {}).filter((v) => v !== null && v !== undefined && v !== "").length;
+  return Math.min(100, Math.round((Math.max(a.answered, saved) / a.total) * 100));
+}
+
+const PROCTOR_ACTION_TEXT = /paused by|resumed by|by proctor|by invigilator|warning sent to|incident escalated|forcefully submitted/i;
+
+/** Invigilator actions (warnings, pause, resume, escalate, force submit) are not candidate violations. */
+export function isProctorAction(v: { type: string; description: string }): boolean {
+  return v.type.startsWith("proctor_") || PROCTOR_ACTION_TEXT.test(v.description);
+}
+
+/** Drop repeated identical entries logged within a few seconds of each other. */
+export function dedupeViolations(list: ReportRow["violations"], windowMs = 5_000): ReportRow["violations"] {
+  const lastAt = new Map<string, number>();
+  const out: ReportRow["violations"] = [];
+  const sorted = [...list].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+  for (const v of sorted) {
+    const key = `${v.type}|${v.description}`;
+    const t = Date.parse(v.created_at);
+    const prev = lastAt.get(key);
+    if (Number.isFinite(t) && prev !== undefined && t - prev < windowMs) continue;
+    if (Number.isFinite(t)) lastAt.set(key, t);
+    out.push(v);
+  }
+  return out;
+}
+
 export function fmtReportClock(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec)) return "—";
   const s = Math.max(0, Math.floor(sec));
@@ -226,12 +269,13 @@ export async function drawSnapshotTimeline(
     const captions = slice.map((snap, j) => {
       const lines: string[] = [];
       const previous = timeline[i + j - 1];
-      if (previous && snap.epochMs - previous.epochMs > 2000) {
-        lines.push(`Evidence gap: ${fmtReportClock((snap.epochMs - previous.epochMs) / 1000)} since previous frame.`);
+      if (previous && snap.epochMs - previous.epochMs >= 1_600) {
+        lines.push(`Evidence gap: ${Math.round((snap.epochMs - previous.epochMs) / 1000)} s since previous frame.`);
       }
       for (const v of snap.violations) {
         const stamp = Number.isFinite(Date.parse(v.created_at)) ? fmtWallClock(Date.parse(v.created_at)) : fmtReportClock(v.offset_seconds);
-        lines.push(`Warning [${v.severity}] ${stamp}: ${v.description || v.type}`);
+        const head = isProctorAction(v) ? "Proctor action" : `Warning [${v.severity}]`;
+        lines.push(`${head} ${stamp}: ${v.description || v.type}`);
       }
       if (!snap.violations.length) lines.push("No warning recorded for this snapshot.");
       return lines.flatMap((line) => doc.splitTextToSize(line, cellW) as string[]);
@@ -269,7 +313,7 @@ export async function drawSnapshotTimeline(
         doc.setFont("courier", "bold");
         doc.setFontSize(7.5);
         doc.setTextColor(30, 30, 30);
-        const elapsed = Number.isFinite(startMs) && snap.epochMs >= startMs ? ` +${fmtReportClock((snap.epochMs - startMs) / 1000)}` : "";
+        const elapsed = Number.isFinite(startMs) ? ` +${fmtReportClock(Math.max(0, Math.round((snap.epochMs - startMs) / 1000)))}` : "";
         doc.text(`${fmtWallClock(snap.epochMs)}${elapsed}${offset ? " (continued)" : ""}`, x, y + imgH + 12);
         doc.setFont("helvetica", "normal");
         doc.setFontSize(7);
@@ -350,118 +394,143 @@ export async function downloadSessionReportPdf(
 ): Promise<void> {
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4", compress: true });
   const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
   const M = 32;
   const CW = W - M * 2;
 
-  const flagged = rows.filter((r) => r.violations.length > 0);
+  rows = rows.map((r) => ({ ...r, violations: dedupeViolations(r.violations) }));
+  const aiOf = (r: ReportRow) => r.violations.filter((v) => !isProctorAction(v));
+  const actionsOf = (r: ReportRow) => r.violations.filter((v) => isProctorAction(v));
+  const flagged = rows.filter((r) => aiOf(r).length > 0);
   const submitted = rows.filter((r) => r.state === "Submitted").length;
   const single = rows.length === 1;
+  const bottom = H - 40;
 
-  if (!single) {
   // Header
   doc.setFillColor(26, 58, 42);
   doc.rect(0, 0, W, 64, "F");
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
-  doc.text(`${examName} — Session Report`, M, 28);
+  doc.text(single ? `${examName} — ${rows[0].name} (${rows[0].roll})` : `${examName} — Session Report`, M, 28);
   doc.setFont("courier", "normal");
   doc.setFontSize(9);
   doc.text(
-    `${generatedAt.toLocaleString()}  ·  ${rows.length} candidates · ${submitted} submitted · ${flagged.length} flagged`,
+    single
+      ? `${generatedAt.toLocaleString()}  ·  ${rows[0].state} · ${rows[0].progress}% answered · ${aiOf(rows[0]).length} violation(s) · ${actionsOf(rows[0]).length} proctor action(s)`
+      : `${generatedAt.toLocaleString()}  ·  ${rows.length} candidates · ${submitted} submitted · ${flagged.length} flagged`,
     M,
     46,
   );
 
-  // Candidate table
   let y = 92;
-  doc.setFontSize(9.5);
-  rows.forEach((r, i) => {
-    if (y > 500) {
-      doc.addPage();
-      y = 60;
-      doc.setFontSize(9.5);
-    }
-    const fill = i % 2 === 1;
-    if (fill) {
-      doc.setFillColor(244, 244, 240);
-      doc.rect(M, y - 12, CW, 18, "F");
-    }
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(30, 30, 30);
-    doc.text(`${i + 1}`, M + 2, y);
-    doc.text(r.name, M + 26, y);
-    doc.setFont("courier", "normal");
-    doc.setTextColor(90, 90, 90);
-    doc.text(r.roll, M + 200, y);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(60, 60, 60);
-    doc.text(r.state, M + 300, y);
-    doc.text(`${r.progress}%`, M + 370, y);
-    doc.setTextColor(r.violations.length > 0 ? 200 : 130, r.violations.length > 0 ? 0 : 130, 0);
-    doc.text(r.violations.length > 0 ? `${r.violations.length} flag(s)` : "clean", M + 415, y);
-    y += 18;
-  });
+  if (!single) {
+    doc.setFontSize(9.5);
+    rows.forEach((r, i) => {
+      if (y > bottom) {
+        doc.addPage();
+        y = 60;
+        doc.setFontSize(9.5);
+      }
+      if (i % 2 === 1) {
+        doc.setFillColor(244, 244, 240);
+        doc.rect(M, y - 12, CW, 18, "F");
+      }
+      const n = aiOf(r).length;
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(30, 30, 30);
+      doc.text(`${i + 1}`, M + 2, y);
+      doc.text(r.name, M + 26, y);
+      doc.setFont("courier", "normal");
+      doc.setTextColor(90, 90, 90);
+      doc.text(r.roll, M + 200, y);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(60, 60, 60);
+      doc.text(r.state, M + 300, y);
+      doc.text(`${r.progress}%`, M + 370, y);
+      doc.setTextColor(n > 0 ? 200 : 130, n > 0 ? 0 : 130, 0);
+      doc.text(n > 0 ? `${n} violation(s)` : "clean", M + 415, y);
+      y += 18;
+    });
+  }
 
-  // Violation detail page(s)
-  if (flagged.length > 0) {
-    doc.addPage();
-    doc.setFillColor(155, 28, 28);
-    doc.rect(0, 0, W, 56, "F");
+  const section = (title: string, subtitle: string, rgb: [number, number, number]) => {
+    if (!single || y > bottom - 80) {
+      doc.addPage();
+      y = 0;
+    } else {
+      y += 6;
+    }
+    doc.setFillColor(...rgb);
+    doc.rect(0, y, W, 44, "F");
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("Violation Detail", M, 26);
-    doc.setFontSize(9);
-    doc.text(`${flagged.length} candidate(s) with proctoring flags — review each recording before finalising marks.`, M, 42);
+    doc.setFontSize(13);
+    doc.text(title, M, y + 20);
+    doc.setFontSize(8.5);
+    doc.text(subtitle, M, y + 35);
+    y += 66;
+  };
 
-    y = 84;
-    doc.setFontSize(9);
-    flagged.forEach((r) => {
-      if (y > 520) { doc.addPage(); y = 60; doc.setFontSize(9); }
+  const list = (items: ReportRow["violations"]) => {
+    items.forEach((v, vi) => {
+      if (y > bottom) { doc.addPage(); y = 60; }
+      doc.setFont("courier", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(40, 40, 40);
+      const stamp = v.offset_seconds != null ? ` @ ${fmtReportClock(v.offset_seconds)}` : "";
+      const detailLines = doc.splitTextToSize(`${vi + 1}. ${v.description || v.type}${stamp}`, CW - 32) as string[];
+      for (const line of detailLines) {
+        if (y > bottom) { doc.addPage(); y = 60; }
+        doc.text(line, M + 16, y);
+        y += 12;
+      }
+      doc.setFontSize(7.5);
+      doc.setTextColor(130, 130, 130);
+      doc.text(`${v.type} · ${v.severity} · ${new Date(v.created_at).toLocaleString()}`, M + 16, y);
+      y += 16;
+    });
+  };
+
+  if (flagged.length > 0) {
+    section("Violation Detail", `${flagged.length} candidate(s) with proctoring violations — review each recording before finalising marks.`, [155, 28, 28]);
+    for (const r of flagged) {
+      if (y > bottom) { doc.addPage(); y = 60; }
       doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
       doc.setTextColor(155, 28, 28);
       doc.text(`${r.name} (${r.roll})`, M, y);
       y += 14;
-      r.violations.forEach((v, vi) => {
-        if (y > 520) { doc.addPage(); y = 60; doc.setFontSize(9); }
-        doc.setFont("courier", "normal");
-        doc.setTextColor(40, 40, 40);
-        const stamp = v.offset_seconds != null ? ` @ ${fmtReportClock(v.offset_seconds)}` : "";
-        const detailLines = doc.splitTextToSize(`${vi + 1}. ${v.description || v.type}${stamp}`, CW - 32) as string[];
-        for (const line of detailLines) {
-          if (y > 510) { doc.addPage(); y = 60; }
-          doc.text(line, M + 16, y);
-          y += 12;
-        }
-        if (y > 510) { doc.addPage(); y = 60; }
-        doc.setFontSize(7.5);
-        doc.setTextColor(130, 130, 130);
-        doc.text(
-          `${v.type} · ${v.severity} · ${new Date(v.created_at).toLocaleString()}`,
-          M + 16,
-          y,
-        );
-        doc.setFontSize(9);
-        y += 18;
-      });
-      y += 10;
-    });
-  }
+      list(aiOf(r));
+      y += 8;
+    }
   }
 
-  // Per-candidate snapshot timeline: every stored snap with the violations
-  // that occurred under it and their timestamps. NOTE: drawSnapshotTimeline
-  // receives the examId only for the DB/storage folder resolution — the
-  // collector also tolerates the `${examId}-${roll}` filename id.
-  // Every export embeds the full per-second snapshot timeline and the audio inventory.
+  const withActions = rows.filter((r) => actionsOf(r).length > 0);
+  if (withActions.length > 0) {
+    section("Proctor Actions", "Warnings, pauses, escalations and submissions by the invigilator. Not counted as candidate violations.", [70, 70, 64]);
+    for (const r of withActions) {
+      if (y > bottom) { doc.addPage(); y = 60; }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(50, 50, 50);
+      doc.text(`${r.name} (${r.roll})`, M, y);
+      y += 14;
+      list(actionsOf(r));
+      y += 8;
+    }
+  }
+
+  // Every export embeds the full per-second snapshot timeline and the audio
+  // inventory. The timeline always starts on its own page so page 1 holds the
+  // summary and violations.
   {
     let index = 0;
     for (const r of rows) {
       index += 1;
       opts.onProgress?.(`Building PDF · ${r.name} · every snapshot and the audio (${index} of ${rows.length})`);
       try {
-        await drawSnapshotTimeline(doc, r, examId, { continuePage: single && index === 1 });
+        await drawSnapshotTimeline(doc, r, examId);
         await drawAudioInventory(doc, r, examId);
       } catch (err) {
         console.warn(`[sessionReport] snapshot timeline failed for ${r.roll}:`, err);

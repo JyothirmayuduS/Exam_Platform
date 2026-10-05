@@ -798,15 +798,16 @@ function StudentExamSession() {
             filter: `student_id=eq.${studentIdRef.current}`,
           },
           (payload: { new: { state?: string } | null }) => {
+            // Pause / force-submit are already logged once by the proctor
+            // console; logging them here too repeated them on every autosave
+            // UPDATE while paused.
             const state = payload.new?.state;
             setProctorPaused(state === "paused");
-            if (state === "paused") flag("Session paused by invigilator");
             // Force submit: the invigilator ended this attempt remotely.
             // Guard so a realtime echo / double event can't submit twice —
             // doSubmit() itself is idempotent per attempt via the DB state.
             if (state === "submitted" && !forceSubmitFiredRef.current) {
               forceSubmitFiredRef.current = true;
-              flag("Exam submitted by invigilator");
               void doSubmit();
             }
           },

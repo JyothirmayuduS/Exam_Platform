@@ -27,7 +27,7 @@ import {
   type ExamRecord,
 } from "@/shared/data/examApi";
 import JobBanner from "@/shared/components/JobBanner";
-import { downloadSessionReportPdf, downloadCsv, type ReportRow } from "@/shared/services/sessionReport";
+import { downloadSessionReportPdf, downloadCsv, reportProgress, reportViolationsFromFlags, type ReportRow } from "@/shared/services/sessionReport";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 import EvidenceBrowser from "@/features/teacher/pages/EvidenceBrowser";
 import { getSupabase } from "@/shared/data/supabase";
@@ -290,9 +290,9 @@ function ExamDetail({ notify, navigate, exam }: { notify: (s: string) => void; n
       name: a.name,
       roll: a.roll,
       state: a.state,
-      progress: a.total ? Math.round((a.answered / a.total) * 100) : 0,
+      progress: reportProgress(a),
       startedAt: a.startedAtIso ?? null,
-      violations: a.flags.map((f) => ({ description: f.label, type: "flag", severity: f.severity, offset_seconds: null, created_at: f.atIso ?? f.at })),
+      violations: reportViolationsFromFlags(a.flags),
     }));
     setPdfJob("Preparing session report…");
     void downloadSessionReportPdf(exam.name, exam.id, rows, new Date(), { onProgress: setPdfJob })
@@ -387,9 +387,9 @@ function Reports({ notify }: { notify: (s: string) => void }) {
     name: a.name,
     roll: a.roll,
     state: a.state,
-    progress: a.total ? Math.round((a.answered / a.total) * 100) : 0,
+    progress: reportProgress(a),
     startedAt: a.startedAtIso ?? null,
-    violations: a.flags.map((f) => ({ description: f.label, type: "flag", severity: f.severity, offset_seconds: null, created_at: f.atIso ?? f.at })),
+    violations: reportViolationsFromFlags(a.flags),
   });
   const [pdfProgress, setPdfProgress] = useState<string | null>(null);
   const exportPdf = async (candidates?: typeof liveAttempts) => {

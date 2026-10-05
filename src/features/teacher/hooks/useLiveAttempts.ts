@@ -95,6 +95,8 @@ function toUIAttempt(row: LiveAttempt, examName: string): Attempt {
     // Raw ISO timestamp — the session report needs a real wall-clock moment to
     // line each violation up with the candidate's stored snapshots.
     atIso: v.created_at,
+    type: v.violation_type,
+    offsetSeconds: v.offset_seconds ?? null,
   }));
 
   return {

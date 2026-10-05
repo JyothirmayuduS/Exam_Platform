@@ -12,6 +12,7 @@ import { storeViolationSnapshot, captureFrame } from "@/shared/services/examStor
 import {
   downloadSessionReportPdf,
   downloadSessionReportCsv,
+  reportProgress,
   type ReportRow,
 } from "@/shared/services/sessionReport";
 import JobBanner from "@/shared/components/JobBanner";
@@ -411,7 +412,7 @@ export default function ProctorGrid() {
       name: a.student?.full_name ?? "Unknown",
       roll: a.student?.roll ?? "—",
       state: a.state === "submitted" ? "Submitted" : a.state === "paused" ? "Paused" : a.state === "in_progress" ? "Writing" : "Not started",
-      progress: a.total ? Math.round((a.answered / a.total) * 100) : 0,
+      progress: reportProgress(a),
       startedAt: a.started_at,
       violations: (a.violations ?? []).map((v) => ({
         description: v.description || v.violation_type,
@@ -846,7 +847,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
         name: a.student?.full_name ?? "Unknown",
         roll: a.student?.roll ?? "—",
         state: a.state === "submitted" ? "Submitted" : a.state === "paused" ? "Paused" : a.state === "in_progress" ? "Writing" : "Not started",
-        progress: a.total ? Math.round((a.answered / a.total) * 100) : 0,
+        progress: reportProgress(a),
         violations: (a.violations ?? []).map((v) => ({
           description: v.description || v.violation_type,
           type: v.violation_type,

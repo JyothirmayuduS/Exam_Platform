@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { collectSnapshotTimeline, downloadSessionReportPdf, drawSnapshotTimeline, type ReportRow } from "@/shared/services/sessionReport";
+import { collectSnapshotTimeline, dedupeViolations, downloadSessionReportPdf, drawSnapshotTimeline, isProctorAction, reportProgress, type ReportRow } from "@/shared/services/sessionReport";
 import { listStudentArtifacts, getArtifactBlob } from "@/shared/services/examStorage";
 
 const pdf = vi.hoisted(() => ({
@@ -89,5 +89,33 @@ describe("snapshot reports", () => {
     vi.mocked(listStudentArtifacts).mockResolvedValue([]);
     await downloadSessionReportPdf("Exam", "EXAM", [row]);
     expect(pdf.text.mock.calls.flatMap((c) => c[0]).some((s) => typeof s === "string" && s.includes("No snapshots available"))).toBe(true);
+  });
+
+  it("prints violation detail and a separate proctor-action section for a single student", async () => {
+    vi.mocked(listStudentArtifacts).mockResolvedValue(snapshots(2));
+    const pause = { ...warning(500, "Session paused by proctor"), type: "proctor_pause", severity: "medium" };
+    await downloadSessionReportPdf("Exam", "EXAM-R1", [{ ...row, violations: [warning(100, "Phone detected"), pause] }], new Date(start));
+    const text = pdf.text.mock.calls.map((c) => String(c[0]));
+    expect(text).toContain("Violation Detail");
+    expect(text).toContain("Proctor Actions");
+    expect(text.some((t) => t.includes("Phone detected"))).toBe(true);
+    expect(text.some((t) => t.includes("1 violation(s) · 1 proctor action(s)"))).toBe(true);
+  });
+});
+
+describe("report helpers", () => {
+  it("separates proctor actions from AI violations", () => {
+    expect(isProctorAction({ type: "proctor_warning", description: "x" })).toBe(true);
+    expect(isProctorAction({ type: "flag", description: "Session paused by invigilator" })).toBe(true);
+    expect(isProctorAction({ type: "phone_detected", description: "Phone detected" })).toBe(false);
+  });
+
+  it("drops repeats of the same event within five seconds", () => {
+    const out = dedupeViolations([warning(0, "Session paused by invigilator"), warning(2000, "Session paused by invigilator"), warning(9000, "Session paused by invigilator")]);
+    expect(out).toHaveLength(2);
+  });
+
+  it("uses saved answers when the answered counter lags", () => {
+    expect(reportProgress({ answered: 0, total: 4, answers: { a: "1", b: "x", c: "" } })).toBe(50);
   });
 });

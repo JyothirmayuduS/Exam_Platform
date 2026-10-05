@@ -6,7 +6,16 @@
 // by src/features/teacher/hooks/useLiveAttempts.ts — nothing here is mocked or seeded.
 
 export type Severity = "critical" | "notice";
-export type Flag = { severity: Severity; label: string; at: string; /** Raw ISO created_at — used by the session report to line violations up with snapshots. */ atIso?: string };
+export type Flag = {
+  severity: Severity;
+  label: string;
+  at: string;
+  /** Raw ISO created_at — used by the session report to line violations up with snapshots. */
+  atIso?: string;
+  /** violation_events.violation_type, e.g. phone_detected or proctor_pause. */
+  type?: string;
+  offsetSeconds?: number | null;
+};
 export type AttemptState = "Submitted" | "In progress" | "Not started" | "Paused";
 export type Network = "Stable" | "Reconnected" | "Unstable" | "Offline" | "Idle";
 
