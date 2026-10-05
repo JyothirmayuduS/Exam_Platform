@@ -11,19 +11,16 @@ type CaptureHandle = {
  * no picker: the student cannot choose a window or another screen. Frames come
  * from a native screenshot command and are published as a canvas MediaStream.
  *
- * Returns "denied" when macOS Screen Recording is off for the app. Without it
- * screencapture still succeeds but returns only the wallpaper, so the frames
- * must not be treated as a working share.
+ * Never asks for Screen Recording: without it the native command captures the
+ * kiosk page itself, which fills the display while switching is locked.
  */
 export async function startNativeDisplayStream(): Promise<CaptureHandle | "denied" | null> {
   if (!isTauri()) return null;
-  const status = await invoke<string>("screen_capture_status").catch(() => "granted");
-  if (status !== "granted") {
-    await invoke("screen_capture_permission_prompt").catch(() => {});
-    return "denied";
+  const status = await invoke<string>("screen_capture_status").catch(() => "denied");
+  if (status === "granted") {
+    await invoke("set_window_sharing", { allow: true }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 60));
   }
-  await invoke("set_window_sharing", { allow: true }).catch(() => {});
-  await new Promise((r) => setTimeout(r, 60));
 
   const first = await invoke<string>("capture_display_jpeg").catch(() => "");
   if (!first) return null;

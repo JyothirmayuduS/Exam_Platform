@@ -583,10 +583,94 @@ fn jpeg_base64(bytes: &[u8]) -> String {
     out
 }
 
-/// Full-display JPEG for the kiosk screen-share pipeline. Uses the OS screen
-/// recording permission (same class of dialog as camera/mic) — no picker.
+/// Screen Recording status, re-checked at most every few seconds (each check
+/// spawns a child process).
+#[cfg(target_os = "macos")]
+fn screen_recording_granted_cached() -> bool {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(std::time::Instant, bool)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, granted)) = *cache {
+        if at.elapsed() < std::time::Duration::from_secs(5) {
+            return granted;
+        }
+    }
+    let granted = screen_capture_status() == "granted";
+    *cache = Some((std::time::Instant::now(), granted));
+    granted
+}
+
+/// JPEG of the kiosk page itself, rendered by WebKit. Needs no Screen
+/// Recording permission and ignores NSWindowSharingNone. The kiosk covers the
+/// whole display with switching locked, so this is what the student sees.
+#[cfg(target_os = "macos")]
+async fn snapshot_exam_window(app: &tauri::AppHandle) -> Result<Vec<u8>, String> {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    let win = app.get_webview_window("exam").ok_or("exam window missing")?;
+    let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
+    win.with_webview(move |wv| unsafe {
+        let webview = wv.inner() as *mut AnyObject;
+        let config: *mut AnyObject = msg_send![class!(WKSnapshotConfiguration), new];
+        let width: *mut AnyObject = msg_send![class!(NSNumber), numberWithDouble: 960.0f64];
+        let _: () = msg_send![config, setSnapshotWidth: width];
+        let tx = std::sync::Mutex::new(Some(tx));
+        let handler = block2::RcBlock::new(move |image: *mut AnyObject, _error: *mut AnyObject| {
+            let bytes = if image.is_null() { None } else { nsimage_jpeg(image) };
+            if let Some(tx) = tx.lock().ok().and_then(|mut t| t.take()) {
+                let _ = tx.send(bytes);
+            }
+        });
+        let _: () = msg_send![webview, takeSnapshotWithConfiguration: config, completionHandler: &*handler];
+        let _: () = msg_send![config, release];
+    })
+    .map_err(|e| format!("snapshot: {e}"))?;
+    tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(3)))
+        .await
+        .map_err(|e| format!("snapshot: {e}"))?
+        .map_err(|_| "snapshot timed out".to_string())?
+        .ok_or_else(|| "snapshot failed".to_string())
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn nsimage_jpeg(image: *mut objc2::runtime::AnyObject) -> Option<Vec<u8>> {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    let tiff: *mut AnyObject = msg_send![image, TIFFRepresentation];
+    if tiff.is_null() {
+        return None;
+    }
+    let rep: *mut AnyObject = msg_send![class!(NSBitmapImageRep), imageRepWithData: tiff];
+    if rep.is_null() {
+        return None;
+    }
+    let key = std::ffi::CString::new("NSImageCompressionFactor").ok()?;
+    let key: *mut AnyObject = msg_send![class!(NSString), stringWithUTF8String: key.as_ptr()];
+    let quality: *mut AnyObject = msg_send![class!(NSNumber), numberWithDouble: 0.6f64];
+    let props: *mut AnyObject = msg_send![class!(NSDictionary), dictionaryWithObject: quality, forKey: key];
+    // 3 = NSBitmapImageFileTypeJPEG
+    let data: *mut AnyObject = msg_send![rep, representationUsingType: 3usize, properties: props];
+    if data.is_null() {
+        return None;
+    }
+    let len: usize = msg_send![data, length];
+    let ptr: *const u8 = msg_send![data, bytes];
+    if ptr.is_null() || len == 0 {
+        return None;
+    }
+    Some(std::slice::from_raw_parts(ptr, len).to_vec())
+}
+
+/// JPEG frame for the kiosk screen-share pipeline — never a picker, never a
+/// trip to System Settings. With Screen Recording already granted it is the
+/// whole display; otherwise it is the kiosk page itself.
 #[tauri::command]
-fn capture_display_jpeg() -> Result<String, String> {
+async fn capture_display_jpeg(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    if !screen_recording_granted_cached() {
+        return snapshot_exam_window(&app).await.map(|b| jpeg_base64(&b));
+    }
+    let _ = &app;
     let path = std::env::temp_dir().join(format!("vignan-scr-{}.jpg", std::process::id()));
     let path_str = path.to_string_lossy().to_string();
 
@@ -736,8 +820,6 @@ mod keylock {
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
         fn AXIsProcessTrusted() -> bool;
-        fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
-        static kAXTrustedCheckOptionPrompt: *const c_void;
         fn CGEventTapCreate(tap: u32, place: u32, options: u32, mask: u64, callback: TapCallback, info: *mut c_void) -> *mut c_void;
         fn CGEventTapEnable(tap: *mut c_void, enable: bool);
         fn CGEventGetFlags(event: *mut c_void) -> u64;
@@ -747,11 +829,6 @@ mod keylock {
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
         static kCFRunLoopCommonModes: *const c_void;
-        static kCFBooleanTrue: *const c_void;
-        static kCFTypeDictionaryKeyCallBacks: u8;
-        static kCFTypeDictionaryValueCallBacks: u8;
-        fn CFDictionaryCreate(alloc: *const c_void, keys: *const *const c_void, values: *const *const c_void, n: isize, kcb: *const c_void, vcb: *const c_void) -> *const c_void;
-        fn CFRelease(cf: *const c_void);
         fn CFMachPortCreateRunLoopSource(alloc: *const c_void, port: *mut c_void, order: isize) -> *mut c_void;
         fn CFRunLoopGetCurrent() -> *mut c_void;
         fn CFRunLoopAddSource(rl: *mut c_void, src: *mut c_void, mode: *const c_void);
@@ -789,34 +866,38 @@ mod keylock {
     static STARTED: AtomicBool = AtomicBool::new(false);
     static TAP: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
-    pub fn active() -> bool {
-        ACTIVE.load(Ordering::SeqCst)
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGSMainConnectionID() -> i32;
+        fn CGSSetGlobalHotKeyOperatingMode(cid: i32, mode: i32) -> i32;
+        fn CGSGetGlobalHotKeyOperatingMode(cid: i32, mode: *mut i32) -> i32;
     }
 
-    pub fn trusted() -> bool {
-        unsafe { AXIsProcessTrusted() }
-    }
-
-    /// Show macOS's "would like to control this computer" dialog and add the
-    /// app to the Accessibility list (switched off until the student allows it).
-    pub fn prompt() -> bool {
+    /// Switch every system-wide shortcut off (Spotlight, screenshots,
+    /// Mission Control, input-source and app-switch hot keys) for this login
+    /// session. Needs no permission; WindowServer restores the mode when the
+    /// process exits, so a crash never leaves the Mac without shortcuts.
+    pub fn set_system_hotkeys(enabled: bool) {
         unsafe {
-            let keys = [kAXTrustedCheckOptionPrompt];
-            let values = [kCFBooleanTrue];
-            let dict = CFDictionaryCreate(
-                std::ptr::null(),
-                keys.as_ptr(),
-                values.as_ptr(),
-                1,
-                &kCFTypeDictionaryKeyCallBacks as *const u8 as *const c_void,
-                &kCFTypeDictionaryValueCallBacks as *const u8 as *const c_void,
-            );
-            let trusted = AXIsProcessTrustedWithOptions(dict);
-            if !dict.is_null() {
-                CFRelease(dict);
-            }
-            trusted
+            CGSSetGlobalHotKeyOperatingMode(CGSMainConnectionID(), if enabled { 0 } else { 1 });
         }
+    }
+
+    pub fn system_hotkeys_disabled() -> bool {
+        let mut mode = 0;
+        unsafe { CGSGetGlobalHotKeyOperatingMode(CGSMainConnectionID(), &mut mode) };
+        mode != 0
+    }
+
+    /// The keyboard lock holds when system hot keys are off; the event tap
+    /// below adds per-key filtering when the app already happens to be
+    /// trusted under Accessibility (never prompted for).
+    pub fn active() -> bool {
+        system_hotkeys_disabled() || ACTIVE.load(Ordering::SeqCst)
+    }
+
+    fn trusted() -> bool {
+        unsafe { AXIsProcessTrusted() }
     }
 
     fn should_block(kind: u32, event: *mut c_void) -> bool {
@@ -855,6 +936,7 @@ mod keylock {
     /// Install the tap as soon as the app is trusted (polls, so a switch
     /// flipped in System Settings takes effect without a restart).
     pub fn start() {
+        set_system_hotkeys(false);
         if STARTED.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -897,30 +979,16 @@ fn keyboard_lock_status() -> String {
     }
 }
 
-/// Ask for the Accessibility permission the keyboard lock needs.
+/// (Re)apply the keyboard lock. Never sends the student to System Settings.
 #[tauri::command]
-fn keyboard_lock_request(app: tauri::AppHandle) -> String {
+fn keyboard_lock_request() -> String {
     #[cfg(target_os = "macos")]
     {
         keylock::start();
-        if keylock::active() {
-            return "granted".into();
-        }
-        if !keylock::trusted() {
-            // Same cdhash pinning as Screen Recording: a grant made for an
-            // earlier build shows "on" but never matches this binary.
-            let _ = std::process::Command::new("/usr/bin/tccutil")
-                .args(["reset", "Accessibility", &app.config().identifier])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-            keylock::prompt();
-        }
-        "denied".into()
+        if keylock::active() { "granted".into() } else { "denied".into() }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = app;
         "granted".to_string()
     }
 }
