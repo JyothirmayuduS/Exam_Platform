@@ -1059,10 +1059,10 @@ function StudentExamSession() {
       confirmTimer = setTimeout(doExit, 800);
     }
 
-    // Hard timeout: never keep the student locked in for more than 30 s after
-    // answers have been persisted. The recording upload is crash-proof (parts
-    // were streamed live); the student console can finish any pending tail.
-    const timeoutTimer = setTimeout(doExit, 30_000);
+    // Hard timeout so the student is never trapped. While the full recording
+    // and PDF are still uploading allow up to 2 minutes; once that settles
+    // (stored / partial / failed) exit after 30 s.
+    const timeoutTimer = setTimeout(doExit, artifactStatus?.state === "uploading" ? 120_000 : 30_000);
 
     return () => {
       clearTimeout(confirmTimer);
@@ -1337,11 +1337,16 @@ function StudentExamSession() {
     // after the queued frames, merged video and complete PDF have landed.
     void (async () => {
       try {
-        // 1. Give the recorder a moment to emit its final chunk, then flush any
-        //    remaining crash-parts so remote order matches local order.
+        // 1. Give the recorder a moment to emit its final chunk. The full video
+        //    and PDF go first: the kiosk closes shortly after submit, and the
+        //    snapshot outbox can take minutes on a slow network (it keeps
+        //    retrying in the background and survives a restart).
         await new Promise((r) => setTimeout(r, 400));
-        await drainRecordingParts(20_000);
-        const allSnapshotsStored = await snapshotsStored;
+        void drainRecordingParts(20_000);
+        const snapshotsSettled = Promise.race([
+          snapshotsStored,
+          new Promise<boolean>((r) => setTimeout(() => r(false), 15_000)),
+        ]);
         // 2. Merge the local chunks into one full video and upload it. This is
         //    the file the teacher's review prefers — parts are the crash fallback.
         const type = recordedChunksRef.current[0]?.type || "video/webm";
@@ -1362,6 +1367,7 @@ function StudentExamSession() {
             : undefined,
         });
         console.log("[StudentExam] artifacts stored:", result);
+        const allSnapshotsStored = await snapshotsSettled;
         // Tell the submitted screen what actually landed so the student (and
         // invigilator) can see storage worked instead of silently losing a
         // recording. Parts uploaded live during the exam are the crash fallback.

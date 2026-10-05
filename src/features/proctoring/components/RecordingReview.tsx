@@ -191,11 +191,126 @@ function sortViolations(violations: ViolationEvent[]): ViolationEvent[] {
   });
 }
 
-/** Median of the durations we know — used to estimate not-yet-loaded parts. */
-function estimatePartSeconds(known: number[]): number {
-  if (known.length === 0) return 10; // recorder emits a chunk every ~10 s
-  const sorted = [...known].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)] ?? 10;
+const WEBM_TYPES = [
+  'video/webm; codecs="vp9,opus"',
+  'video/webm; codecs="vp8,opus"',
+  'video/webm; codecs="vp9"',
+  'video/webm; codecs="vp8"',
+];
+
+function isWebm(buf: ArrayBuffer): boolean {
+  const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+  return b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3;
+}
+
+function sbWait(sb: SourceBuffer, op: () => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const done = () => { cleanup(); resolve(); };
+    const fail = () => { cleanup(); reject(new Error("Segment could not be decoded")); };
+    const cleanup = () => {
+      sb.removeEventListener("updateend", done);
+      sb.removeEventListener("error", fail);
+    };
+    sb.addEventListener("updateend", done);
+    sb.addEventListener("error", fail);
+    try { op(); } catch (err) { cleanup(); reject(err); }
+  });
+}
+
+type Stitched = { url: string | null; loaded: number; done: boolean; error: string | null };
+
+/**
+ * Join crash-safe parts into one playable source. WebM streams through Media
+ * Source Extensions (playback starts after the first segment, memory stays
+ * bounded); other containers, or a MediaSource failure, fall back to one Blob.
+ */
+function useStitchedParts(parts: PartItem[] | null, getCurrentTime: () => number): Stitched {
+  const [state, setState] = useState<Stitched>({ url: null, loaded: 0, done: false, error: null });
+  const timeRef = useRef(getCurrentTime);
+  timeRef.current = getCurrentTime;
+
+  useEffect(() => {
+    setState({ url: null, loaded: 0, done: false, error: null });
+    if (!parts || parts.length === 0) return;
+    let cancelled = false;
+    const objectUrls: string[] = [];
+    const fetchPart = async (i: number) => {
+      const res = await fetch(parts[i].url);
+      if (!res.ok) throw new Error(`Segment ${i + 1} download failed (HTTP ${res.status})`);
+      return res.arrayBuffer();
+    };
+
+    const asBlob = async (first: ArrayBuffer) => {
+      const bufs = [first];
+      for (let i = 1; i < parts.length; i++) {
+        if (cancelled) return;
+        bufs.push(await fetchPart(i));
+        setState((s) => ({ ...s, loaded: i + 1 }));
+      }
+      const url = URL.createObjectURL(new Blob(bufs, { type: isWebm(first) ? "video/webm" : "video/mp4" }));
+      objectUrls.push(url);
+      if (!cancelled) setState({ url, loaded: parts.length, done: true, error: null });
+    };
+
+    const viaMediaSource = async (first: ArrayBuffer, type: string) => {
+      const ms = new MediaSource();
+      const url = URL.createObjectURL(ms);
+      objectUrls.push(url);
+      const opened = new Promise<void>((resolve) => ms.addEventListener("sourceopen", () => resolve(), { once: true }));
+      setState({ url, loaded: 1, done: false, error: null });
+      await opened;
+      const sb = ms.addSourceBuffer(type);
+      sb.mode = "sequence";
+      for (let i = 0; i < parts.length; i++) {
+        if (cancelled) return;
+        const buf = i === 0 ? first : await fetchPart(i);
+        for (;;) {
+          try {
+            await sbWait(sb, () => sb.appendBuffer(buf));
+            break;
+          } catch (err) {
+            if (!(err instanceof DOMException && err.name === "QuotaExceededError")) throw err;
+            const keepFrom = Math.max(0, timeRef.current() - 30);
+            if (sb.buffered.length && sb.buffered.start(0) < keepFrom) {
+              await sbWait(sb, () => sb.remove(0, keepFrom));
+            } else {
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+            if (cancelled) return;
+          }
+        }
+        setState((s) => ({ ...s, loaded: i + 1 }));
+      }
+      if (ms.readyState === "open") ms.endOfStream();
+      if (!cancelled) setState((s) => ({ ...s, done: true }));
+    };
+
+    void (async () => {
+      let first: ArrayBuffer | null = null;
+      try {
+        first = await fetchPart(0);
+        if (cancelled) return;
+        const type = isWebm(first) && typeof MediaSource !== "undefined"
+          ? WEBM_TYPES.find((t) => MediaSource.isTypeSupported(t))
+          : undefined;
+        if (type) await viaMediaSource(first, type);
+        else await asBlob(first);
+      } catch (err) {
+        if (cancelled) return;
+        if (first) {
+          try { await asBlob(first); return; } catch { /* report below */ }
+        }
+        setState((s) => ({ ...s, error: err instanceof Error ? err.message : String(err) }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      objectUrls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [parts]);
+
+  return state;
 }
 
 export default function RecordingReviewer({
@@ -221,103 +336,43 @@ export default function RecordingReviewer({
   const [playing, setPlaying] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
-  // ── Parts-assembly timeline ──────────────────────────────────────────────
-  // plays segments in order over one continuous timeline. `durations[i]` is
-  // set once segment i's metadata loads; unknown segments are estimated so the
-  // seek bar stays meaningful from the start.
+  // Crash-safe parts are timeslice chunks of ONE recorder: only the first
+  // carries the container header, so they must be joined into one stream —
+  // playing them one by one fails from the second segment on.
   const partMode = !artifacts.recordingUrl && artifacts.parts.length > 0;
-  const [partIdx, setPartIdx] = useState(0);
-  const durationsRef = useRef<(number | null)[]>([]);
-  const [, bump] = useState(0);
-  // True right after one segment ends and we switch src — lets the SAME
-  // <video> element auto-continue (the element already holds play permission).
-  const autoAdvanceRef = useRef(false);
-  const seekAfterLoadRef = useRef<number | null>(null);
+  const stitched = useStitchedParts(partMode ? artifacts.parts : null, () => videoRef.current?.currentTime ?? 0);
+  const videoSrc = partMode ? stitched.url : artifacts.recordingUrl;
 
-  const startsAt = useMemo(() => {
-    if (!partMode) return [0];
-    const est = estimatePartSeconds(durationsRef.current.filter((d): d is number => d != null));
-    let acc = 0;
-    return artifacts.parts.map((_, i) => {
-      const s = acc;
-      acc += durationsRef.current[i] ?? est;
-      return s;
-    });
-  }, [partMode, artifacts.parts, bump, artifacts]);
-
-  const partTotal = useMemo(() => {
-    if (!partMode) return null;
-    const est = estimatePartSeconds(durationsRef.current.filter((d): d is number => d != null));
-    let acc = 0;
-    for (let i = 0; i < artifacts.parts.length; i++) acc += durationsRef.current[i] ?? est;
-    return acc;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [partMode, artifacts.parts, bump]);
-
-  // When the mode changes (different recording loaded) reset playback state.
-  // IMPORTANT: never strip the src and leave it empty — React diffs props and
-  // will NOT re-write an unchanged `src`, so the element would sit at
-  // NETWORK_EMPTY forever and the recording would never play. Re-apply the
-  // current source explicitly, then load().
+  // Re-apply the source explicitly when it changes: React will not re-write an
+  // unchanged `src`, which left the element at NETWORK_EMPTY.
   useEffect(() => {
     setDuration(null);
     setCurrent(0);
     setPlaying(false);
     setLoadError(false);
-    setPartIdx(0);
-    durationsRef.current = [];
     const el = videoRef.current;
     if (el) {
-      el.currentTime = 0;
-      const next = partMode ? artifacts.parts[partIdx]?.url : artifacts.recordingUrl;
-      if (next) {
-        if (el.getAttribute("src") !== next) el.src = next;
+      if (videoSrc) {
+        if (el.getAttribute("src") !== videoSrc) el.src = videoSrc;
         el.load();
       } else {
         el.removeAttribute("src");
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifacts.recordingUrl, partMode]);
+  }, [videoSrc]);
 
-  const visibleDuration = partMode ? (partTotal ?? duration) : duration;
-  const videoSrc = partMode ? artifacts.parts[partIdx]?.url : artifacts.recordingUrl;
+  // While segments are still streaming in, size the seek bar for the whole
+  // exam (~10 s per segment) so violation markers land in the right place.
+  const visibleDuration =
+    partMode && !stitched.done ? Math.max(duration ?? 0, artifacts.parts.length * 10) : duration;
 
-  const recordDuration = (d: number) => {
-    if (!partMode) { setDuration(d); return; }
-    const i = partIdx;
-    if (durationsRef.current[i] !== d) {
-      durationsRef.current[i] = d;
-      setDuration(partTotal ?? 0);
-      bump((v) => v + 1);
-    }
-  };
+  const recordDuration = (d: number) => setDuration(d);
 
   const seekTo = (sec: number) => {
     const el = videoRef.current;
-    const total = partMode ? partTotal : duration;
-    if (!el || !total) return;
-    const target = Math.min(total, Math.max(0, sec));
-    if (!partMode) {
-      el.currentTime = target;
-      void el.play().catch(() => undefined);
-      return;
-    }
-    // Find the segment containing `target`, switch to it, then seek within it.
-    let idx = artifacts.parts.length - 1;
-    for (let i = 0; i < artifacts.parts.length; i++) {
-      const next = i + 1 < artifacts.parts.length ? (startsAt[i + 1] ?? Infinity) : Infinity;
-      if (target >= startsAt[i] && target < next) { idx = i; break; }
-    }
-    const within = Math.max(0, target - startsAt[idx]);
-    if (idx !== partIdx) {
-      // src swap re-applies the seek once the new segment's metadata loads.
-      seekAfterLoadRef.current = within;
-      setPartIdx(idx);
-    } else {
-      el.currentTime = within;
-      void el.play().catch(() => undefined);
-    }
+    if (!el || !visibleDuration) return;
+    el.currentTime = Math.min(visibleDuration, Math.max(0, sec));
+    void el.play().catch(() => undefined);
   };
 
   const sorted = useMemo(() => sortViolations(violations), [violations]);
@@ -433,44 +488,32 @@ export default function RecordingReviewer({
                 try { el.currentTime = Number.MAX_SAFE_INTEGER; } catch { /* ignore */ }
               }
               setLoadError(false);
-              if (partMode) {
-                // Apply a pending cross-segment seek, then play.
-                const target = seekAfterLoadRef.current;
-                const advance = autoAdvanceRef.current;
-                seekAfterLoadRef.current = null;
-                autoAdvanceRef.current = false;
-                if (target != null) {
-                  try { e.currentTarget.currentTime = Math.max(0, Math.min(target, d)); } catch { /* ignore */ }
-                }
-                if (target != null || advance) {
-                  void e.currentTarget.play().catch(() => undefined);
-                }
-              }
+            }}
+            onDurationChange={(e) => {
+              const d = e.currentTarget.duration;
+              if (partMode && Number.isFinite(d) && d > 0) recordDuration(d);
             }}
             onTimeUpdate={(e) => {
               const t = e.currentTarget.currentTime;
-              const total = partMode ? partTotal : null;
-              const abs = partMode && total ? startsAt[partIdx] + t : t;
-              setCurrent((prev) => (Math.abs(prev - abs) > 0.25 ? abs : prev));
+              setCurrent((prev) => (Math.abs(prev - t) > 0.25 ? t : prev));
             }}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
-            onEnded={() => {
-              // Advance to the next crash-safe segment (continuous playback).
-              if (partMode && partIdx + 1 < artifacts.parts.length) {
-                autoAdvanceRef.current = true;
-                setPartIdx((i) => i + 1);
-              } else {
-                setPlaying(false);
-              }
-            }}
+            onEnded={() => setPlaying(false)}
             onError={() => setLoadError(true)}
           />
         )}
         {artifacts.status === "ready" && !videoSrc && !loadError && (
-          <p className="px-6 text-center font-mono text-[10px] uppercase tracking-widest text-paper/60">
-            No playable recording found
+          <p className={`px-6 text-center font-mono text-[10px] uppercase tracking-widest ${stitched.error ? "text-alert" : "text-paper/60"}`}>
+            {partMode
+              ? stitched.error ?? `Joining recording segments… ${stitched.loaded} of ${artifacts.parts.length}`
+              : "No playable recording found"}
           </p>
+        )}
+        {partMode && videoSrc && !stitched.done && !stitched.error && (
+          <span className="absolute bottom-14 left-3 z-10 bg-ink/70 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-paper/80">
+            Loading segment {stitched.loaded} of {artifacts.parts.length}
+          </span>
         )}
         {artifacts.status === "empty" && (
           <div className="flex flex-col items-center px-6 text-center">
@@ -492,7 +535,9 @@ export default function RecordingReviewer({
         {loadError && videoSrc && (
           <div className="absolute inset-0 flex items-center justify-center bg-ink/85 px-6 text-center">
             <p className="font-mono text-[10px] uppercase tracking-widest text-alert">
-              Recording could not be played — it may still be uploading.
+              {partMode
+                ? "Recording segments could not be decoded. Use Save full video below to download them."
+                : "Recording could not be played — it may still be uploading."}
             </p>
           </div>
         )}
@@ -508,7 +553,7 @@ export default function RecordingReviewer({
         <div
           className="relative h-2 w-full cursor-pointer bg-ink/15"
           onClick={(e) => {
-            const total = partMode ? partTotal : duration;
+            const total = visibleDuration;
             if (!total) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const pct = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
