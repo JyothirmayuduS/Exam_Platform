@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byNewest, examPhase, matchesPhase } from "@/shared/services/examPhase";
+import { byNewest, examPhase, matchesPhase } from "@/shared/domain/exam/phase";
 
 const now = Date.parse("2026-10-05T10:00:00Z");
 const at = (mins: number) => new Date(now + mins * 60_000).toISOString();

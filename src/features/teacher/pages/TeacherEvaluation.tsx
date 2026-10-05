@@ -2,9 +2,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FiCheck, FiPaperclip, FiAlertTriangle } from "react-icons/fi";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { loadExamBundle, updateAttemptScore, listAttemptViolations, getAttemptExamId, saveViolation, addGradingComment, listGradingComments, listFaculty, assignGradingDelegates, type ViolationEvent, type GradingComment } from "@/shared/data/examApi";
+import { loadExamBundle, updateAttemptScore, type DBQuestion, listAttemptViolations, getAttemptExamId, saveViolation, addGradingComment, listGradingComments, listFaculty, assignGradingDelegates, type ViolationEvent, type GradingComment } from "@/shared/data/examApi";
 import { type Attempt, type Flag } from "@/shared/services/rosterModel";
-import { questionsForPaper, remapAnswer, type PaperSlot } from "@/shared/services/paperBuilder";
+import {
+  gradeObjective,
+  isAutoGraded,
+  numericEqual,
+  paperTotal,
+  penaltyFor,
+  questionKind,
+  questionsForPaper,
+  remapAnswer,
+  round2,
+  type NegativeSettings,
+  type PaperSlot,
+  type QuestionKind,
+  type Verdict,
+} from "@/shared/domain/exam";
 import useLiveAttempts from "@/features/teacher/hooks/useLiveAttempts";
 import useTeacherExams from "@/features/teacher/hooks/useTeacherExams";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
@@ -17,11 +31,31 @@ import { getTeacherNav } from "@/features/teacher/pages/TeacherDashboard";
 import { getSupabase } from "@/shared/data/supabase";
 
 type QType = "MCQ" | "MSQ" | "TrueFalse" | "Numerical" | "Subjective" | "Coding";
+const QTYPE_OF_KIND: Record<QuestionKind, QType> = {
+  mcq: "MCQ", msq: "MSQ", truefalse: "TrueFalse", numerical: "Numerical", subjective: "Subjective", coding: "Coding",
+};
 type Question = {
-  id: string; no: number; type: QType; prompt: string; marks: number;
+  id: string; no: number; type: QType; kind: QuestionKind; prompt: string; marks: number;
   options?: string[]; correct?: number; chosen?: number | null;
   correctSet?: number[]; chosenSet?: number[];
   expected?: string; response?: string;
+  /** Objective questions only: how the response compares with the key. */
+  verdict?: Verdict;
+  /** Marks deducted if the answer is wrong (0 without negative marking). */
+  penalty: number;
+};
+
+const toIndex = (v: unknown): number | null => {
+  if (typeof v === "number" && Number.isInteger(v)) return v;
+  if (typeof v === "string" && /^\s*\d+\s*$/.test(v)) return Number(v);
+  return null;
+};
+const toIndexList = (v: unknown): number[] => {
+  let list: unknown = v;
+  if (typeof v === "string") {
+    try { list = JSON.parse(v); } catch { list = []; }
+  }
+  return Array.isArray(list) ? list.map(toIndex).filter((n): n is number => n !== null) : [];
 };
 type Status = "To grade" | "In review" | "Graded";
 type Candidate = Attempt & { order: number; status: Status; paper: Question[]; awarded?: number };
@@ -29,60 +63,56 @@ type Candidate = Attempt & { order: number; status: Status; paper: Question[]; a
 // Build a gradeable paper for ONE attempt: its own question snapshot (falling
 // back to the full pool for legacy attempts), with student answers re-mapped
 // from the displayed option order back to the original order for grading.
-function buildPaper(questions: any[], answers: Record<string, any>, paper?: unknown): Question[] {
+function buildPaper(questions: DBQuestion[], answers: Record<string, unknown>, paper: unknown, settings: NegativeSettings | null): Question[] {
   const slots: PaperSlot[] = Array.isArray(paper) ? (paper as PaperSlot[]) : [];
   const slotByQid = new Map(slots.map((s) => [s.id, s]));
   return questions.map((q, i) => {
-    const qType: QType = q.type as QType;
-    const slot = slotByQid.get(q.id);
-    const raw = answers[q.id];
-    const ans = remapAnswer(slot, q.options, raw);
-    
-    // Map DB question to UI question
-    const base: any = {
+    const kind = questionKind(q.type, q.options?.length ?? 0);
+    const options = Array.isArray(q.options) ? q.options.map(String) : [];
+    const ans = remapAnswer(slotByQid.get(q.id), options, answers[q.id]);
+    const marks = q.marks || 1;
+    const base: Question = {
       id: q.id,
       no: i + 1,
-      type: qType,
+      type: QTYPE_OF_KIND[kind],
+      kind,
       prompt: q.title,
-      marks: q.marks,
-      options: q.options || [],
+      marks,
+      options,
+      penalty: penaltyFor(kind, marks, settings),
     };
-    
-    if (qType === "MCQ" || qType === "TrueFalse") {
-      base.correct = q.answer ? parseInt(q.answer) : 0;
-      base.chosen = typeof ans === "number" ? ans : null;
-    } else if (qType === "MSQ") {
-      base.correctSet = q.answer ? JSON.parse(q.answer) : [];
-      base.chosenSet = Array.isArray(ans) ? ans : [];
-    } else if (qType === "Numerical") {
-      base.expected = q.answer || "";
-      base.response = typeof ans === "string" ? ans : "";
-    } else if (qType === "Subjective" || qType === "Coding") {
-      // The student's real text / uploaded-image answer. There is no hidden
-      // test-runner or stored rubric, so grading is manual review below.
+
+    if (kind === "mcq" || kind === "truefalse") {
+      base.correct = toIndex(q.answer) ?? undefined;
+      base.chosen = toIndex(ans);
+    } else if (kind === "msq") {
+      base.correctSet = toIndexList(q.answer);
+      base.chosenSet = toIndexList(Array.isArray(ans) ? JSON.stringify(ans) : ans);
+    } else if (kind === "numerical") {
+      base.expected = q.answer ?? "";
+      base.response = ans == null ? "" : String(ans);
+    } else {
+      // Descriptive / coding: the student's text or uploaded-image answer,
+      // graded by hand below.
       base.response = typeof ans === "string" ? ans : "";
     }
-    
-    return base as Question;
+    if (isAutoGraded(kind)) base.verdict = gradeObjective(kind, q.answer, ans);
+    return base;
   });
 }
 
 const key = (cid: string, qid: string, item?: string) => (item ? `${cid}:${qid}:${item}` : `${cid}:${qid}`);
 // Objective questions (MCQ / MSQ / True-False / Numerical) score automatically
 // against the answer key. Subjective and Coding answers are reviewed manually.
-const isAuto = (q: Question) => q.type !== "Subjective" && q.type !== "Coding";
+const isAuto = (q: Question) => isAutoGraded(q.kind);
 function setsEqual(a: number[] = [], b: number[] = []) {
   const x = [...a].sort((m, n) => m - n); const y = [...b].sort((m, n) => m - n);
   return x.length === y.length && x.every((v, i) => v === y[i]);
 }
 function autoScore(q: Question): number {
-  switch (q.type) {
-    case "MCQ":
-    case "TrueFalse": return q.chosen != null && q.chosen === q.correct ? q.marks : 0;
-    case "MSQ": return setsEqual(q.chosenSet, q.correctSet) ? q.marks : 0;
-    case "Numerical": return (q.response ?? "").trim().toLowerCase() === (q.expected ?? "").trim().toLowerCase() ? q.marks : 0;
-    default: return 0;
-  }
+  if (!q.verdict) return 0;
+  if (q.verdict === "correct") return q.marks;
+  return q.verdict === "wrong" && q.penalty ? -q.penalty : 0;
 }
 const typeLabel = (t: QType) => (t === "TrueFalse" ? "True / False" : t === "MSQ" ? "Multi-select" : t);
 const paperMax = (p: Question[]) => p.reduce((t, q) => t + q.marks, 0);
@@ -131,13 +161,14 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
   useEffect(() => {
     if (!examBundle) return;
     const questions = examBundle.questions ?? [];
+    const settings = (examBundle.exam?.settings ?? null) as NegativeSettings | null;
     
     // Merge live attempts with the exam's question pool from Supabase.
     const mapped: Candidate[] = liveAttempts
       .filter((a) => a.state === "Submitted") // We only grade submitted
       .map((a, i) => {
         // Grade the student's OWN paper: filter the pool to their snapshot.
-        const paper = buildPaper(questionsForPaper(a.paper, questions), a.answers || {}, a.paper);
+        const paper = buildPaper(questionsForPaper(a.paper, questions), a.answers || {}, a.paper, settings);
         return {
           ...a,
           order: i + 1,
@@ -247,12 +278,12 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     for (const cid of purelyObjective) {
       const candidate = roster.find((c) => c.id === cid);
       if (!candidate) continue;
-      const score = candidate.paper.reduce((s, q) => s + autoScore(q), 0);
+      const score = paperTotal(candidate.paper.map(autoScore));
       await updateAttemptScore(cid, score);
     }
     setRoster((cur) => cur.map((c) => {
       if (!purelyObjective.includes(c.id)) return c;
-      const score = c.paper.reduce((s, q) => s + autoScore(q), 0);
+      const score = paperTotal(c.paper.map(autoScore));
       return { ...c, status: "Graded", awarded: score };
     }));
     setSaving(false);
@@ -487,10 +518,10 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
   const paper = candidate.paper;
   const max = paperMax(paper);
   const manualQs = paper.filter((q) => !isAuto(q));
-  const autoTotal = paper.filter(isAuto).reduce((t, q) => t + autoScore(q), 0);
+  const autoTotal = round2(paper.filter(isAuto).reduce((t, q) => t + autoScore(q), 0));
   const manualTotal = manualQs.reduce((t, q) => t + (manualScores[key(cid, q.id)] ?? 0), 0);
   const gradedManual = manualQs.filter((q) => manualScores[key(cid, q.id)] != null).length;
-  const awarded = autoTotal + manualTotal;
+  const awarded = paperTotal([autoTotal, manualTotal]);
 
   const setScore = (qid: string, marks: number, maxMarks: number) =>
     setManualScores((cur) => ({ ...cur, [key(cid, qid)]: Math.max(0, Math.min(maxMarks, Number.isNaN(marks) ? 0 : marks)) }));
@@ -683,8 +714,11 @@ function QuestionCard({ q, cid, manualScores, feedback, setScore, setFeedback }:
   const scored = manualScores[key(cid, q.id)] != null;
   const score = auto ? autoScore(q) : (manualScores[key(cid, q.id)] ?? 0);
   const full = score === q.marks;
-  const badge = auto ? `Auto · ${score}/${q.marks}` : scored ? `Scored · ${score}/${q.marks}` : "Needs review";
-  const badgeTone = auto ? (full ? "text-success" : score === 0 ? "text-alert" : "text-amber") : scored ? "text-forest" : "text-amber";
+  const autoBadge = q.verdict === "unanswered"
+    ? `Auto · skipped · 0/${q.marks}`
+    : score < 0 ? `Auto · wrong · −${-score} (negative)` : `Auto · ${score}/${q.marks}`;
+  const badge = auto ? autoBadge : scored ? `Scored · ${score}/${q.marks}` : "Needs review";
+  const badgeTone = auto ? (full ? "text-success" : score <= 0 ? "text-alert" : "text-amber") : scored ? "text-forest" : "text-amber";
   return (
     <section className="border border-line bg-paper">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper-raised px-4 py-3">
@@ -751,7 +785,7 @@ function MsqAnswer({ q }: { q: Question }) {
 }
 
 function NumericalAnswer({ q }: { q: Question }) {
-  const correct = (q.response ?? "").trim().toLowerCase() === (q.expected ?? "").trim().toLowerCase();
+  const correct = numericEqual(q.response, q.expected);
   return (
     <div className="mt-4 grid gap-3 sm:grid-cols-2">
       <div className={`border p-3 ${correct ? "border-success bg-success/5" : "border-alert bg-alert/5"}`}>

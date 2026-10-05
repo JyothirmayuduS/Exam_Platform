@@ -14,6 +14,8 @@ type QuestionPanelProps = {
   currentIndex: number;
   getStatus: (questionId: string) => QuestionState;
   onJump: (index: number) => void;
+  /** Timed sections: questions outside the section in progress. */
+  isLocked?: (index: number) => boolean;
 };
 
 const statusClassMap: Record<QuestionStatus, string> = {
@@ -22,7 +24,7 @@ const statusClassMap: Record<QuestionStatus, string> = {
   unvisited: "bg-paper border-line text-ink",
 };
 
-export default function QuestionPanel({ questions, currentIndex, getStatus, onJump }: QuestionPanelProps) {
+export default function QuestionPanel({ questions, currentIndex, getStatus, onJump, isLocked }: QuestionPanelProps) {
   const [search, setSearch] = useState("");
 
   const visible = useMemo(() => {
@@ -64,12 +66,16 @@ export default function QuestionPanel({ questions, currentIndex, getStatus, onJu
           else if (state.status === "visited") classes += " v";
           if (state.marked) classes += " m";
 
+          const locked = isLocked?.(index) ?? false;
           return (
             <button
               key={q.id}
               onClick={() => onJump(index)}
+              disabled={locked}
               className={classes}
-              aria-label={`Go to question ${index + 1}`}
+              style={locked ? { opacity: 0.35, cursor: "not-allowed" } : undefined}
+              title={locked ? "Not in the current section" : undefined}
+              aria-label={`Go to question ${index + 1}${locked ? " (locked)" : ""}`}
             >
               {index + 1}
             </button>

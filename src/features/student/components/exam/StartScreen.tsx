@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { Steps } from "@/features/student/components/exam/RegistrationScreen";
 
-export type StartSection = { name: string; count: number };
+export type StartSection = { name: string; count: number; seconds?: number };
 
 type Props = {
   examName: string;
@@ -15,6 +15,10 @@ type Props = {
   studentName: string;
   studentRoll?: string;
   sections: StartSection[];
+  /** Sections run in a fixed order, each with its own countdown. */
+  timedSections?: boolean;
+  /** Marking rules the candidate must know before starting. */
+  rules?: string[];
   consentGiven: boolean;
   onConsentChange: (value: boolean) => void;
   onStart: (sectionIndex: number) => void;
@@ -29,6 +33,8 @@ export default function StartScreen({
   studentName,
   studentRoll,
   sections,
+  timedSections = false,
+  rules = [],
   consentGiven,
   onConsentChange,
   onStart,
@@ -36,7 +42,7 @@ export default function StartScreen({
 }: Props) {
   const [selected, setSelected] = useState(0);
   const safe = sections.length > 0 ? sections : [{ name: "All Questions", count: questionCount }];
-  const sel = Math.min(selected, safe.length - 1);
+  const sel = timedSections ? 0 : Math.min(selected, safe.length - 1);
 
   return (
     <div className="min-h-screen bg-paper px-6 py-10 text-ink md:py-14">
@@ -81,8 +87,9 @@ export default function StartScreen({
               <p className="font-mono text-[10px] uppercase tracking-widest text-forest">All checks passed</p>
               <h2 className="mt-1 font-serif text-2xl font-semibold">Ready to start?</h2>
               <p className="mt-2 text-[13px] leading-relaxed text-soft">
-                Select the section you would like to attempt first, then start the test. The full {durationMin}-minute timer
-                runs once you begin and counts for the whole paper.
+                {timedSections
+                  ? "Sections run in the order below, each with its own time limit. When a section's time ends you move to the next one and cannot go back."
+                  : `Select the section you would like to attempt first, then start the test. The full ${durationMin}-minute timer runs once you begin and counts for the whole paper.`}
               </p>
 
               <div className="mt-5 overflow-hidden border border-line">
@@ -93,17 +100,29 @@ export default function StartScreen({
                   <button
                     key={s.name}
                     onClick={() => setSelected(i)}
-                    className={`grid w-full grid-cols-[1fr_90px] items-center border-t border-line px-4 py-3 text-left text-[13px] transition md:grid-cols-[1fr_1fr_90px] ${i === sel ? "bg-forest/5" : "bg-paper hover:bg-raised"}`}
+                    disabled={timedSections}
+                    className={`grid w-full disabled:cursor-default grid-cols-[1fr_90px] items-center border-t border-line px-4 py-3 text-left text-[13px] transition md:grid-cols-[1fr_1fr_90px] ${i === sel ? "bg-forest/5" : "bg-paper hover:bg-raised"}`}
                   >
                     <span className="flex items-center gap-2 font-medium">
                       <span className={`h-3 w-3 rounded-none border ${i === sel ? "border-forest bg-forest" : "border-ink-soft"}`} />
                       {s.name}
                     </span>
                     <span className="hidden md:block">{s.count} question{s.count === 1 ? "" : "s"}</span>
-                    <span className="text-right font-mono text-[11px] text-soft md:text-left">In total</span>
+                    <span className="text-right font-mono text-[11px] text-soft md:text-left">
+                      {timedSections && s.seconds ? `${Math.round(s.seconds / 60)} min` : "In total"}
+                    </span>
                   </button>
                 ))}
               </div>
+
+              {rules.length > 0 && (
+                <div className="mt-5 border border-amber/40 bg-amber/5 px-4 py-3">
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-amber">Marking rules</p>
+                  <ul className="mt-1.5 space-y-1 text-[12.5px] leading-relaxed text-ink">
+                    {rules.map((r) => <li key={r}>{r}</li>)}
+                  </ul>
+                </div>
+              )}
 
               {/* Monitoring / recording consent */}
               <label className="mt-6 flex cursor-pointer items-start gap-3 border border-line bg-raised p-4">

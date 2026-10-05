@@ -31,6 +31,8 @@ type Question = {
   options: string[];
   category: string;
   type?: "mcq" | "subjective";
+  /** "msq" renders checkboxes, "numerical" a single number field. */
+  kind?: string;
   subjective_mode?: "both" | "qr" | "textbox" | null;
   marks?: number;
 };
@@ -97,7 +99,14 @@ export default function QuestionDisplay({
 }: QuestionDisplayProps) {
   if (!question) return null;
 
-  const isSubjective = question.type === "subjective" || question.options.length === 0;
+  const isMulti = question.kind === "msq";
+  const isNumeric = question.kind === "numerical";
+  const isSubjective = !isNumeric && (question.type === "subjective" || question.options.length === 0);
+  const chosenSet = Array.isArray(answer) ? (answer as number[]) : [];
+  const toggleMulti = (i: number) => {
+    const next = chosenSet.includes(i) ? chosenSet.filter((x) => x !== i) : [...chosenSet, i].sort((a, b) => a - b);
+    onSelectOption((next.length ? next : "") as unknown as number);
+  };
   return (
     <>
       <div className="exam-qh">
@@ -114,21 +123,21 @@ export default function QuestionDisplay({
       {/* MCQ options */}
       {question.options.length > 0 && (
         <>
-          <p className="exam-hint exam-mute exam-sm">Select one answer.</p>
+          <p className="exam-hint exam-mute exam-sm">{isMulti ? "Select all correct answers." : "Select one answer."}</p>
           <div>
             {question.options.map((opt, i) => {
-              const selected = answer === i;
+              const selected = isMulti ? chosenSet.includes(i) : answer === i;
               return (
                 <label
                   key={i}
                   className={`exam-opt ${selected ? "selected" : ""}`}
                 >
                   <input
-                    type="radio"
+                    type={isMulti ? "checkbox" : "radio"}
                     name={`q-${question.id}`}
                     value={i}
                     checked={selected}
-                    onChange={() => onSelectOption(i)}
+                    onChange={() => (isMulti ? toggleMulti(i) : onSelectOption(i))}
                   />
                   <span>{opt}</span>
                 </label>
@@ -136,12 +145,29 @@ export default function QuestionDisplay({
             })}
           </div>
           {/* Keyboard hint for T/F */}
-          {question.options.length === 2 && (
+          {!isMulti && question.options.length === 2 && (
             <p className="exam-hint exam-mute exam-sm" style={{ textAlign: "center" }}>
               Tip: Press <kbd style={{ padding: "0 4px", border: "1px solid var(--line)", borderRadius: "4px" }}>Space</kbd> to toggle T/F
             </p>
           )}
         </>
+      )}
+
+      {isNumeric && (
+        <div style={{ marginTop: 16 }}>
+          <p className="exam-hint exam-mute exam-sm">Enter a number.</p>
+          <input
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            className="exam-search"
+            style={{ maxWidth: 240, fontFamily: "var(--mono, monospace)" }}
+            placeholder="e.g. 42 or 3.14"
+            value={typeof answer === "string" || typeof answer === "number" ? String(answer) : ""}
+            onChange={(e) => onSelectOption(e.target.value as unknown as number)}
+            aria-label="Numerical answer"
+          />
+        </div>
       )}
 
       {/* Subjective — QR upload block / Answer box / Both */}

@@ -30,6 +30,8 @@ import { launchExamInLockdown, openStudentSide, mediaPermissionStatus, openMedia
 import { defaultWatermarkText, renderWatermarkTemplate } from "@/shared/services/watermark";
 import useExamState from "@/features/student/hooks/useExamState";
 import useExamTimer from "@/features/student/hooks/useExamTimer";
+import useSectionTimer from "@/features/student/hooks/useSectionTimer";
+import { describeNegative, groupBySection, questionKind, KIND_LABEL, sectionWindows, type NegativeSettings, type QuestionKind } from "@/shared/domain/exam";
 import useAutosave from "@/features/student/hooks/useAutosave";
 import useProctoring from "@/features/proctoring/hooks/useProctoring";
 import useKeyboardShortcuts from "@/features/student/hooks/useKeyboardShortcuts";
@@ -51,20 +53,23 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import DeviceAccessFull from "@/features/student/components/exam/DeviceAccessFull";
 import IdentityVerificationScreen from "@/features/student/components/exam/IdentityVerificationScreen";
 
-type Question = { id: string; text: string; options: string[]; category: string; type?: "mcq" | "subjective"; subjective_mode?: "both" | "qr" | "textbox" | null; marks?: number; };
+type Question = { id: string; text: string; options: string[]; category: string; type?: "mcq" | "subjective"; kind: QuestionKind; section: string; subjective_mode?: "both" | "qr" | "textbox" | null; marks?: number; };
 
 // Map a DB question row / the shape the exam UI renders. The id is the DB
 // question id, so answers (keyed by id) survive paper slicing and match the
 // grading side. MCQ options only; subjective questions still render (options
 // fall back to none) so the paper is complete even if the pool mixes types.
 function toUIQuestion(row: DBQuestion): Question {
-  const raw = (row.type ?? "").toLowerCase();
+  const kind = questionKind(row.type, row.options?.length ?? 0);
+  const choice = kind === "mcq" || kind === "msq" || kind === "truefalse";
   return {
     id: row.id,
     text: row.title,
-    options: row.options ?? [],
+    options: choice ? row.options ?? [] : [],
     category: row.unit ?? "General",
-    type: raw.includes("subj") || raw.includes("cod") ? "subjective" : raw.includes("mcq") ? "mcq" : (row.options?.length ?? 0) > 0 ? "mcq" : "subjective",
+    type: choice ? "mcq" : "subjective",
+    kind,
+    section: KIND_LABEL[kind],
     subjective_mode: row.subjective_mode,
     marks: row.marks || 1,
   };
@@ -387,8 +392,7 @@ function StudentExamSession() {
     if (!examSettings.sections) return [];
     const groups = new Map<string, { name: string; ids: string[] }>();
     for (const q of questions) {
-      const isSub = q.type === "subjective" || q.options.length === 0;
-      const name = isSub ? "Descriptive" : "MCQ";
+      const name = q.section;
       let g = groups.get(name);
       if (!g) {
         g = { name, ids: [] };
@@ -397,7 +401,15 @@ function StudentExamSession() {
       g.ids.push(q.id);
     }
     return Array.from(groups.values()).map((g) => ({ name: g.name, count: g.ids.length, firstIndex: questions.findIndex((q) => q.id === g.ids[0]) }));
-  }, [questions]);
+  }, [questions, examSettings.sections]);
+
+  const negativeRule = useMemo(() => describeNegative(examSettings as NegativeSettings), [examSettings]);
+  const windows = useMemo(
+    () => (examSettings.sections === true && examSettings.sectionTiming === true && questions.length
+      ? sectionWindows(questions.map((q) => q.section), examSettings.sectionMinutes as Record<string, number> | undefined, durationMin)
+      : []),
+    [examSettings, questions, durationMin],
+  );
 
   useOfflineSync(studentIdRef.current);
 
@@ -659,7 +671,10 @@ function StudentExamSession() {
         return;
       }
       paperRef.current = paper;
-      setQuestions(rows.map(toUIQuestion));
+      const uiRows = rows.map(toUIQuestion);
+      // Sections must be contiguous; papers built before per-type sections
+      // are regrouped here (answers are keyed by id, so order is free).
+      setQuestions(exam.settings?.sections === true ? groupBySection(uiRows, (r) => r.section).flatMap((g) => g.items) : uiRows);
 
       if (db && studentIdRef.current && active) {
         const { data: att } = await db.from("attempts").select("state").eq("exam_id", EXAM_ID).eq("student_id", studentIdRef.current).maybeSingle();
@@ -710,6 +725,36 @@ function StudentExamSession() {
     active: step === "exam" && !proctorPaused,
     onTimeUp: () => void doSubmit(),
   });
+
+  // ── Timed sections ────────────────────────────────────────────────────────
+  // Each section has its own countdown; navigation is limited to the section
+  // in progress and finished sections cannot be reopened.
+  const [sectionNotice, setSectionNotice] = useState("");
+  const [confirmFinishSection, setConfirmFinishSection] = useState(false);
+  const sectionTimer = useSectionTimer({
+    windows,
+    active: step === "exam" && !proctorPaused,
+    storageKey: EXAM_ID && STUDENT_ROLL ? `vignan.section.${EXAM_ID}.${STUDENT_ROLL}` : null,
+    onExpire: (i) => {
+      if (i >= windows.length - 1) {
+        if (secondsLeft > 0) void doSubmit();
+        return;
+      }
+      sectionTimer.advance();
+      setSectionNotice(`Time for ${windows[i].name} is over. You are now in ${windows[i + 1].name}.`);
+    },
+  });
+  const finishSection = () => {
+    setConfirmFinishSection(false);
+    const from = sectionTimer.current?.name;
+    if (sectionTimer.advance()) setSectionNotice(`${from} submitted. You are now in ${windows[sectionTimer.index + 1]?.name}.`);
+  };
+  useEffect(() => {
+    const w = sectionTimer.current;
+    if (!sectionTimer.enabled || !w || step !== "exam") return;
+    if (current < w.start) goTo(w.start);
+    else if (current >= w.end) goTo(w.end - 1);
+  }, [sectionTimer.enabled, sectionTimer.current, current, step, goTo]);
 
   // ── Flag-limit action (Test Options / Security & access) ──────────────────
   // When the teacher enabled "Take action after a number of proctoring flags",
@@ -1466,7 +1511,9 @@ function StudentExamSession() {
         durationMin={durationMin}
         studentName={studentName}
         studentRoll={STUDENT_ROLL}
-        sections={sections.map((s) => ({ name: s.name, count: s.count }))}
+        sections={sections.map((s) => ({ name: s.name, count: s.count, seconds: windows.find((w) => w.name === s.name)?.seconds }))}
+        timedSections={windows.length > 0}
+        rules={negativeRule ? [negativeRule] : []}
         consentGiven={consentGiven}
         onConsentChange={setConsentGiven}
         onBack={() => setStep("register")}
@@ -1597,11 +1644,38 @@ function StudentExamSession() {
             currentIndex={current}
             getStatus={getQuestionStatus}
             onJump={goTo}
+            isLocked={sectionTimer.enabled ? (i) => !sectionTimer.inCurrent(i) : undefined}
           />
         </div>
 
         {/* CENTER */}
         <main className="exam-panel">
+          {sectionTimer.enabled && sectionTimer.current && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border border-line bg-raised px-4 py-3">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Section {sectionTimer.index + 1} of {windows.length}</p>
+                <p className="text-[14px] font-semibold">{sectionTimer.current.name} <span className="font-normal text-soft">· questions {sectionTimer.current.start + 1}–{sectionTimer.current.end}</span></p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <p className="font-mono text-[9px] uppercase tracking-wider text-soft">Section time left</p>
+                  <p className={`font-mono text-[18px] tabular-nums ${sectionTimer.secondsLeft <= 60 ? "text-alert" : sectionTimer.secondsLeft <= 300 ? "text-amber" : "text-ink"}`}>{sectionTimer.timeString}</p>
+                </div>
+                {!sectionTimer.isLast && (
+                  <button onClick={() => setConfirmFinishSection(true)} className="exam-btn">Finish section</button>
+                )}
+              </div>
+            </div>
+          )}
+          {sectionNotice && (
+            <div className="mb-4 flex items-start justify-between gap-3 border border-forest bg-forest/5 px-4 py-2.5 text-[13px]" role="status">
+              <span>{sectionNotice}</span>
+              <button onClick={() => setSectionNotice("")} aria-label="Dismiss" className="text-soft hover:text-ink">×</button>
+            </div>
+          )}
+          {negativeRule && (
+            <p className="mb-3 border-l-2 border-amber bg-amber/5 px-3 py-2 text-[12px] text-ink">{negativeRule}</p>
+          )}
 
           <QuestionDisplay
             question={q}
@@ -1633,6 +1707,8 @@ function StudentExamSession() {
             isReviewed={!!(q && isReviewed(q.id))}
             onPrev={goPrev}
             onNext={goNext}
+            range={sectionTimer.current}
+            onFinishSection={sectionTimer.enabled ? () => setConfirmFinishSection(true) : undefined}
             onJump={goTo}
             onGoLastVisited={goLastVisited}
             onToggleReview={toggleCurrentReview}
@@ -1746,6 +1822,25 @@ function StudentExamSession() {
           <p className="mt-2">↑/↓ Prev/Next · ← First · / Last</p>
           <p>R or Ctrl+B Toggle review</p>
           <p>Ctrl+S Save · Alt+S Submit · ? hide</p>
+        </div>
+      )}
+
+      {confirmFinishSection && sectionTimer.current && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/50 p-4" role="dialog" aria-modal="true" aria-labelledby="finish-section-title">
+          <div className="w-full max-w-md border border-line bg-paper p-6 shadow-xl">
+            <h2 id="finish-section-title" className="font-serif text-xl font-semibold">Finish {sectionTimer.current.name}?</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-soft">
+              You won't be able to come back to this section. {(() => {
+                const w = sectionTimer.current;
+                const left = questions.slice(w.start, w.end).filter((x) => getQuestionStatus(x.id).status !== "answered").length;
+                return left ? `${left} question${left === 1 ? " is" : "s are"} still unanswered.` : "All questions in this section are answered.";
+              })()} The unused {sectionTimer.timeString} is not carried over.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setConfirmFinishSection(false)} className="exam-btn">Keep working</button>
+              <button onClick={finishSection} className="exam-btn pri">Finish section</button>
+            </div>
+          </div>
         </div>
       )}
 

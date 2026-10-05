@@ -11,6 +11,15 @@ import PageLoader from "@/shared/components/PageLoader";
 import "./ExamStudio.css";
 import { Button, NumberField } from "@/shared/components/ui";
 import {
+  NEGATIVE_DEFAULTS,
+  sectionOf,
+  summarizeSections,
+  type NegativeMode,
+  type QuestionKind,
+  type SectionSummary,
+} from "@/shared/domain/exam";
+import { NegativeMarkingFields, SectionList, SectionTimingFields } from "@/features/teacher/components/exam-studio/AdvancedFields";
+import {
   listExamsForTeacher,
   listQuestionsForExam,
   listAllQuestions,
@@ -36,6 +45,8 @@ type S = {
   watermarkText?: string; fixedSectionOrder?: boolean; scratchpad?: boolean;
   allowQrUpload?: boolean; showMarksInTest?: boolean; showMarks?: boolean;
   regEmail?: boolean; regName?: boolean; regUsn?: boolean; regTerms?: boolean;
+  negativeMode: NegativeMode; negativeMarks: number; negativeFraction: number; negativeKinds: QuestionKind[];
+  sectionMinutes: Record<string, number>;
 };
 
 const DEFAULTS: S = {
@@ -47,11 +58,7 @@ const DEFAULTS: S = {
   showReportToTaker: false, commentsMandatory: false, skipFeedback: false, redirectAfter: "",
   watermarkText: "", fixedSectionOrder: false, scratchpad: false, allowQrUpload: false,
   showMarksInTest: true, showMarks: true, regEmail: true, regName: true, regUsn: true, regTerms: true,
-};
-
-const TYPE_LABEL: Record<string, string> = {
-  MCQ: "MCQ", MSQ: "MSQ", "True / False": "True / False", Numerical: "Numerical",
-  Subjective: "Descriptive", Coding: "Coding", LONG_ANSV: "Descriptive",
+  ...NEGATIVE_DEFAULTS, sectionMinutes: {},
 };
 
 const inputCls = "border border-line bg-paper px-3 py-2.5 text-[13px] text-ink outline-none placeholder:text-soft/60 focus:border-forest";
@@ -105,15 +112,7 @@ export default function ExamStudio({
 
   const inPool = useMemo(() => new Set(questions.map((q) => q.id)), [questions]);
   const totalMarks = questions.reduce((sum, q) => sum + (q.marks || 1), 0);
-  const sections = useMemo(() => {
-    const map = new Map<string, { type: string; count: number; marks: number }>();
-    for (const q of questions) {
-      const t = TYPE_LABEL[q.type] ?? q.type ?? "Question";
-      const cur = map.get(t) ?? { type: t, count: 0, marks: 0 };
-      cur.count += 1; cur.marks += q.marks || 1; map.set(t, cur);
-    }
-    return Array.from(map.values());
-  }, [questions]);
+  const sections = useMemo(() => summarizeSections(questions), [questions]);
   const topics = useMemo(() => new Set(questions.map((q) => q.unit || "General")), [questions]);
   const perStudent = Math.min(Number(s.perStudent) || 1, Math.max(1, questions.length));
   const studentLink = () => `https://vignan.exam/join/${examId.toLowerCase()}`;
@@ -328,7 +327,7 @@ export default function ExamStudio({
       </section>
 
       <div className="exam-build-metrics" role="group" aria-label="Paper summary">
-        <BuildMetric value={String(sections.length)} label="Sections" detail={sections.length ? sections.map((x) => x.type).join(" · ") : "none yet"} />
+        <BuildMetric value={String(sections.length)} label="Sections" detail={sections.length ? sections.map((x) => x.name).join(" · ") : "none yet"} />
         <BuildMetric value={String(topics.size)} label="Topics / skills" detail={topics.size ? Array.from(topics).slice(0, 3).join(" · ") : "none yet"} />
         <BuildMetric value={String(questions.length)} label="Questions" detail={questions.length ? `${perStudent} per student` : "add some above"} highlight />
         <BuildMetric value={String(totalMarks)} label="Marks" detail={s.negative ? "negative marking on" : "no negative marking"} highlight />
@@ -352,7 +351,7 @@ export default function ExamStudio({
             {questions.map((q) => (
               <tr key={q.id} className="border-b border-line last:border-0 hover:bg-raised/50">
                 <td>
-                  <span className="inline-block bg-forest/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-forest">{TYPE_LABEL[q.type] ?? q.type}</span>
+                  <span className="inline-block bg-forest/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-forest">{sectionOf(q)}</span>
                 </td>
                 <td className="max-w-[360px]">
                   <span className="font-mono text-[10px] text-soft">{q.id}</span>
@@ -404,6 +403,7 @@ export default function ExamStudio({
           duration={duration}
           setDuration={setDuration}
           examName={name}
+          sections={sections}
           onClose={() => setDialog(null)}
           onSave={() => { void persistSettings(); setDialog(null); }}
         />
@@ -469,10 +469,11 @@ function BuildMetric({ value, label, detail, highlight }: { value: string; label
 // ─────────────────────────────────────────────────────────────────────────────
 // Settings dialog (Advance options / Test / Section / Registration fields)
 // ─────────────────────────────────────────────────────────────────────────────
-function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onClose, onSave }: {
+function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, sections, onClose, onSave }: {
   dialog: "test" | "sections" | "registration";
   s: S; patch: <K extends keyof S>(k: K, v: S[K]) => void;
   duration: number; setDuration: (n: number) => void; examName: string;
+  sections: SectionSummary[];
   onClose: () => void; onSave: () => void;
 }) {
   return (
@@ -507,7 +508,13 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
                 <Check label="Provide on-screen calculator & rough sheet to test-takers" detail="A basic calculator and scratch pad are shown in the exam." checked={!!s.calculator} onChange={(v) => patch("calculator", v)} />
                 <Check label="Show marks in test" detail="Candidates see the marks of each question while answering." checked={s.showMarksInTest !== false && s.showMarks !== false} onChange={(v) => { patch("showMarksInTest", v); patch("showMarks", v); }} />
                 <Check label="Fixed section order for test-takers" detail="Sections always appear in the same order — no shuffling between candidates." checked={!!s.fixedSectionOrder} onChange={(v) => patch("fixedSectionOrder", v)} />
-                <Check label="Enable negative marking (incorrect grade)" detail="Deduct the configured marks for a wrong auto-graded answer." checked={!!s.negative} onChange={(v) => patch("negative", v)} />
+                <Check label="Enable negative marking (incorrect grade)" detail="Deduct marks for a wrong auto-graded answer." checked={!!s.negative} onChange={(v) => patch("negative", v)} />
+                {s.negative && (
+                  <NegativeMarkingFields
+                    value={{ negativeMode: s.negativeMode, negativeMarks: s.negativeMarks, negativeFraction: s.negativeFraction, negativeKinds: s.negativeKinds }}
+                    onChange={(p) => (Object.keys(p) as (keyof typeof p)[]).forEach((k) => patch(k, p[k] as S[typeof k]))}
+                  />
+                )}
                 <Check label="Auto-submit when time runs out" checked={!!s.autoSubmit} onChange={(v) => patch("autoSubmit", v)} />
                 <Check label="Auto-close at deadline" detail="Force-submit when the scheduled window ends." checked={!!s.autoClose} onChange={(v) => patch("autoClose", v)} />
               </Group>
@@ -558,8 +565,10 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, onC
                 <Check label="Shuffle answer options" checked={!!s.shuffleOptions} onChange={(v) => patch("shuffleOptions", v)} />
               </Group>
               <Group label="Sections">
-                <Check label="Enable sections / groups" detail="Questions are grouped by type into sections on the paper." checked={!!s.sections} onChange={(v) => { patch("sections", v); if (!v) patch("sectionTiming", false); }} />
-                {s.sections && <Check label="Enforce section time limits" detail="Individual countdown timers per section." checked={!!s.sectionTiming} onChange={(v) => patch("sectionTiming", v)} />}
+                <Check label="Enable sections / groups" detail="Questions are grouped into one section per question type." checked={!!s.sections} onChange={(v) => { patch("sections", v); if (!v) patch("sectionTiming", false); }} />
+                {s.sections && <SectionList sections={sections} />}
+                {s.sections && <Check label="Enforce section time limits" detail="Each section gets its own countdown. When it ends the candidate moves on and cannot go back." checked={!!s.sectionTiming} onChange={(v) => patch("sectionTiming", v)} />}
+                {s.sections && s.sectionTiming && <SectionTimingFields sections={sections} minutes={s.sectionMinutes ?? {}} duration={duration} onChange={(m) => patch("sectionMinutes", m)} />}
                 <Check label="Duration lock (strict)" detail="Prevent time-extension requests during the exam." checked={!!s.durationLock} onChange={(v) => patch("durationLock", v)} />
               </Group>
             </>
@@ -604,7 +613,7 @@ function Check({ label, detail, checked, onChange }: { label: string; detail?: s
 // Preview dialog
 // ─────────────────────────────────────────────────────────────────────────────
 function PreviewDialog({ exam, sections, questions, duration, perStudent, s, onClose }: {
-  exam: ExamRecord; sections: { type: string; count: number; marks: number }[];
+  exam: ExamRecord; sections: SectionSummary[];
   questions: DBQuestion[]; duration: number; perStudent: number; s: S; onClose: () => void;
 }) {
   const [showAll, setShowAll] = useState(false);
@@ -619,9 +628,9 @@ function PreviewDialog({ exam, sections, questions, duration, perStudent, s, onC
         <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
           <div className="grid grid-cols-2 gap-px border border-line bg-line sm:grid-cols-4">
             {sections.map((sec) => (
-              <div key={sec.type} className="bg-paper px-4 py-3">
+              <div key={sec.name} className="bg-paper px-4 py-3">
                 <p className="font-serif text-xl text-forest">{sec.count}</p>
-                <p className="font-mono text-[9px] uppercase tracking-wider text-soft">{sec.type}</p>
+                <p className="font-mono text-[9px] uppercase tracking-wider text-soft">{sec.name}</p>
               </div>
             ))}
           </div>

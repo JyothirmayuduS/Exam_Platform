@@ -7,6 +7,7 @@ import { getSupabase } from "@/shared/data/supabase";
 import { useQuery } from "@tanstack/react-query";
 import AppealForm from "@/features/student/components/exam/AppealForm";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
+import { gradeObjective, isAutoGraded, questionKind, remapAnswer, scoreObjective, type NegativeSettings } from "@/shared/domain/exam";
 
 
 function MiniBarChart({ data }: { data: { category: string; score: number }[] }) {
@@ -105,8 +106,10 @@ export default function StudentResultDetail() {
       const categoryMap: Record<string, { correct: number; total: number }> = {};
       const processedQuestions = paperQuestions.map((q: any, i: number) => {
         const studentAns = answersObj[q.id];
-        const type = q.type === "Subjective" || q.type === "Coding" ? "subjective" : "mcq";
+        const kind = questionKind(q.type, q.options?.length ?? 0);
+        const type = kind === "mcq" || kind === "truefalse" ? "mcq" : "subjective";
         const slot = slotByQid.get(q.id);
+        const verdict = isAutoGraded(kind) ? gradeObjective(kind, q.answer, remapAnswer(slot, q.options, studentAns)) : null;
         const origCorrect = type === "mcq" && q.answer !== null ? parseInt(q.answer) : -1;
         // Correct option index in the order the student actually saw.
         const displayedCorrect =
@@ -114,8 +117,10 @@ export default function StudentResultDetail() {
             ? slot.options.findIndex((o: string) => o === String((q.options || [])[origCorrect]))
             : origCorrect;
         const studentDisplayIdx = type === "mcq" && typeof studentAns === "number" ? studentAns : -1;
-        const isCorrect = type === "mcq" && displayedCorrect >= 0 && studentDisplayIdx === displayedCorrect;
-        const awarded = type === "mcq" ? (isCorrect ? q.marks : 0) : (attempt.score === null ? "..." : 0);
+        const isCorrect = verdict === "correct";
+        const awarded = verdict
+          ? scoreObjective(kind, q.marks || 1, verdict, exam?.settings as NegativeSettings | null)
+          : (attempt.score === null ? "..." : 0);
 
         const cat = q.category || "General";
         if (!categoryMap[cat]) categoryMap[cat] = { correct: 0, total: 0 };
@@ -129,7 +134,11 @@ export default function StudentResultDetail() {
           text: q.title,
           options: slot?.options ?? (q.options || []),
           studentAnswer: studentDisplayIdx,
-          studentAnswerText: type === "subjective" ? (studentAns || "") : "",
+          studentAnswerText: type === "subjective"
+            ? (Array.isArray(studentAns)
+                ? studentAns.map((i: number) => String((slot?.options ?? q.options ?? [])[i] ?? i)).join(", ")
+                : String(studentAns ?? ""))
+            : "",
           correctAnswer: displayedCorrect,
           marksAwarded: awarded,
           maxMarks: q.marks,

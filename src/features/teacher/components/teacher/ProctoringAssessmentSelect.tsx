@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FiVideo, FiUsers, FiActivity, FiAlertTriangle, FiCheckCircle, FiClock, FiSearch } from "react-icons/fi";
 import { listExamsForTeacher, listProctoringStats } from "@/shared/data/examApi";
 import { Button, Badge, EmptyState } from "@/shared/components/ui";
-import { byNewest, examPhase, matchesPhase, PHASE_FILTERS, PHASE_LABEL, type PhaseFilter } from "@/shared/services/examPhase";
+import { byNewest, examPhase, matchesPhase, PHASE_FILTERS, PHASE_LABEL, type PhaseFilter } from "@/shared/domain/exam/phase";
 
 type ExamRow = {
   id: string;

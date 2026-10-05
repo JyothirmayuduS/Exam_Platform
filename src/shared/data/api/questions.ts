@@ -5,7 +5,7 @@
 import { getSupabase } from "@/shared/data/supabase";
 import type { ExamRecord, PaperSlot, DBQuestion, ExamBundle, Student } from "@/shared/data/api/types";
 import { normalizeOptions, normalizeExamRecord } from "@/shared/data/api/helpers";
-import { buildPaper, questionsForPaper } from "@/shared/services/paperBuilder";
+import { buildPaper, questionsForPaper } from "@/shared/domain/exam/paperBuilder";
 
 /** All questions across the teacher's exams (for the question-bank page). */
 export async function listAllQuestions(): Promise<(DBQuestion & { exam_name: string | null })[]> {
@@ -214,9 +214,10 @@ export async function loadPaperForStudent(
   }
 
   const ordered = questionsForPaper(paper, pool);
-  const questions = ordered.map((q, i) => ({
+  const slotById = new Map(paper.map((s) => [s.id, s]));
+  const questions = ordered.map((q) => ({
     ...q,
-    options: paper[i]?.options ?? normalizeOptions(q.options),
+    options: slotById.get(q.id)?.options ?? normalizeOptions(q.options),
   }));
   return { exam, questions, paper, attemptId };
 }

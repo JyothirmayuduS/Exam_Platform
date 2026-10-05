@@ -1,4 +1,4 @@
-import { byNewest } from "@/shared/services/examPhase";
+import { byNewest } from "@/shared/domain/exam/phase";
 // ──────────────────────────────────────────────────────────────────────────
 // Domain module: assignments — extracted from src/shared/data/examApi.ts.
 // ──────────────────────────────────────────────────────────────────────────

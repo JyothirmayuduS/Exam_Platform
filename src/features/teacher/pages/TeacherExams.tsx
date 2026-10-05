@@ -10,7 +10,7 @@ import { PageHeading, Button } from "@/features/teacher/pages/TeacherDashboard";
 import { PlusIcon, ArrowRightIcon } from "@/shared/components/ui";
 import { FiGrid, FiList, FiTrash2 } from "react-icons/fi";
 import CreateTestModal from "@/features/teacher/components/teacher/CreateTestModal";
-import { byNewest, examPhase, PHASE_FILTERS, PHASE_LABEL, type ExamPhase, type PhaseFilter } from "@/shared/services/examPhase";
+import { byNewest, examPhase, PHASE_FILTERS, PHASE_LABEL, type ExamPhase, type PhaseFilter } from "@/shared/domain/exam/phase";
 
 type ExamCard = {
   id: string;

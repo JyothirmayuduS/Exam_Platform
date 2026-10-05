@@ -8,6 +8,7 @@
 // the student's own paper — not the full pool.
 
 import type { DBQuestion } from "@/shared/data/examApi";
+import { groupBySection, SECTION_ORDER, sectionOf } from "./sections";
 
 /** One slot of a student's paper. `options` is present only when option
  *  shuffle is on, and holds the options in the order the student saw them. */
@@ -108,24 +109,11 @@ export function buildPaper(
   if (settings.shuffleOrder) ordered = shuffleInPlace([...selected], rand);
 
   if (settings.sections) {
-    const mcq: DBQuestion[] = [];
-    const subj: DBQuestion[] = [];
-    for (const q of ordered) {
-      const type = (q.type || "").toLowerCase();
-      const isSub = type.includes("subj") || type.includes("cod") || (!type.includes("mcq") && (!q.options || q.options.length === 0));
-      if (isSub) subj.push(q);
-      else mcq.push(q);
-    }
-    
-    let sectionGroups = [];
-    if (mcq.length) sectionGroups.push(mcq);
-    if (subj.length) sectionGroups.push(subj);
-    
-    if (!settings.fixedSectionOrder) {
-      sectionGroups = shuffleInPlace(sectionGroups, rand);
-    }
-    
-    ordered = sectionGroups.flat();
+    const groups = groupBySection(ordered, sectionOf).sort(
+      (a, b) => SECTION_ORDER.indexOf(a.name) - SECTION_ORDER.indexOf(b.name),
+    );
+    if (!settings.fixedSectionOrder) shuffleInPlace(groups, rand);
+    ordered = groups.flatMap((g) => g.items);
   }
 
   return ordered.map((q) => {

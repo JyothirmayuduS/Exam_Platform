@@ -4,7 +4,7 @@
 // students, proctor events…) plus the shapes the proctor/teacher consoles and
 // the examiner dashboard consume. Pure types only — no logic lives here.
 
-import type { PaperSlot } from "@/shared/services/paperBuilder";
+import type { PaperSlot } from "@/shared/domain/exam/paperBuilder";
 
 export type { PaperSlot };
 

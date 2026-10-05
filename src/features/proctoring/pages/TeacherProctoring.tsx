@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
-import { byNewest } from "@/shared/services/examPhase";
+import { byNewest } from "@/shared/domain/exam/phase";
 import { supabaseConfigured } from "@/shared/data/env";
 import { listLiveAttempts, subscribeToAttempts, forceSubmitAttempt, saveViolation, setAttemptPaused, listExamsForTeacher, listProctoringStats, listProctorAssignments, saveProctorAssignments, listFaculty, type LiveAttempt, type ViolationEvent, type FacultyMember } from "@/shared/data/examApi";
 import { sendProctorAssignmentEmail } from "@/features/teacher/services/emailApi";
