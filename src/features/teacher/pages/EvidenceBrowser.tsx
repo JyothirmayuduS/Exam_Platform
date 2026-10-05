@@ -16,7 +16,7 @@
 // shows what was stored.
 
 import { useEffect, useMemo, useState } from "react";
-import { FiDownload, FiArrowLeft, FiFolder, FiUser, FiVideo, FiImage, FiAlertTriangle, FiFileText } from "react-icons/fi";
+import { FiDownload, FiArrowLeft, FiFolder, FiUser, FiVideo, FiImage, FiAlertTriangle, FiFileText, FiEdit3 } from "react-icons/fi";
 import { supabaseConfigured } from "@/shared/data/env";
 import { getSupabase } from "@/shared/data/supabase";
 import {
@@ -36,8 +36,11 @@ import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 import JobBanner from "@/shared/components/JobBanner";
 
 type ExamFolder = {
-  /** Stored folder segment, e.g. "Test-3" (no trailing slash). */
+  /** Primary stored folder segment, e.g. "Test-3" (no trailing slash). */
   folder: string;
+  /** Every stored folder for this exam: the name slug plus the exam-id folder
+   *  that written-answer uploads and older sessions use. */
+  folders: string[];
   /** DB overlay when the folder matches a live exam. */
   examId?: string;
   name?: string;
@@ -50,20 +53,25 @@ type StudentRow = {
   studentId?: string;
   attemptId?: string;
   state?: string;
-  counts?: { recordings: number; screenshots: number; violations: number; report: number };
+  counts?: Counts;
 };
+
+type Counts = { recordings: number; screenshots: number; violations: number; report: number; answers: number };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function stripSlash(folder: string): string {
   return folder.replace(/\/+$/, "");
 }
 
-function kindCounts(arts: R2Artifact[] | null): { recordings: number; screenshots: number; violations: number; report: number } {
-  const c = { recordings: 0, screenshots: 0, violations: 0, report: 0 };
+function kindCounts(arts: R2Artifact[] | null): Counts {
+  const c = { recordings: 0, screenshots: 0, violations: 0, report: 0, answers: 0 };
   for (const a of arts ?? []) {
     if (a.kind === "recordings") c.recordings += 1;
     else if (a.kind === "screenshots") c.screenshots += 1;
     else if (a.kind === "violations") c.violations += 1;
     else if (a.kind === "report") c.report += 1;
+    else if (a.kind === "subjective") c.answers += 1;
   }
   return c;
 }
@@ -122,12 +130,19 @@ export default function EvidenceBrowser() {
         setExams([]);
         return;
       }
-      const rows: ExamFolder[] = folderNames.map((f) => {
+      // One card per exam: the name-slug folder and the exam-id folder are the
+      // same exam and must not show up as two "Test 20" entries.
+      const grouped = new Map<string, ExamFolder>();
+      for (const f of folderNames) {
         const seg = stripSlash(f);
         const meta = bySegment.get(seg);
-        return { folder: seg, examId: meta?.id, name: meta?.name ?? seg, batch: meta?.batch ?? undefined };
-      });
-      setExams(rows);
+        const key = meta?.id ?? seg;
+        const row = grouped.get(key) ?? { folder: seg, folders: [], examId: meta?.id, name: meta?.name ?? seg, batch: meta?.batch ?? undefined };
+        row.folders.push(seg);
+        if (meta && seg === storageFolderSegment(meta.id, meta.name)) row.folder = seg;
+        grouped.set(key, row);
+      }
+      setExams([...grouped.values()]);
     })();
     return () => { alive = false; };
   }, []);
@@ -141,53 +156,63 @@ export default function EvidenceBrowser() {
     let alive = true;
     setStudents(null);
     void (async () => {
-      const raw = await listR2StudentFolders(selectedExam.folder);
+      const lists = await Promise.all(selectedExam.folders.map((f) => listR2StudentFolders(f)));
       if (!alive) return;
-      if (!raw) {
+      if (lists.every((l) => l === null)) {
         setStudents([]);
         return;
       }
-      const rolls = raw.map((f) => stripSlash(f));
-      const rows: StudentRow[] = rolls.map((roll) => ({ roll }));
-
-      // DB overlay: names by roll, attempt state by student.
+      // Owner segments are roll numbers for proctoring evidence and student
+      // ids for written-answer uploads; both resolve to the same candidate.
+      const segs = [...new Set(lists.flatMap((l) => (l ?? []).map(stripSlash)))];
+      type St = { id: string; roll: string | null; full_name: string | null };
+      const byRoll = new Map<string, St>();
+      const byId = new Map<string, St>();
       try {
         const db = getSupabase();
         if (db) {
-          const { data: stData } = await db.from("students").select("id, roll, full_name").in("roll", rolls);
-          const byRoll = new Map<string, { id: string; full_name: string | null }>();
-          for (const s of (stData as { id?: string; roll?: string; full_name?: string | null }[] | null) ?? []) {
-            if (s.roll) byRoll.set(s.roll, { id: String(s.id ?? ""), full_name: s.full_name ?? null });
-          }
-          if (selectedExam.examId) {
-            const { data: attData } = await db
-              .from("attempts")
-              .select("id, student_id, state")
-              .eq("exam_id", selectedExam.examId);
-            const byStudent = new Map<string, { id: string; state?: string }>();
-            for (const a of (attData as { id?: string; student_id?: string; state?: string }[] | null) ?? []) {
-              if (a.student_id) byStudent.set(String(a.student_id), { id: String(a.id ?? ""), state: a.state });
-            }
-            for (const r of rows) {
-              const st = byRoll.get(r.roll);
-              if (st) {
-                r.name = st.full_name ?? undefined;
-                r.studentId = st.id;
-              }
-              const att = st ? byStudent.get(st.id) : undefined;
-              if (att) {
-                r.attemptId = att.id;
-                r.state = att.state;
-              }
-            }
-          } else {
-            for (const r of rows) {
-              const st = byRoll.get(r.roll);
-              if (st) r.name = st.full_name ?? undefined;
-            }
+          const ids = segs.filter((x) => UUID_RE.test(x));
+          const [rollRes, idRes] = await Promise.all([
+            db.from("students").select("id, roll, full_name").in("roll", segs),
+            ids.length ? db.from("students").select("id, roll, full_name").in("id", ids) : Promise.resolve({ data: [] }),
+          ]);
+          for (const s of [...((rollRes.data as St[] | null) ?? []), ...((idRes.data as St[] | null) ?? [])]) {
+            const st = { id: String(s.id), roll: s.roll ?? null, full_name: s.full_name ?? null };
+            byId.set(st.id, st);
+            if (st.roll) byRoll.set(st.roll, st);
           }
         }
-      } catch { /* names/attempts are an overlay — rolls alone are enough */ }
+      } catch { /* names are an overlay — folder names alone are enough */ }
+
+      const rowsByKey = new Map<string, StudentRow>();
+      for (const seg of segs) {
+        const st = byRoll.get(seg) ?? byId.get(seg);
+        const key = st?.id ?? seg;
+        if (!rowsByKey.has(key)) {
+          rowsByKey.set(key, { roll: st?.roll ?? seg, name: st?.full_name ?? undefined, studentId: st?.id });
+        }
+      }
+      const rows = [...rowsByKey.values()];
+
+      if (selectedExam.examId) {
+        try {
+          const db = getSupabase();
+          const { data: attData } = db
+            ? await db.from("attempts").select("id, student_id, state").eq("exam_id", selectedExam.examId)
+            : { data: null };
+          const byStudent = new Map<string, { id: string; state?: string }>();
+          for (const a of (attData as { id?: string; student_id?: string; state?: string }[] | null) ?? []) {
+            if (a.student_id) byStudent.set(String(a.student_id), { id: String(a.id ?? ""), state: a.state });
+          }
+          for (const r of rows) {
+            const att = r.studentId ? byStudent.get(r.studentId) : undefined;
+            if (att) {
+              r.attemptId = att.id;
+              r.state = att.state;
+            }
+          }
+        } catch { /* attempt state is an overlay */ }
+      }
 
       // Artifact counts per student (bounded concurrency so a big class never
       // floods the edge function at once).
@@ -199,7 +224,7 @@ export default function EvidenceBrowser() {
           while (cursor < rows.length) {
             const i = cursor;
             cursor += 1;
-            const arts = await listCandidateArtifacts(selectedExam.folder, rows[i].roll, selectedExam.examId, rows[i].studentId);
+            const arts = await listCandidateArtifacts(selectedExam.folders, rows[i].roll, selectedExam.examId, rows[i].studentId);
             if (alive) rows[i].counts = kindCounts(arts);
           }
         })());
@@ -235,7 +260,7 @@ export default function EvidenceBrowser() {
             {selectedStudent
               ? `Recordings, per-second snapshots, flagged frames, PDF report and AI integrity for ${selectedExam?.name ?? ""} · ${selectedStudent.roll}.`
               : selectedExam
-                ? `Students with stored evidence under “${selectedExam.folder}” — click one to review their full proctoring record.`
+                ? `Students with stored evidence under “${selectedExam.folders.join("” and “")}” — click one to review their full proctoring record.`
                 : "Browse every exam and candidate with stored recordings or snapshots in Cloudflare R2 — even when no attempt row exists in the database."}
           </p>
         </div>
@@ -289,7 +314,7 @@ export default function EvidenceBrowser() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <FiFolder aria-hidden className="h-5 w-5 shrink-0 text-forest" />
-                  <span className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Stored as {ex.folder}</span>
+                  <span className="truncate font-mono text-[9px] uppercase tracking-wider text-ink-soft">Stored as {ex.folders.join(" + ")}</span>
                 </div>
                 <p className="mt-3 truncate font-serif text-lg font-semibold group-hover:text-forest">{ex.name ?? ex.folder}</p>
                 <p className="mt-1 text-[12px] text-ink-soft">{ex.batch ?? "Evidence folder"}</p>
@@ -304,7 +329,7 @@ export default function EvidenceBrowser() {
         students === null ? <Loading /> :
         students.length === 0 ? (
           <div className="border border-dashed border-line-strong p-12 text-center font-mono text-[11px] text-ink-soft">
-            No student folders under “{selectedExam.folder}” — no artifacts were stored for this exam.
+            No student folders under “{selectedExam.folders.join("” or “")}” — no artifacts were stored for this exam.
           </div>
         ) : (
           <div className="space-y-2">
@@ -332,6 +357,9 @@ export default function EvidenceBrowser() {
                     <FiAlertTriangle aria-hidden className="h-3.5 w-3.5" /> {s.counts?.violations ?? 0}
                   </span>
                   <span className="inline-flex items-center gap-1" title="PDF report"><FiFileText aria-hidden className="h-3.5 w-3.5" /> {s.counts?.report ?? 0}</span>
+                  {(s.counts?.answers ?? 0) > 0 && (
+                    <span className="inline-flex items-center gap-1" title="Written answer uploads"><FiEdit3 aria-hidden className="h-3.5 w-3.5" /> {s.counts?.answers}</span>
+                  )}
                   <FiArrowLeft aria-hidden className="h-4 w-4 rotate-180 text-ink-soft transition-transform group-hover:translate-x-0.5" />
                 </div>
               </button>
@@ -364,7 +392,7 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
     let alive = true;
     void (async () => {
       const [arts, vios] = await Promise.all([
-        listCandidateArtifacts(exam.folder, student.roll, exam.examId, student.studentId),
+        listCandidateArtifacts(exam.folders, student.roll, exam.examId, student.studentId),
         student.attemptId ? listAttemptViolations(student.attemptId) : Promise.resolve([] as ViolationEvent[]),
       ]);
       if (!alive) return;
@@ -377,10 +405,11 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
       }
     })();
     return () => { alive = false; };
-  }, [exam.folder, exam.examId, student.roll, student.studentId, student.attemptId]);
+  }, [exam.folders, exam.examId, student.roll, student.studentId, student.attemptId]);
 
   const recordings = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "recordings"), [artifacts]);
   const screenshots = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "screenshots").sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? "")), [artifacts]);
+  const answerFiles = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "subjective"), [artifacts]);
   const violationFrames = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "violations").sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? "")), [artifacts]);
 
   const runZip = async () => {
@@ -460,6 +489,24 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
           </button>
           {zipMsg && <p className="mt-2 px-1 font-mono text-[10px] text-ink-soft">{zipMsg}</p>}
         </div>
+
+        {answerFiles.length > 0 && (
+          <div className="border border-line bg-paper p-5">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Written answer uploads</p>
+            <div className="mt-3 space-y-1.5">
+              {answerFiles.map((a) => (
+                <button
+                  key={a.key}
+                  onClick={() => void getArtifactObjectUrl(a.key).then((u) => u && window.open(u, "_blank", "noopener"))}
+                  className="flex w-full items-center justify-between gap-3 border border-line px-3 py-2 text-left text-[12px] hover:border-forest"
+                >
+                  <span className="min-w-0 truncate">{a.name}</span>
+                  <FiEdit3 aria-hidden className="h-3.5 w-3.5 shrink-0 text-ink-soft" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* AI integrity */}
         {student.attemptId && (

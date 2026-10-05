@@ -158,12 +158,12 @@ export async function listArtifactsByPrefix(prefix: string): Promise<R2Artifact[
  * uploads and older clients write to. Null only when every listing failed.
  */
 export async function listCandidateArtifacts(
-  folder: string,
+  folder: string | string[],
   roll: string,
   examId?: string,
   studentId?: string,
 ): Promise<R2Artifact[] | null> {
-  const folders = [...new Set([folder, examId].filter((f): f is string => !!f))];
+  const folders = [...new Set([...(Array.isArray(folder) ? folder : [folder]), examId].filter((f): f is string => !!f))];
   const owners = [...new Set([roll, studentId].filter((o): o is string => !!o))];
   const lists = await Promise.all(
     folders.flatMap((f) => owners.map((o) => listArtifactsByPrefix(`${f}/${o}/`))),
