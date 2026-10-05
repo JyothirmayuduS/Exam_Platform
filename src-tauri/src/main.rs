@@ -418,32 +418,38 @@ fn relaunch_app(app: tauri::AppHandle) {
 /// Request screen capture permission natively.
 /// Returns "granted", "denied", or "prompt".
 #[tauri::command]
-fn screen_capture_permission_prompt() -> String {
+fn screen_capture_permission_prompt(app: tauri::AppHandle) -> String {
     #[cfg(target_os = "macos")]
     {
-        #[link(name = "CoreGraphics", kind = "framework")]
-        extern "C" {
-            fn CGPreflightScreenCaptureAccess() -> bool;
-            fn CGRequestScreenCaptureAccess() -> bool;
+        if screen_capture_status() == "granted" {
+            return "granted".into();
         }
-        unsafe {
-            if CGPreflightScreenCaptureAccess() {
-                "granted".to_string()
-            } else {
-                // If it is not preflighted, request it.
-                // Note: CGRequestScreenCaptureAccess blocks briefly if the prompt is shown.
-                // However, the macOS prompt continues asynchronously.
-                let granted = CGRequestScreenCaptureAccess();
-                if granted {
-                    "granted".to_string()
-                } else {
-                    "denied".to_string()
-                }
+        // With a self-signed build TCC pins the grant to the binary's cdhash,
+        // so after an update the switch can show "on" yet never match. Drop
+        // this app's stale entry, then request from a fresh child process
+        // (the request only prompts once per process) so the list gets an
+        // entry for the current binary and the student flips one switch.
+        let _ = std::process::Command::new("/usr/bin/tccutil")
+            .args(["reset", "ScreenCapture", &app.config().identifier])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        if let Ok(exe) = std::env::current_exe() {
+            if let Ok(mut child) = std::process::Command::new(exe)
+                .arg(SCREEN_REQUEST_ARG)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                std::thread::spawn(move || { let _ = child.wait(); });
             }
         }
+        "denied".into()
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = app;
         "granted".to_string()
     }
 }
@@ -684,13 +690,17 @@ extern "system" {
 }
 
 const SCREEN_PREFLIGHT_ARG: &str = "--screen-preflight";
+const SCREEN_REQUEST_ARG: &str = "--screen-request";
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
 
 #[cfg(target_os = "macos")]
 fn screen_preflight() -> bool {
-    #[link(name = "CoreGraphics", kind = "framework")]
-    extern "C" {
-        fn CGPreflightScreenCaptureAccess() -> bool;
-    }
     unsafe { CGPreflightScreenCaptureAccess() }
 }
 
@@ -698,6 +708,17 @@ fn main() {
     if std::env::args().any(|a| a == SCREEN_PREFLIGHT_ARG) {
         #[cfg(target_os = "macos")]
         std::process::exit(if screen_preflight() { 0 } else { 3 });
+        #[cfg(not(target_os = "macos"))]
+        std::process::exit(0);
+    }
+    if std::env::args().any(|a| a == SCREEN_REQUEST_ARG) {
+        #[cfg(target_os = "macos")]
+        {
+            let granted = unsafe { CGRequestScreenCaptureAccess() };
+            // Let tccd finish recording the request before the process goes away.
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            std::process::exit(if granted { 0 } else { 3 });
+        }
         #[cfg(not(target_os = "macos"))]
         std::process::exit(0);
     }
