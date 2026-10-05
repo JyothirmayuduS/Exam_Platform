@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
-import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/navigation";
 import { useAuth } from "@/features/auth/auth";
 import { getSupabase } from "@/shared/data/supabase";
 import { useQuery } from "@tanstack/react-query";

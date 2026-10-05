@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { prepareRow } from "@/features/teacher/pages/QuestionEditorV4";
+import { prepareRow } from "@/features/teacher/pages/QuestionEditor";
 
 const base = { title: "Q", type: "MCQ", options: ["Inorder", "Preorder", "", "Level"], answer: "A", unit: "", difficulty: "medium", marks: "1" };
 

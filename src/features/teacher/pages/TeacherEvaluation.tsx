@@ -27,7 +27,7 @@ import AIIntegrityCard from "@/features/proctoring/components/AIIntegrityCard";
 import { RecordingReviewModal } from "@/features/proctoring/components/RecordingReview";
 import { uploadArtifactBlob, getArtifactObjectUrl } from "@/shared/services/examStorage";
 import { compressImage } from "@/shared/services/subjectiveUpload";
-import { getTeacherNav } from "@/features/teacher/pages/TeacherDashboard";
+import { getTeacherNav } from "@/features/teacher/navigation";
 import { getSupabase } from "@/shared/data/supabase";
 
 type QType = "MCQ" | "MSQ" | "TrueFalse" | "Numerical" | "Subjective" | "Coding";

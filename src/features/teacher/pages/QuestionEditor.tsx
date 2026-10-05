@@ -43,7 +43,7 @@ type ParsedRow = {
   reason?: string;
 };
 
-export default function QuestionEditorV4({ notify, navigate }: Props) {
+export default function QuestionEditor({ notify, navigate }: Props) {
   const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
   const examId = params.get("exam") ?? undefined;
   const editId = params.get("edit");

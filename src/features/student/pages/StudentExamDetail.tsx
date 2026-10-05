@@ -5,7 +5,7 @@ import ExamCountdown from "@/features/student/components/ExamCountdown";
 import SystemCheckPage from "@/shared/components/SystemCheckPage";
 import { getMyAttemptState, loadExamForStudent, type ExamRecord } from "@/shared/data/examApi";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
-import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/navigation";
 
 function canStartExam(exam: ExamRecord | null): boolean {
   if (!exam) return false;

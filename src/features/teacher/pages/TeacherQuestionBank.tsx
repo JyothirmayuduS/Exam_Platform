@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listAllQuestions, deleteQuestion, type DBQuestion } from "@/shared/data/examApi";
-import { PageHeading, Button } from "@/features/teacher/pages/TeacherDashboard";
+import { PageHeading, Button } from "@/features/teacher/components/PageChrome";
 import { PlusIcon, ArrowRightIcon } from "@/shared/components/ui";
 
 type BankQuestion = DBQuestion & { exam_name: string | null };

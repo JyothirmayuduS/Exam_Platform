@@ -6,10 +6,10 @@ import { useEffect, useMemo, useState } from "react";
 import { getSupabase } from "@/shared/data/supabase";
 import type { ExamRecord } from "@/shared/data/examApi";
 import { deleteExam, getExamDeletionSafety, type ExamDeletionSafety } from "@/shared/data/examApi";
-import { PageHeading, Button } from "@/features/teacher/pages/TeacherDashboard";
+import { PageHeading, Button } from "@/features/teacher/components/PageChrome";
 import { PlusIcon, ArrowRightIcon } from "@/shared/components/ui";
 import { FiGrid, FiList, FiTrash2 } from "react-icons/fi";
-import CreateTestModal from "@/features/teacher/components/teacher/CreateTestModal";
+import CreateTestModal from "@/features/teacher/components/CreateTestModal";
 import { byNewest, examPhase, PHASE_FILTERS, PHASE_LABEL, type ExamPhase, type PhaseFilter } from "@/shared/domain/exam/phase";
 
 type ExamCard = {

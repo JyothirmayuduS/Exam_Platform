@@ -1,6 +1,6 @@
 import { useState } from "react";
 import RoleLayout from "@/shared/components/RoleLayout";
-import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/navigation";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
 
 const FAQS: { q: string; a: string }[] = [

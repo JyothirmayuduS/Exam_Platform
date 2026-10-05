@@ -15,7 +15,7 @@ import {
   type FacultyMember,
 } from "@/shared/data/examApi";
 import { sendEvaluatorAssignmentEmail } from "@/features/teacher/services/emailApi";
-import { PageHeading, Button } from "@/features/teacher/pages/TeacherDashboard";
+import { PageHeading, Button } from "@/features/teacher/components/PageChrome";
 
 type Row = Awaited<ReturnType<typeof loadExaminerDashboard>>;
 type DailyBucket = Row["daily"][number];

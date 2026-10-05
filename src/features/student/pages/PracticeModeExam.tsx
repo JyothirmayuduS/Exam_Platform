@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
 import { loadExamBundle, type DBQuestion } from "@/shared/data/examApi";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
-import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/navigation";
 import SubjectiveQRBlock from "@/features/student/components/exam/SubjectiveQRBlock";
 
 type AnswerMap = Record<string, string>;

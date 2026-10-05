@@ -8,16 +8,8 @@ import { launchExamInLockdown } from "@/shared/platform/lockdownBridge";
 import { GatekeeperHelp } from "@/features/student/components/exam/ExamFlowScreens";
 import { useAuth } from "@/features/auth/auth";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/navigation";
 
-export const STUDENT_NAV = [
-  { label: "Overview", to: "/student", end: true },
-  { label: "My exams", to: "/student/exams" },
-  { label: "Results", to: "/student/results" },
-  { label: "Help & support", to: "/student/help" },
-];
-
-/** Shared student console accent — forest, matching the faculty system. */
-export const STUDENT_TONE = "#284B34";
 
 type Row = { id: string; name: string; meta: string; when: string; status: "published" | "scheduled" | "completed" };
 

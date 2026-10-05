@@ -12,9 +12,9 @@ import JobBanner from "@/shared/components/JobBanner";
 import { downloadSessionReportPdf } from "@/shared/services/sessionReport";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
-import { getTeacherNav } from "@/features/teacher/pages/TeacherDashboard";
+import { getTeacherNav } from "@/features/teacher/navigation";
 import { FiVideo, FiMonitor, FiSmartphone, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight, FiVolume2, FiVolumeX } from "react-icons/fi";
-import ProctoringAssessmentSelect from "@/features/teacher/components/teacher/ProctoringAssessmentSelect";
+import ProctoringAssessmentSelect from "@/features/proctoring/components/ProctoringAssessmentSelect";
 import { Button } from "@/shared/components/ui";
 import type { ProctorAssignment } from "@/shared/data/examApi";
 

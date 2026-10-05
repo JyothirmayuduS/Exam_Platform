@@ -7,7 +7,7 @@ import ExamCountdownBanner from "@/features/student/components/ExamCountdownBann
 import { listEnrolledExamsForAuthUser, type ExamRecord } from "@/shared/data/examApi";
 import { useAuth } from "@/features/auth/auth";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
-import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/pages/StudentExams";
+import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/navigation";
 
 type ViewStatus = "upcoming" | "live" | "completed";
 
