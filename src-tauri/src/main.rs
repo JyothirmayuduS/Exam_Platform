@@ -409,6 +409,74 @@ fn set_window_sharing(app: tauri::AppHandle, allow: bool) {
     }
 }
 
+fn jpeg_base64(bytes: &[u8]) -> String {
+    const ALPH: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len() * 4 / 3 + 4);
+    let mut i = 0;
+    while i < bytes.len() {
+        let b0 = bytes[i] as u32;
+        let b1 = if i + 1 < bytes.len() { bytes[i + 1] as u32 } else { 0 };
+        let b2 = if i + 2 < bytes.len() { bytes[i + 2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPH[((triple >> 18) & 63) as usize] as char);
+        out.push(ALPH[((triple >> 12) & 63) as usize] as char);
+        out.push(if i + 1 < bytes.len() { ALPH[((triple >> 6) & 63) as usize] as char } else { '=' });
+        out.push(if i + 2 < bytes.len() { ALPH[(triple & 63) as usize] as char } else { '=' });
+        i += 3;
+    }
+    out
+}
+
+/// Full-display JPEG for the kiosk screen-share pipeline. Uses the OS screen
+/// recording permission (same class of dialog as camera/mic) — no picker.
+#[tauri::command]
+fn capture_display_jpeg() -> Result<String, String> {
+    let path = std::env::temp_dir().join(format!("vignan-scr-{}.jpg", std::process::id()));
+    let path_str = path.to_string_lossy().to_string();
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("screencapture")
+            .args(["-x", "-C", "-t", "jpg", &path_str])
+            .status()
+            .map_err(|e| format!("screencapture: {e}"))?;
+        if !status.success() {
+            return Err("screencapture failed".into());
+        }
+        let _ = std::process::Command::new("sips")
+            .args(["-Z", "1280", &path_str])
+            .status();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let script = format!(
+            "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b=[System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp=New-Object Drawing.Bitmap $b.Width,$b.Height; $g=[Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Left,$b.Top,0,0,$bmp.Size); $bmp.Save('{}',[Drawing.Imaging.ImageFormat]::Jpeg);",
+            path_str.replace('\\', "\\\\").replace('\'', "''")
+        );
+        let status = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .status()
+            .map_err(|e| format!("powershell capture: {e}"))?;
+        if !status.success() {
+            return Err("windows screen capture failed".into());
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = path_str;
+        return Err("native screen capture is not available on this platform".into());
+    }
+
+    let bytes = std::fs::read(&path).map_err(|e| format!("read capture: {e}"))?;
+    let _ = std::fs::remove_file(&path);
+    if bytes.is_empty() {
+        return Err("empty capture".into());
+    }
+    Ok(jpeg_base64(&bytes))
+}
+
 
 /// Diagnostic: is the exam window excluded from OS screen capture? The web
 /// layer shows a lockdown notice if the exclusion could not be applied.
@@ -495,7 +563,8 @@ fn main() {
             open_media_settings,
             screen_capture_excluded,
             lockdown_log_probe,
-            set_window_sharing
+            set_window_sharing,
+            capture_display_jpeg
         ])
         // Register first so a second process exits before other plugins start.
         // Its deep-link feature forwards Windows/Linux argv to the same plugin

@@ -303,9 +303,13 @@ Deno.serve(async (req: Request) => {
       if (!res.ok) return json({ error: `R2 get failed: ${res.status}` }, 502);
       const bytes = new Uint8Array(await res.arrayBuffer());
       if (bytes.length > 5_000_000) return json({ error: "object too large to relay" }, 413);
-      const binary = Array.from(bytes)
-        .map((b) => String.fromCharCode(b))
-        .join("");
+      // Chunked encode — Array.from(bytes).map(fromCharCode) is O(n) allocations
+      // and made teacher PDF exports take minutes for a one-hour exam.
+      let binary = "";
+      const chunk = 0x2000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+      }
       return json({
         data: btoa(binary),
         contentType: res.headers.get("content-type") ?? "application/octet-stream",

@@ -17,9 +17,9 @@ import type { ProctorCategory } from "@/features/proctoring/domain/types";
 export const CADENCE = {
   GAZE_MS: 150,     // head-pose / gaze estimation — faster for quicker detection
   FACE_MS: 200,     // face count — reduced for faster no-face detection
-  OBJECT_MS: 250,   // object detection (phone / laptop) — 2 hits confirm a
-                    // phone in ~0.5 s of visibility
-  AUDIO_MS: 150,    // voice RMS — faster for earbud audio detection
+  OBJECT_MS: 90,    // object detection (phone / laptop) — 2 hits confirm a
+                    // phone in ~0.2 s of visibility
+  AUDIO_MS: 80,     // voice RMS — faster for earbud audio detection
 } as const;
 
 // While a CONFIRMED phone stays in view we re-notify at this cadence (well
@@ -67,8 +67,8 @@ export const OBJECT = {
   // hands top out at very low confidence. The temporal confirmation (MIN_HITS
   // inside CONFIRM_WINDOW_MS) still filters one-frame flukes, so a lower
   // per-sample gate is safe and necessary for consistent detection.
-  PHONE_MIN_CONF: 0.10,
-  EARBUDS_MIN_CONF: 0.10,
+  PHONE_MIN_CONF: 0.06,
+  EARBUDS_MIN_CONF: 0.08,
   LAPTOP_MIN_CONF: 0.30,
   // MediaPipe object detector only sees a phone when it's big enough in the
   // frame. Small phones slip through — candidates keep track of the lower
@@ -87,7 +87,7 @@ export const TRACKING = {
   IOU_THRESHOLD: 0.15,
   // Confirmation = MIN_HITS positive samples seen inside CONFIRM_WINDOW_MS.
   // With the 250 ms detector cadence that means a phone is confirmed only
-  // after it has been visibly present for roughly 0.5 s.
+  // after it has been visibly present for roughly 0.2 s.
   MIN_HITS: 2,
   // Consecutive samples an object may be invisible before its identity is
   // dropped (~1.5 s of short-term persistence at 300 ms cadence). One missed
@@ -120,7 +120,7 @@ export const AUDIO = {
   EARBUDS_ACTIVE_BIN_FLOOR: 2,   // byte-spectrum value a bin must exceed to count as active
   EARBUDS_FREQ_LOW: 250,      // Hz — ignore sub-250 Hz rumble (AC, traffic)
   EARBUDS_FREQ_HIGH: 8000,    // Hz — cap (mic rolloff above this is noise)
-  EARBUDS_SUSTAIN: 8,         // consecutive samples (~1.2 s at AUDIO_MS=150) before flagging
+  EARBUDS_SUSTAIN: 4,         // consecutive samples (~0.3 s at AUDIO_MS=80) before flagging
   EARBUDS_ACK_MS: 30_000,     // re-notify while the leak persists (cooldown still applies)
 } as const;
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { FiCheck, FiAlertTriangle, FiAlertOctagon, FiLock, FiArrowRight, FiRefreshCw } from "react-icons/fi";
-import { useAudioTest, AudioBars, runDeviceDetection, useScreenShareTest, type DeviceRisk, type ScreenShareState } from "@/features/proctoring/services/proctorUtils";
+import { useAudioTest, AudioBars, runDeviceDetection, type DeviceRisk } from "@/features/proctoring/services/proctorUtils";
 import type { RefObject } from "react";
 import MonitorQRPanel from "@/features/student/components/exam/MonitorQRPanel";
 
@@ -51,7 +51,6 @@ export default function DeviceAccessFull({
   onExit,
 }: DeviceAccessFullProps) {
   const audio = useAudioTest();
-  const screenTest = useScreenShareTest();
   const [risks, setRisks] = useState<DeviceRisk[]>([]);
   const [scanDone, setScanDone] = useState(false);
 
@@ -89,7 +88,7 @@ export default function DeviceAccessFull({
           <div className="space-y-2">
             <AccessRow label="Camera" state={cam} />
             <AccessRow label="Microphone" state={mic} />
-          <AccessRow label="Screen sharing" state={screen} screenShareState={screenTest.state} />
+            <AccessRow label="Screen sharing" state={screen} />
 
             {/* Permission error help — kiosk and browser recover differently */}
             {(cam === "denied" || mic === "denied") && (
@@ -253,27 +252,13 @@ export default function DeviceAccessFull({
 function AccessRow({
   label,
   state,
-  screenShareState,
 }: {
   label: string;
   state: AccessState;
-  screenShareState?: ScreenShareState;
 }) {
-  let displayText = state === "granted" ? "GRANTED" : state === "denied" ? "BLOCKED" : "WAITING";
-  let tone = state === "granted" ? "text-success" : state === "denied" ? "text-alert" : "text-soft";
-  let dot  = state === "granted" ? "bg-success" : state === "denied" ? "bg-alert" : "bg-line";
-
-  if (screenShareState !== undefined) {
-    switch (screenShareState) {
-      case "active":       displayText = "GRANTED";     tone = "text-success"; dot = "bg-success"; break;
-      case "requesting":   displayText = "REQUESTING";  tone = "text-amber";   dot = "bg-amber animate-pulse"; break;
-      case "cancelled":    displayText = "CANCELLED";   tone = "text-amber";   dot = "bg-amber"; break;
-      case "denied":       displayText = "DENIED";      tone = "text-alert";   dot = "bg-alert"; break;
-      case "error":        displayText = "ERROR";       tone = "text-alert";   dot = "bg-alert"; break;
-      case "unsupported":  displayText = "UNSUPPORTED"; tone = "text-alert";   dot = "bg-alert"; break;
-      default:             displayText = "WAITING";     tone = "text-soft";    dot = "bg-line"; break;
-    }
-  }
+  const displayText = state === "granted" ? "GRANTED" : state === "denied" ? "BLOCKED" : "WAITING";
+  const tone = state === "granted" ? "text-success" : state === "denied" ? "text-alert" : "text-soft";
+  const dot  = state === "granted" ? "bg-success" : state === "denied" ? "bg-alert" : "bg-line";
 
   return (
     <div className="flex items-center justify-between border border-line px-3 py-2.5 text-[13px]">

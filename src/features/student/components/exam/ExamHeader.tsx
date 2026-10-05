@@ -35,7 +35,7 @@ export default function ExamHeader({
         <div className="exam-logo">V</div>
         <div>
           <div className="exam-b1">Vignan Lockdown</div>
-          <div className="exam-b2">Secure exam session</div>
+          <div className="exam-b2">Vignan University</div>
         </div>
       </div>
 

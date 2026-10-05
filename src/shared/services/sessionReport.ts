@@ -177,14 +177,18 @@ async function snapshotThumbDataUrl(key: string, maxEdge = 480): Promise<string 
 }
 
 /** Render all available evidence, including clean frames and explicit gaps. */
-export async function drawSnapshotTimeline(doc: jsPDF, row: ReportRow, examId: string): Promise<number> {
+export async function drawSnapshotTimeline(
+  doc: jsPDF,
+  row: ReportRow,
+  examId: string,
+  opts: { continuePage?: boolean } = {},
+): Promise<number> {
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
   const M = 32;
   const timeline = await collectSnapshotTimeline(examId, row.roll, row.violations, row.startedAt);
   const startMs = Date.parse(row.startedAt ?? "");
-  const newPage = () => {
-    doc.addPage();
+  const paintBanner = () => {
     doc.setFillColor(26, 58, 42);
     doc.rect(0, 0, W, 56, "F");
     doc.setTextColor(255, 255, 255);
@@ -194,7 +198,12 @@ export async function drawSnapshotTimeline(doc: jsPDF, row: ReportRow, examId: s
     doc.setFontSize(8);
     doc.text(`${timeline?.length ?? 0} stored snapshots | Target: 1 webcam frame/second | Warnings are not required for capture.`, M, 43);
   };
-  newPage();
+  const newPage = () => {
+    doc.addPage();
+    paintBanner();
+  };
+  if (opts.continuePage) paintBanner();
+  else newPage();
   if (!timeline?.length) {
     doc.setTextColor(155, 28, 28);
     doc.setFontSize(10);
@@ -346,7 +355,9 @@ export async function downloadSessionReportPdf(
 
   const flagged = rows.filter((r) => r.violations.length > 0);
   const submitted = rows.filter((r) => r.state === "Submitted").length;
+  const single = rows.length === 1;
 
+  if (!single) {
   // Header
   doc.setFillColor(26, 58, 42);
   doc.rect(0, 0, W, 64, "F");
@@ -437,6 +448,7 @@ export async function downloadSessionReportPdf(
       y += 10;
     });
   }
+  }
 
   // Per-candidate snapshot timeline: every stored snap with the violations
   // that occurred under it and their timestamps. NOTE: drawSnapshotTimeline
@@ -449,7 +461,7 @@ export async function downloadSessionReportPdf(
       index += 1;
       opts.onProgress?.(`Building PDF · ${r.name} · every snapshot and the audio (${index} of ${rows.length})`);
       try {
-        await drawSnapshotTimeline(doc, r, examId);
+        await drawSnapshotTimeline(doc, r, examId, { continuePage: single && index === 1 });
         await drawAudioInventory(doc, r, examId);
       } catch (err) {
         console.warn(`[sessionReport] snapshot timeline failed for ${r.roll}:`, err);

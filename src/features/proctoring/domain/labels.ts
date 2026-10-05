@@ -13,7 +13,7 @@ import type { ObjectKind } from "@/features/proctoring/domain/types";
 
 const PHONE_HINTS = [
   "cell phone", "mobile phone", "phone", "telephone", "smartphone", "smart phone",
-  "remote", "tablet", "mobile", "handset", "iphone", "android"
+  "remote", "tablet", "mobile", "handset", "iphone", "android", "cell", "cellphone",
 ];
 // Ear-worn devices. COCO-style checkpoints have no dedicated earbud class, so
 // these labels only fire on models that DO emit them — but wiring the mapping

@@ -8,6 +8,8 @@ describe("classifyObject", () => {
     expect(classifyObject("mobile phone")).toBe("phone");
     expect(classifyObject("MOBILE PHONE")).toBe("phone");
     expect(classifyObject("phone")).toBe("phone");
+    expect(classifyObject("cellphone")).toBe("phone");
+    expect(classifyObject("remote")).toBe("phone");
   });
 
   it("maps electronics to their own kinds", () => {

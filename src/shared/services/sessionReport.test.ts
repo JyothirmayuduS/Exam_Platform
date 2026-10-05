@@ -62,7 +62,7 @@ describe("snapshot reports", () => {
   });
 
   it("includes both clean and flagged students in a bulk PDF", async () => {
-    vi.mocked(listStudentArtifacts).mockResolvedValueOnce(snapshots(2)).mockResolvedValueOnce(snapshots(2));
+    vi.mocked(listStudentArtifacts).mockResolvedValue(snapshots(2));
     await downloadSessionReportPdf("Exam", "EXAM", [row, { ...row, roll: "R2", violations: [warning(1100)] }]);
     expect(listStudentArtifacts).toHaveBeenCalledWith("EXAM", "R1");
     expect(listStudentArtifacts).toHaveBeenCalledWith("EXAM", "R2");

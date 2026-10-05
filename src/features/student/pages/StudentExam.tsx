@@ -36,6 +36,7 @@ import useKeyboardShortcuts from "@/features/student/hooks/useKeyboardShortcuts"
 import useOfflineSync from "@/features/student/hooks/useOfflineSync";
 import useCurrentProfile from "@/features/auth/hooks/useCurrentProfile";
 import { invoke } from "@tauri-apps/api/core";
+import { startNativeDisplayStream } from "@/shared/platform/nativeScreenShare";
 import { uploadExamRecords, uploadRecordingPart, startScreenshotCapture, type ScreenshotHandle, type ViolationSnap } from "@/shared/services/examStorage";
 import { startServerProctorWatchdog, type ServerProctorHandle } from "@/features/proctoring/services/serverProctor";
 import {
@@ -1001,14 +1002,24 @@ function StudentExamSession() {
     let screenLocalStream: MediaStream | null = null;
     try {
       if (isTauri()) {
-        await invoke("set_window_sharing", { allow: true }).catch(() => {});
-        await new Promise((r) => setTimeout(r, 80));
+        const native = await startNativeDisplayStream();
+        if (native) {
+          screenLocalStream = native.stream;
+        }
       }
-      const md = navigator.mediaDevices as any;
-      screenLocalStream = await md.getDisplayMedia({ video: true, audio: false });
-      if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
+      if (!screenLocalStream) {
+        if (isTauri()) {
+          await invoke("set_window_sharing", { allow: true }).catch(() => {});
+          await new Promise((r) => setTimeout(r, 80));
+        }
+        const md = navigator.mediaDevices as MediaDevices & { getDisplayMedia?: (c?: DisplayMediaStreamOptions) => Promise<MediaStream> };
+        if (typeof md.getDisplayMedia === "function") {
+          screenLocalStream = await md.getDisplayMedia({ video: true, audio: false });
+        }
+        // Keep sharing allowed in the kiosk for the whole exam so native
+        // frames include the exam window. Re-lock happens on submit.
+      }
     } catch (e) {
-      if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
       console.warn("Screen share request failed", e);
     }
 
@@ -1155,6 +1166,7 @@ function StudentExamSession() {
   async function doSubmit() {
     // Tear down the optional phone desk-monitor session before evidence upload.
     setEndMonitor(true);
+    if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
