@@ -22,7 +22,7 @@ import { getSupabase } from "@/shared/data/supabase";
 import {
   listR2ExamFolders,
   listR2StudentFolders,
-  listArtifactsByPrefix,
+  listCandidateArtifacts,
   getArtifactObjectUrl,
   storageFolderSegment,
   type R2Artifact,
@@ -199,7 +199,7 @@ export default function EvidenceBrowser() {
           while (cursor < rows.length) {
             const i = cursor;
             cursor += 1;
-            const arts = await listArtifactsByPrefix(`${selectedExam.folder}/${rows[i].roll}/`);
+            const arts = await listCandidateArtifacts(selectedExam.folder, rows[i].roll, selectedExam.examId, rows[i].studentId);
             if (alive) rows[i].counts = kindCounts(arts);
           }
         })());
@@ -364,7 +364,7 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
     let alive = true;
     void (async () => {
       const [arts, vios] = await Promise.all([
-        listArtifactsByPrefix(`${exam.folder}/${student.roll}/`),
+        listCandidateArtifacts(exam.folder, student.roll, exam.examId, student.studentId),
         student.attemptId ? listAttemptViolations(student.attemptId) : Promise.resolve([] as ViolationEvent[]),
       ]);
       if (!alive) return;
@@ -377,7 +377,7 @@ function StudentEvidence({ exam, student }: { exam: ExamFolder; student: Student
       }
     })();
     return () => { alive = false; };
-  }, [exam.folder, student.roll, student.attemptId]);
+  }, [exam.folder, exam.examId, student.roll, student.studentId, student.attemptId]);
 
   const recordings = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "recordings"), [artifacts]);
   const screenshots = useMemo(() => (artifacts ?? []).filter((a) => a.kind === "screenshots").sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? "")), [artifacts]);

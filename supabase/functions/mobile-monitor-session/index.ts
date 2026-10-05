@@ -6,7 +6,8 @@ import { severityFor, isKnownEventType, type EventType } from "./severity.ts";
 async function putR2Object(key: string, body: Uint8Array, contentType: string): Promise<string> {
   const accessKeyId = Deno.env.get("R2_ACCESS_KEY_ID");
   const secretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY");
-  const endpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "").replace(/\/+$/, "");
+  const rawEndpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "").trim().replace(/\/+$/, "");
+  const endpoint = rawEndpoint && !/^https?:\/\//i.test(rawEndpoint) ? `https://${rawEndpoint}` : rawEndpoint;
   const bucket = Deno.env.get("R2_BUCKET") ?? "exam-records";
   if (!accessKeyId || !secretAccessKey || !endpoint) {
     throw new Error("R2 secrets not configured");

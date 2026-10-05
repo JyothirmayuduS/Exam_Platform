@@ -93,5 +93,6 @@ export const env = {
 /** True only when a real Supabase project + anon key are configured. */
 export const supabaseConfigured = !placeholder(rawUrl) && !placeholder(rawKey);
 
-/** True when a LiveKit server URL is set (token still minted server-side). */
-export const livekitConfigured = !!env.livekitUrl;
+/** True when LiveKit can be reached: the livekit-token function returns the
+ *  server URL with each token, so Supabase alone is enough. */
+export const livekitConfigured = !!env.livekitUrl || supabaseConfigured;

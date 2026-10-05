@@ -5,7 +5,7 @@ import Seal from "@/shared/components/Seal";
 import ProctorCamera from "@/features/proctoring/components/ProctorCamera";
 import InvigilatorVoice from "@/features/proctoring/components/InvigilatorVoice";
 import ExamTools from "@/features/student/components/ExamTools";
-import ProctorAI, { type AIStatus } from "@/features/proctoring/components/ProctorAI";
+import ProctorAI, { FRAMING_HINT, type AIStatus } from "@/features/proctoring/components/ProctorAI";
 import ExamHeader from "@/features/student/components/exam/ExamHeader";
 import QuestionPanel from "@/features/student/components/exam/QuestionPanel";
 import QuestionDisplay from "@/features/student/components/exam/QuestionDisplay";
@@ -1592,6 +1592,8 @@ function StudentExamSession() {
   }
 
   // ---------- Step: exam (kiosk mode) ----------
+  const seatingHint = step === "exam" && aiStatus?.framing && aiStatus.framing !== "ok" ? FRAMING_HINT[aiStatus.framing] : null;
+
   return (
     <div className="exam-body">
       <ExamWatermark primary={watermarkLine} secondary={watermarkMeta} />
@@ -1604,8 +1606,17 @@ function StudentExamSession() {
           </div>
         </div>
       )}
-      {(broadcast || flagThresholdWarning || activeViolation) && (
+      {(broadcast || flagThresholdWarning || activeViolation || seatingHint) && (
         <div id="exam-banner" style={{ display: "flex" }}>
+          {seatingHint && (
+            <div className="exam-alert" role="status">
+              <i>!</i>
+              <div>
+                <h3>Sit properly in front of the camera</h3>
+                <p>{seatingHint}</p>
+              </div>
+            </div>
+          )}
           {broadcast && (
             <div className="exam-alert">
               <i>i</i>

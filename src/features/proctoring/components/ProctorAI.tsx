@@ -66,7 +66,44 @@ export interface AIStatus {
   /** Risk engine (0..100) — set when it changes. */
   riskScore?: number;
   riskLevel?: RiskLevel;
+  /** How well the candidate sits in the camera frame; "ok" when no face is read. */
+  framing?: Framing;
 }
+
+export type Framing = "ok" | "too_far" | "too_close" | "off_left" | "off_right" | "too_high" | "too_low" | "cut_off";
+
+/** Classify head placement from normalized face landmarks. */
+export function classifyFraming(lms: ReadonlyArray<{ x: number; y: number }>): Framing {
+  let minX = 1, maxX = 0, minY = 1, maxY = 0;
+  for (const p of lms) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  if (minX < 0.01 || maxX > 0.99 || minY < 0.01 || maxY > 0.99) return "cut_off";
+  const w = maxX - minX;
+  const h = maxY - minY;
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  if (w < 0.12 || h < 0.16) return "too_far";
+  if (w > 0.6 || h > 0.75) return "too_close";
+  if (cx < 0.25) return "off_left";
+  if (cx > 0.75) return "off_right";
+  if (cy < 0.2) return "too_high";
+  if (cy > 0.7) return "too_low";
+  return "ok";
+}
+
+export const FRAMING_HINT: Record<Exclude<Framing, "ok">, string> = {
+  too_far: "Move closer — your face is too small in the camera",
+  too_close: "Sit back a little — your face fills the camera",
+  off_left: "Move to your left so you are centred in the camera",
+  off_right: "Move to your right so you are centred in the camera",
+  too_high: "Lower the camera or sit up straight so your whole face shows",
+  too_low: "Sit up straight — only part of your face is in the camera",
+  cut_off: "Sit properly — your face is partly outside the camera frame",
+};
 
 interface Props {
   /** The camera + mic MediaStream from getUserMedia. */
@@ -81,6 +118,8 @@ interface Props {
 const GAZE_MS    = CADENCE.GAZE_MS;
 const FACE_MS    = CADENCE.FACE_MS;
 const OBJECT_MS  = CADENCE.OBJECT_MS;
+/** Gaze samples (~150 ms each) of bad seating before the student is told. */
+const FRAMING_SUSTAIN = 7;
 const AUDIO_MS   = CADENCE.AUDIO_MS;
 
 // ── Asset loading: SAME-ORIGIN FIRST, CDN fallback ─────────────────────────
@@ -776,6 +815,8 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     const gaze = freshGaze();
     let noFaceStreak = 0;
     let multiFaceStreak = 0;
+    let framingStreak = 0;
+    let lastFraming: Framing = "ok";
     let audioStreak = 0;
     let earbudsStreak = 0;
     let landmarksVisible = false;
@@ -815,16 +856,17 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           if (landmarksVisible) {
             const lms = faceLandmarks[0];
 
-            // Face partially out of frame — sustained, then flag.
-            let outOfBounds = false;
-            for (const p of lms) {
-              if (p.x < 0.01 || p.x > 0.99 || p.y < 0.01 || p.y > 0.99) {
-                outOfBounds = true;
-                break;
-              }
+            // Seating check: ~1 s of bad framing shows the student a hint; it is
+            // logged once per ~6 s while it lasts.
+            const framing = classifyFraming(lms);
+            framingStreak = framing === "ok" ? 0 : framingStreak + 1;
+            const shown: Framing = framingStreak >= FRAMING_SUSTAIN ? framing : "ok";
+            if (shown !== lastFraming) {
+              lastFraming = shown;
+              setStatus(s => ({ ...s, framing: shown }));
             }
-            if (outOfBounds && gaze.awayStreak >= GAZE.SUSTAIN_SAMPLES) {
-              emit("partial_face", "Face partially out of frame — centre yourself in the camera", 0.85);
+            if (shown !== "ok" && (framingStreak === FRAMING_SUSTAIN || framingStreak % 40 === 0)) {
+              emit("partial_face", FRAMING_HINT[shown], 0.8);
             }
 
             const g = estimateGaze(lms);
@@ -953,6 +995,11 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
             gazeFusion.current.headDown = false;
             gazeFusion.current.headDownSince = null;
             gazeFusion.current.direction = "center";
+            framingStreak = 0;
+            if (lastFraming !== "ok") {
+              lastFraming = "ok";
+              setStatus(s => ({ ...s, framing: "ok" }));
+            }
             behavioralRef.current.headDownStartTime = null;
             behavioralRef.current.suspiciousBehaviorStreak = 0;
             behavioralRef.current.frameDiffHistory = [];
@@ -1012,15 +1059,15 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
             // One zoomed crop per tick keeps the loop fast; each region is
             // revisited every ~0.5 s.
             const face = faceGeoRef.current && now - faceGeoRef.current.at <= 700 ? faceGeoRef.current : null;
-            const turn = cropTurn.current++ % 4;
-            if (turn === 0) dets.push(...detectRegion(lowerRegion(OBJECT.PHONE_ROI_FRACTION), video, objDetRoiRef.current));
-            else if (turn === 1) dets.push(...detectRegion(EDGE_LEFT, video, objDetRoiRef.current));
-            else if (turn === 2) dets.push(...detectRegion(EDGE_RIGHT, video, objDetRoiRef.current));
-            else if (face) {
+            // Ears every other tick (earbuds are tiny); desk and edges share the rest.
+            const turn = cropTurn.current++ % 6;
+            if ((turn === 1 || turn === 3 || turn === 5) && face) {
               for (const ear of face.ears) {
                 dets.push(...detectRegion(ear, video, objDetRoiRef.current, true));
               }
-            }
+            } else if (turn === 2) dets.push(...detectRegion(EDGE_LEFT, video, objDetRoiRef.current));
+            else if (turn === 4) dets.push(...detectRegion(EDGE_RIGHT, video, objDetRoiRef.current));
+            else dets.push(...detectRegion(lowerRegion(OBJECT.PHONE_ROI_FRACTION), video, objDetRoiRef.current));
             if (face) {
               for (const ear of face.ears) {
                 const white = whiteEarbudAt(video, ear, face.face);

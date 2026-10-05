@@ -71,7 +71,8 @@ Deno.serve(async (req: Request) => {
   // Credentials come ONLY from Edge Function secrets.
   const accessKeyId = Deno.env.get("R2_ACCESS_KEY_ID");
   const secretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY");
-  const endpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "").replace(/\/+$/, "");
+  const rawEndpoint = (Deno.env.get("R2_S3_ENDPOINT") ?? "").trim().replace(/\/+$/, "");
+  const endpoint = rawEndpoint && !/^https?:\/\//i.test(rawEndpoint) ? `https://${rawEndpoint}` : rawEndpoint;
   const bucket = Deno.env.get("R2_BUCKET") ?? "exam-records";
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");

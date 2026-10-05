@@ -25,6 +25,8 @@ export interface TrackerConfig {
   maxMisses: number;
   confirmWindowMs: number;
   maxHistory: number;
+  fastMotionMs: number;
+  instantConfirmScore: number;
 }
 
 export const DEFAULT_TRACKER_CONFIG: TrackerConfig = {
@@ -33,6 +35,8 @@ export const DEFAULT_TRACKER_CONFIG: TrackerConfig = {
   maxMisses: TRACKING.MAX_MISSES,
   confirmWindowMs: TRACKING.CONFIRM_WINDOW_MS,
   maxHistory: TRACKING.MAX_HISTORY,
+  fastMotionMs: TRACKING.FAST_MOTION_MS,
+  instantConfirmScore: TRACKING.INSTANT_CONFIRM_SCORE,
 };
 
 export class ObjectTracker {
@@ -75,6 +79,16 @@ export class ObjectTracker {
         if (!Number.isNaN(score) && score > bestScore) {
           bestScore = score;
           best = det;
+        }
+      }
+      if (!best && now - track.lastSeen <= this.cfg.fastMotionMs) {
+        // A phone swept quickly up/down jumps further than the proximity term
+        // allows; while the track is fresh, adopt the nearest same-kind box.
+        let bestDist = Infinity;
+        for (const det of candidates) {
+          if (matched.has(det)) continue;
+          const d = centerDistance(track.bbox, det.bbox);
+          if (d < bestDist) { bestDist = d; best = det; }
         }
       }
       if (best) {
@@ -139,7 +153,8 @@ export class ObjectTracker {
     const fresh: TrackedObject[] = [];
     for (const track of this.tracks) {
       const withinWindow = now - track.firstSeen <= this.cfg.confirmWindowMs;
-      if (!track.confirmed && track.hits >= this.cfg.minHits && withinWindow) {
+      const enoughHits = track.hits >= this.cfg.minHits && withinWindow;
+      if (!track.confirmed && (enoughHits || track.peak >= this.cfg.instantConfirmScore)) {
         track.confirmed = true;
         track.confirmedAt = now;
         fresh.push(track);

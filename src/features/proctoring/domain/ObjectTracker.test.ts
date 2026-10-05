@@ -81,4 +81,18 @@ describe("ObjectTracker", () => {
     tracker.update([laptop], T * 2);
     expect(tracker.live).toHaveLength(2);
   });
+
+  it("keeps one identity when a phone is swept fast across the frame", () => {
+    const tracker = new ObjectTracker();
+    const at = (y: number): Detection => ({ kind: "phone", label: "cell phone", score: 0.3, bbox: { x: 0.4, y, width: 0.15, height: 0.2 } });
+    expect(tracker.update([at(0.05)], T)).toHaveLength(0);
+    const confirmed = tracker.update([at(0.7)], T * 2);
+    expect(confirmed).toHaveLength(1);
+    expect(tracker.live).toHaveLength(1);
+  });
+
+  it("confirms a single very confident sighting at once", () => {
+    const tracker = new ObjectTracker();
+    expect(tracker.update([phone(0.1, 0.9)], T)).toHaveLength(1);
+  });
 });

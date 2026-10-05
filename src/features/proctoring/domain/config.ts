@@ -101,6 +101,12 @@ export const TRACKING = {
   CONFIRM_WINDOW_MS: 3_000,
   // Keep recent scores per track for smoothing + diagnostics.
   MAX_HISTORY: 12,
+  // A track seen within this window adopts the nearest same-kind box even
+  // with no overlap — a phone moved fast up/down jumps across the frame.
+  FAST_MOTION_MS: 1_200,
+  // One sighting this confident confirms at once (motion blur rarely gives
+  // a second clean frame).
+  INSTANT_CONFIRM_SCORE: 0.75,
 } as const;
 
 // ── Audio ────────────────────────────────────────────────────────────────────

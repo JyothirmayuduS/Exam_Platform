@@ -153,6 +153,28 @@ export async function listArtifactsByPrefix(prefix: string): Promise<R2Artifact[
 }
 
 /**
+ * Everything stored for one candidate in the evidence archive: the browsed
+ * `${folder}/${roll}/` plus the exam-id and student-uuid folders that phone
+ * uploads and older clients write to. Null only when every listing failed.
+ */
+export async function listCandidateArtifacts(
+  folder: string,
+  roll: string,
+  examId?: string,
+  studentId?: string,
+): Promise<R2Artifact[] | null> {
+  const folders = [...new Set([folder, examId].filter((f): f is string => !!f))];
+  const owners = [...new Set([roll, studentId].filter((o): o is string => !!o))];
+  const lists = await Promise.all(
+    folders.flatMap((f) => owners.map((o) => listArtifactsByPrefix(`${f}/${o}/`))),
+  );
+  if (lists.every((l) => l === null)) return null;
+  const byKey = new Map<string, R2Artifact>();
+  for (const list of lists) for (const a of list ?? []) byKey.set(a.key, a);
+  return [...byKey.values()];
+}
+
+/**
  * Top-level R2 folders — one per exam. The segment is the slug of the exam
  * NAME (or the exam id fallback), so the archive reads like the console:
  * ["Test-3/", "Midterm-1/", …]. Best-effort; null when R2 is unavailable.
@@ -175,7 +197,12 @@ export async function listR2StudentFolders(examFolder: string): Promise<string[]
   if (!r2Configured) return null;
   try {
     const prefix = examFolder.endsWith("/") ? examFolder : `${examFolder}/`;
-    return await r2ListFolders(prefix);
+    const folders = await r2ListFolders(prefix);
+    // The function returns full prefixes ("Test-3/21VGN0314/"); callers want the roll segment.
+    return folders?.map((f) => {
+      const seg = f.replace(/\/+$/, "").split("/").pop() ?? "";
+      return seg ? `${seg}/` : "";
+    }).filter(Boolean) ?? null;
   } catch (err) {
     console.warn(`[examStorage] list student folders failed (${examFolder}):`, err);
     return null;
