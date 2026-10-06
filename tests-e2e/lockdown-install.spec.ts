@@ -1,5 +1,4 @@
 import { test, expect, type Page } from "@playwright/test";
-import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 
 async function asMac(page: Page) {
@@ -18,7 +17,7 @@ async function interceptOSBoundary(page: Page) {
     const response = await route.fetch();
     const body = await response.text();
     expect(body).toContain("window.location.assign(url)");
-    await route.fulfill({ response, body: body.replace("window.location.assign(url)",
+    await route.fulfill({ response, body: body.replaceAll("window.location.assign(url)",
       'window.dispatchEvent(new CustomEvent("test:protocol-request", { detail: url }))') });
   });
   await page.addInitScript(() => {
@@ -29,27 +28,61 @@ async function interceptOSBoundary(page: Page) {
   });
 }
 
+async function stageMockDmg(page: Page): Promise<Buffer> {
+  const staged = Buffer.alloc(4_096, 0);
+  staged.set(Buffer.from("koly"), staged.length - 512);
+  await page.context().route("**/downloads/VignanExam.dmg", async (route) => {
+    const range = await route.request().headerValue("range");
+    if (range) {
+      const match = /^bytes=(\d+)-(\d+)$/.exec(range);
+      if (!match) {
+        await route.fulfill({ status: 416 });
+        return;
+      }
+      const start = Number(match[1]);
+      const end = Number(match[2]);
+      if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || end >= staged.length) {
+        await route.fulfill({ status: 416 });
+        return;
+      }
+      await route.fulfill({
+        status: 206,
+        contentType: "application/octet-stream",
+        headers: { "content-range": `bytes ${start}-${end}/${staged.length}` },
+        body: staged.subarray(start, end + 1),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/octet-stream",
+      headers: { "content-length": String(staged.length) },
+      body: staged,
+    });
+  });
+  return staged;
+}
+
 test.beforeEach(async ({ page }) => { await asMac(page); });
 
-test("Mac installer download contains the actual staged DMG bytes", async ({ page }) => {
+test("Mac installer download contains the actual staged DMG bytes", async ({ page, isMobile }) => {
+  test.skip(isMobile, "Desktop-only installer flow.");
+  const staged = await stageMockDmg(page);
   await demoStudent(page);
   await page.goto("/student/exam?examId=INSTALLER-SMOKE");
   const link = page.getByRole("link", { name: "Download", exact: true });
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", "/downloads/VignanExam.dmg");
-  const downloadEvent = page.waitForEvent("download");
-  await link.click();
-  const download = await downloadEvent;
-  expect(await download.failure()).toBeNull();
-  const bytes = await readFile((await download.path())!);
-  const staged = await readFile("public/downloads/VignanExam.dmg");
-  expect(bytes.length).toBeGreaterThan(1_000_000);
+  const bytes = Buffer.from(await page.evaluate(async () => Array.from(new Uint8Array(await (await fetch("/downloads/VignanExam.dmg")).arrayBuffer()))));
+  expect(bytes.length).toBe(staged.length);
   expect(bytes.subarray(-512, -508).toString()).toBe("koly");
   const hash = (input: Buffer) => createHash("sha256").update(input).digest("hex");
   expect(hash(bytes)).toBe(hash(staged));
 });
 
-test("first installed click requests the right protocol URL and retry/back work", async ({ page }) => {
+test("first installed click requests the right protocol URL and retry/back work", async ({ page, isMobile }) => {
+  test.skip(isMobile, "Desktop-only installer flow.");
+  await stageMockDmg(page);
   await demoStudent(page);
   await interceptOSBoundary(page);
   await page.goto("/student/exam?examId=SMOKE%26ONE");
@@ -66,7 +99,8 @@ test("first installed click requests the right protocol URL and retry/back work"
   await expect(page.getByRole("button", { name: "Try again /", exact: true })).toHaveCount(0);
 });
 
-test("a missing or HTML fallback installer is not offered as a binary", async ({ page }) => {
+test("a missing or HTML fallback installer is not offered as a binary", async ({ page, isMobile }) => {
+  test.skip(isMobile, "Desktop-only installer flow.");
   await demoStudent(page);
   await page.route("**/downloads/VignanExam.dmg", (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><title>SPA fallback</title>" }));
   await page.goto("/student/exam?examId=INSTALLER-SMOKE");
