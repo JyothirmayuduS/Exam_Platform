@@ -1,29 +1,23 @@
 node_modules
-src-tauri
 .git
 .vscode
 playwright-report
 test-results
-supabase/.temp
 .env.local
 .env
 dist
-
-# Agent scratch space — downloaded CI artifacts live here transiently and can
-# be 150 MB+ (AppImage), which breaks the 100 MB upload limit.
-__agent__
+backend
+docs
+frontend/src-tauri
 
 # Installers are hosted in the public Vercel Blob store; excluding them keeps
 # the web deployment below Vercel source-upload limits.
-public/downloads/VignanExam_setup.exe
-public/downloads/VignanExam.msi
-public/downloads/VignanExam.AppImage
-public/downloads/VignanExam.deb
-public/downloads/VignanExam.dmg
-public/downloads/SHA256SUMS
-public/downloads/build-manifest.json
+frontend/public/downloads/VignanExam_setup.exe
+frontend/public/downloads/VignanExam.msi
+frontend/public/downloads/VignanExam.AppImage
+frontend/public/downloads/VignanExam.deb
+frontend/public/downloads/VignanExam.dmg
+frontend/public/downloads/SHA256SUMS
+frontend/public/downloads/build-manifest.json
 
-# Model weights (150 MB+) exceed Vercel's 100 MB per-file upload limit and are
-# not referenced by the build (detection uses public/ai/models/*).
 *.pt
-training

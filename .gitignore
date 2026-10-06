@@ -1,27 +1,28 @@
 node_modules/
 dist/
 .DS_Store
+.vercel
+
+# Secrets — keys live only in Supabase secrets, Vercel env and .env.local
 .env
 .env.*
 !.env.example
-# Tauri / Rust build artifacts
-src-tauri/target/
-src-tauri/gen/
-.vercel
 
-# Committed build/test artifacts
+# Tauri / Rust build artifacts
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
+
+# Test output
 playwright-report/
 test-results/
-.env.local
-.env
 
 # Installer binaries are hosted in Vercel Blob storage (vercel.json redirects
-# /downloads/* there). Fresh local builds stay out of git: the AppImage alone
-# exceeds GitHub's 100 MB file limit.
-public/downloads/VignanExam*
+# /downloads/* there). The AppImage alone exceeds GitHub's 100 MB file limit.
+frontend/public/downloads/VignanExam*
 
-# Model weights — far over GitHub's 100 MB file limit; keep local only.
-# (No code path loads them: detection uses MediaPipe tasks bundled in public/.)
+# Model weights and training data — far over GitHub's 100 MB file limit, and
+# training frames can contain student images. Detection uses public/ai/models/.
 *.pt
-!public/ai/models/*.pt
-.env*
+!frontend/public/ai/models/*.pt
+training/
+venv/

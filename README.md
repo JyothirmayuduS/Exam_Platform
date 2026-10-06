@@ -54,31 +54,34 @@ Cloudflare R2, and a native lockdown desktop app (Tauri) for candidates.
 ## Repository layout
 
 ```
-src/
-  pages/            One file per screen (StudentExam, TeacherDashboard, …)
-  components/       exam/ (candidate flow), teacher/ (console panels), ui.tsx (UI kit)
-  hooks/            useTeacherExams (exam scope), useLiveAttempts, useExamState, …
-  lib/              examApi (all Supabase calls), examStorage (R2), proctorViewer,
-                    proctorVoice, paperBuilder, sessionReport, auth, env
-supabase/
-  migrations/       Versioned SQL (schema, RLS, edge-function contracts, seeds)
-  functions/        Edge functions: livekit-token, store-artifact, send-*-email,
-                    mobile-upload, generate-pdf-report, canvas-sync, …
-src-tauri/          Native lockdown browser (Rust/Tauri v2)
-tests-e2e/          Playwright end-to-end specs
+frontend/             Web app + desktop lockdown app (deployed to Vercel)
+  src/
+    features/         student/, teacher/, proctoring/, … (pages, components, domain logic)
+    shared/           services (Supabase calls, R2 storage, session reports), UI kit, hooks
+  public/             Static assets, AI models (public/ai/models)
+  src-tauri/          Native lockdown browser (Rust/Tauri v2) — bundles the web build
+  scripts/            Lockdown packaging, RLS check, proctor-verifier training
+  tests-e2e/          Playwright end-to-end specs
+backend/
+  supabase/
+    migrations/       Versioned SQL (schema, RLS, edge-function contracts, seeds)
+    functions/        Edge functions: livekit-token, store-artifact, send-*-email,
+                      mobile-upload, generate-pdf-report, canvas-sync, …
+docs/                 Architecture, setup, monitoring and proctoring validation notes
 ```
 
 ## Setup (local)
 
-1. `npm install`
-2. `cp .env.example .env.local` and fill the VITE_* keys (Supabase anon key,
-   LiveKit URL, download links). Only the anon key lives in the frontend — RLS
-   guards every table.
-3. Apply migrations: `npx supabase db push --include-all`
-4. Deploy edge functions + secrets (see `supabase/functions/README` notes in
-   `SETUP.md`): LiveKit token, R2 credentials, Gmail app password, `APP_BASE_URL`.
-5. `npm run dev` — teacher + proctor flows; open the student console in another
-   tab to watch exams arrive live via realtime.
+1. `cd frontend && npm install`
+2. `cp .env.example .env.local` (inside `frontend/`) and fill the VITE_* keys
+   (Supabase anon key, LiveKit URL, download links). Only the anon key lives in
+   the frontend — RLS guards every table.
+3. Apply migrations: `cd backend && npx supabase db push --include-all`
+4. Deploy edge functions + secrets from `backend/` (see `docs/SETUP.md`):
+   LiveKit token, R2 credentials, Gmail app password, `APP_BASE_URL`.
+5. `cd frontend && npm run dev` — teacher + proctor flows; open the student
+   console in another tab to watch exams arrive live via realtime.
+6. Desktop app: `cd frontend && npm run tauri build`.
 
 ## Going live (auth-required mode)
 
@@ -108,6 +111,7 @@ staging/demo builds only.
 ## Testing & verification
 
 ```bash
+cd frontend
 npm run lint        # oxlint
 npx tsc -b          # typecheck
 npx vitest run      # unit tests (exam-scope resolver, paper logic, timers, …)

@@ -5,7 +5,7 @@
     {
       "name": "exam-platform-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"]
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"]
     }
   ]
 }
