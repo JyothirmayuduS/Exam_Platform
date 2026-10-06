@@ -6,7 +6,8 @@ test-results
 .env.local
 .env
 dist
-backend
+backend/supabase/migrations
+backend/supabase/*.sql
 docs
 frontend/src-tauri
 
