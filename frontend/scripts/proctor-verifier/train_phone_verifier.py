@@ -4,6 +4,11 @@ Usage (Python 3.11, `pip install pymupdf "mediapipe==0.10.14" pillow numpy`):
 
   python train_phone_verifier.py --pdf Session_Report.pdf --phone "6,9,13-21,28-35"
   python train_phone_verifier.py --pdf a.pdf --phone "..." --pdf b.pdf --phone "..."
+  python train_phone_verifier.py --labels labels.json --frames /tmp/frames
+
+--labels maps a report id to {"phone": "...", "skip": "..."}; its frames are
+read from <frames>/<id>/f001.png, f002.png, ... and skipped frames (too
+ambiguous to call) are left out entirely.
 
 Each --pdf is a Session Report exported from the teacher console; --phone
 lists the 1-based snapshot numbers (in PDF order) where a phone is visible,
@@ -72,9 +77,11 @@ def features(score, box, face, lum, sat):
             facezone, rel_y, rel_size, lum, sat, y + h, no_face]
 
 
-def collect(frames, phone_ids, det, face_det, offset):
+def collect(frames, phone_ids, det, face_det, offset, skip=frozenset()):
     rows = []
     for n, im in enumerate(frames, start=1):
+        if n in skip:
+            continue
         arr = np.asarray(im)
         H, W = arr.shape[:2]
         fr = face_det.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=arr))
@@ -98,6 +105,10 @@ def collect(frames, phone_ids, det, face_det, offset):
     return rows
 
 
+def frames_from_dir(path):
+    return [Image.open(f).convert("RGB") for f in sorted(Path(path).glob("f[0-9][0-9][0-9].png"))]
+
+
 def fit(X, y, mu, sd, l2=0.05, iters=4000, lr=0.3):
     Z = (X - mu) / sd
     w, b0 = np.zeros(Z.shape[1]), 0.0
@@ -111,11 +122,14 @@ def fit(X, y, mu, sd, l2=0.05, iters=4000, lr=0.3):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pdf", action="append", required=True)
-    ap.add_argument("--phone", action="append", required=True)
+    ap.add_argument("--pdf", action="append", default=[])
+    ap.add_argument("--phone", action="append", default=[])
+    ap.add_argument("--labels")
+    ap.add_argument("--frames")
     ap.add_argument("--min", type=float, default=0.7)
     a = ap.parse_args()
     assert len(a.pdf) == len(a.phone), "one --phone list per --pdf"
+    assert a.pdf or (a.labels and a.frames), "give --pdf/--phone pairs or --labels with --frames"
 
     det = vision.ObjectDetector.create_from_options(vision.ObjectDetectorOptions(
         base_options=mpt.BaseOptions(model_asset_path=str(MODELS / "efficientdet_lite0.tflite")),
@@ -124,12 +138,15 @@ def main():
         base_options=mpt.BaseOptions(model_asset_path=str(MODELS / "blaze_face_short_range.tflite"))))
 
     rows, phone_frames, all_frames, offset = [], set(), [], 0
-    for pdf, spec in zip(a.pdf, a.phone):
-        frames = frames_from_pdf(pdf)
-        ids = parse_ranges(spec)
-        rows += collect(frames, ids, det, face_det, offset)
+    sources = [(frames_from_pdf(pdf), spec, "") for pdf, spec in zip(a.pdf, a.phone)]
+    if a.labels:
+        for rid, lab in json.load(open(a.labels)).items():
+            sources.append((frames_from_dir(Path(a.frames) / rid), lab["phone"], lab.get("skip", "")))
+    for frames, spec, skip_spec in sources:
+        ids, skip = parse_ranges(spec) - parse_ranges(skip_spec), parse_ranges(skip_spec)
+        rows += collect(frames, ids, det, face_det, offset, skip)
         phone_frames |= {offset + i for i in ids}
-        all_frames += [offset + i for i in range(1, len(frames) + 1)]
+        all_frames += [offset + i for i in range(1, len(frames) + 1) if i not in skip]
         offset += len(frames)
 
     frame = np.array([r[0] for r in rows])
