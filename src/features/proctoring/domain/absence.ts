@@ -2,9 +2,11 @@
 // blacked out) versus the student out of frame. In real sessions a hand
 // over the camera filled ~50% of the frame with skin tones and a hand over
 // the face 34–38%, while an empty seat or a camera turned away showed 11–23%.
+// A phone held up in front of the face darkened 16–30% of the frame (normal
+// frames 2–10%) while the detector still saw a person behind it.
 
-export type AbsenceKind = "covered" | "out_of_frame";
-export type FrameStats = { lum: number; std: number; skin: number };
+export type AbsenceKind = "covered" | "object" | "out_of_frame";
+export type FrameStats = { lum: number; std: number; skin: number; dark: number };
 
 export const ABSENCE = {
   WINDOW: 15,       // face ticks (~3 s at FACE_MS=200)
@@ -13,12 +15,19 @@ export const ABSENCE = {
   DARK_LUM: 0.1,
   FLAT_STD: 0.05,
   SKIN_COVERED: 0.3,
+  DARK_PIXEL: 0.3,
+  DARK_OBJECT: 0.14,
+  PERSON_RECENT_MS: 2_000,
 } as const;
 
 export const ABSENCE_LABEL: Record<AbsenceKind, { start: string; repeat: string }> = {
   covered: {
     start: "Camera or face covered — something is blocking the camera",
     repeat: "Camera still covered",
+  },
+  object: {
+    start: "Face hidden behind an object held up to the camera — possible phone",
+    repeat: "Face still hidden behind an object — possible phone",
   },
   out_of_frame: {
     start: "Student moved out of the camera frame",
@@ -28,10 +37,11 @@ export const ABSENCE_LABEL: Record<AbsenceKind, { start: string; repeat: string 
 
 export function frameStats(px: ArrayLike<number>): FrameStats {
   const n = Math.floor(px.length / 4);
-  if (n === 0) return { lum: 0, std: 0, skin: 0 };
+  if (n === 0) return { lum: 0, std: 0, skin: 0, dark: 0 };
   let sum = 0;
   let sq = 0;
   let skin = 0;
+  let dark = 0;
   for (let i = 0; i < n * 4; i += 4) {
     const r = px[i]! / 255;
     const g = px[i + 1]! / 255;
@@ -40,13 +50,16 @@ export function frameStats(px: ArrayLike<number>): FrameStats {
     sum += l;
     sq += l * l;
     if (r > 0.35 && r > g * 1.08 && g >= b && r - b > 0.08) skin++;
+    if (l < ABSENCE.DARK_PIXEL) dark++;
   }
   const lum = sum / n;
-  return { lum, std: Math.sqrt(Math.max(0, sq / n - lum * lum)), skin: skin / n };
+  return { lum, std: Math.sqrt(Math.max(0, sq / n - lum * lum)), skin: skin / n, dark: dark / n };
 }
 
-export function classifyAbsence(s: FrameStats): AbsenceKind {
+/** `personSeen`: the object detector saw a person within the last couple of seconds. */
+export function classifyAbsence(s: FrameStats, personSeen = false): AbsenceKind {
   if (s.lum < ABSENCE.DARK_LUM || s.std < ABSENCE.FLAT_STD || s.skin >= ABSENCE.SKIN_COVERED) return "covered";
+  if (personSeen && s.dark >= ABSENCE.DARK_OBJECT) return "object";
   return "out_of_frame";
 }
 

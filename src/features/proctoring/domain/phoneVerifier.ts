@@ -19,6 +19,17 @@ export const PHONE_VERIFIER = {
 /** Phone boxes below this likelihood are dropped before tracking. */
 export const PHONE_VERIFY_MIN = 0.7;
 
+/**
+ * With no face in view there is no chin or beard to mistake for a phone, and a
+ * phone held up to the camera is what hides the face — the model scored those
+ * 0.31–0.44 (its training set had almost no faceless frames).
+ */
+export const PHONE_NO_FACE = { MIN_SCORE: 0.2, MIN_AREA: 0.02 } as const;
+
+export function acceptPhoneWithoutFace(score: number, box: BBox, face: BBox | null): boolean {
+  return !face && score >= PHONE_NO_FACE.MIN_SCORE && box.width * box.height >= PHONE_NO_FACE.MIN_AREA;
+}
+
 /** Mean brightness and colourfulness of the box pixels, both in [0, 1]. */
 export type PixelStats = { lum: number; sat: number };
 

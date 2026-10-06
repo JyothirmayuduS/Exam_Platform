@@ -457,13 +457,15 @@ export type ViolationSnap = {
   blob: Blob;
   /** Seconds from the exam start — also drawn on the recording seek bar. */
   offsetSec?: number | null;
+  /** Epoch ms of the flag; names the stored frame so the report places it there. */
+  capturedAt?: number;
 };
 
 export type ScreenshotHandle = {
   setVideo: (video: HTMLVideoElement | null) => void;
   /** Stop sampling and wait for queued snapshots; false means evidence gaps. */
   stop: () => Promise<boolean>;
-  captureViolationSnapshot: (violationType: string) => Promise<Blob | null>;
+  captureViolationSnapshot: (violationType: string, capturedAt?: number) => Promise<Blob | null>;
 };
 
 /** Capture a JPEG frame every second + a high-quality frame per violation. */
@@ -526,13 +528,13 @@ export function startScreenshotCapture(opts: {
         return Number.isFinite(lastCapture) && !missedFrame;
       })();
     },
-    captureViolationSnapshot: async (violationType: string) => {
+    captureViolationSnapshot: async (violationType: string, capturedAt = Date.now()) => {
       if (!video || video.readyState < 2) return null;
       const blob = captureFrame(video, 0.85, 1600);
       if (!blob) return null;
       const safeType = violationType.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
       await storeArtifact(
-        buildR2Path(folder, roll, "violations", `${Date.now()}_${safeType}.jpg`),
+        buildR2Path(folder, roll, "violations", `${capturedAt}_${safeType}.jpg`),
         blob,
         "image/jpeg",
       );
@@ -569,11 +571,13 @@ export async function uploadExamRecords(opts: {
   );
   uploaded.recordingKey = rec?.key ?? null;
 
-  // 2. Violation snapshots (frames captured at the flagged moments).
+  // 2. Violation snapshots (frames captured at the flagged moments). Same key
+  //    as the flag-time upload, so a re-upload overwrites rather than adding a
+  //    copy stamped with the submit time.
   for (const snap of violationSnapshots) {
     const safeLabel = snap.label.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
     const stored = await storeArtifact(
-      buildR2Path(folder, roll, "violations", `${Date.now()}_${safeLabel}.jpg`),
+      buildR2Path(folder, roll, "violations", `${snap.capturedAt ?? Date.now()}_${safeLabel}.jpg`),
       snap.blob,
       "image/jpeg",
     );

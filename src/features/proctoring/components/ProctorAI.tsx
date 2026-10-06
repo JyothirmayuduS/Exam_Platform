@@ -39,10 +39,10 @@ import {
   REFINE,
 } from "@/features/proctoring/domain";
 import type { BBox, Detection, FaceGeometry, ProctorCategory, RiskLevel } from "@/features/proctoring/domain";
-import { phoneLikelihood, PHONE_VERIFY_MIN, type PixelStats } from "@/features/proctoring/domain/phoneVerifier";
+import { acceptPhoneWithoutFace, phoneLikelihood, PHONE_VERIFY_MIN, type PixelStats } from "@/features/proctoring/domain/phoneVerifier";
 import { blendshapeScores, HEAD_POSE, isLookingDown, LOOK_DOWN, lookDownScore, poseFromMatrix, type HeadPose } from "@/features/proctoring/domain/headPose";
 import { LipActivity, LIPS, mouthOpenRatio } from "@/features/proctoring/domain/lipActivity";
-import { ABSENCE_LABEL, AbsenceMonitor, classifyAbsence, frameStats } from "@/features/proctoring/domain/absence";
+import { ABSENCE, ABSENCE_LABEL, AbsenceMonitor, classifyAbsence, frameStats } from "@/features/proctoring/domain/absence";
 import { DARK_BUD, earPatches, isDarkEarbud, type EarPatch } from "@/features/proctoring/domain/darkEarbud";
 import { env } from "@/shared/data/env";
 import ProctorDebugOverlay from "@/features/proctoring/components/ProctorDebugOverlay";
@@ -438,6 +438,10 @@ function boxPixelStats(video: HTMLVideoElement, box: BBox): PixelStats | null {
 function verifyPhones(dets: Detection[], video: HTMLVideoElement, face: BBox | null): Detection[] {
   return dets.filter((d) => {
     if (d.kind !== "phone") return true;
+    if (acceptPhoneWithoutFace(d.score, d.bbox, face)) {
+      pushObjectSample(`verify ${d.label} ${Math.round(d.score * 100)}% → accepted (no face)`);
+      return true;
+    }
     try {
       const px = boxPixelStats(video, d.bbox);
       if (!px) return true;
@@ -603,6 +607,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   const earPatchRef = useRef<{ at: number; patches: EarPatch[] } | null>(null);
   const cropTurn = useRef(0);
   const frameDims = useRef(""); // diag: log the frame size once per change
+  const personSeenAt = useRef(-Infinity);
   // rAF fps measurement (diagnostics)
   const fpsFrames = useRef(0);
 
@@ -1173,8 +1178,9 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
               emit("possible_phone_use", "Face hidden behind a phone held up to the camera", 0.9);
             } else {
               const px = sampleVideo(video, FULL_FRAME, 32, 24);
-              const kind = px ? classifyAbsence(frameStats(px)) : "out_of_frame";
-              emit("no_face", ABSENCE_LABEL[kind][absent], 0.9);
+              const personSeen = now - personSeenAt.current <= ABSENCE.PERSON_RECENT_MS;
+              const kind = px ? classifyAbsence(frameStats(px), personSeen) : "out_of_frame";
+              emit(kind === "object" ? "possible_phone_use" : "no_face", ABSENCE_LABEL[kind][absent], 0.9);
             }
           }
           if (multiFaceStreak === FACE.SUSTAIN) {
@@ -1251,6 +1257,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
           for (const d of raw) {
             const c = d.categories?.[0];
             if (!c) continue;
+            if (c.categoryName === "person" && (c.score ?? 0) >= 0.3) personSeenAt.current = now;
             const b = d.boundingBox ?? {};
             const box = [Number(b.originX ?? 0).toFixed(2), Number(b.originY ?? 0).toFixed(2), Number(b.width ?? 0).toFixed(2), Number(b.height ?? 0).toFixed(2)].join(",");
             pushObjectSample(`${c.categoryName ?? "?"} ${Math.round((c.score ?? 0) * 100)}% idx=${c.index ?? "?"} box=(${box})`);

@@ -97,6 +97,16 @@ describe("face absence", () => {
     expect(classifyAbsence(frameStats(fill(768, [5, 5, 5])))).toBe("covered");
   });
 
+  it("reads a dark object in front of a present student as a held-up phone", () => {
+    const phone = fill(768, [200, 205, 200]);
+    for (let i = 0; i < 160; i++) phone.set([30, 30, 35, 255], i * 4);
+    expect(classifyAbsence(frameStats(phone), true)).toBe("object");
+    expect(classifyAbsence(frameStats(phone), false)).toBe("out_of_frame");
+    const room = fill(768, [200, 205, 200]);
+    for (let i = 0; i < 50; i++) room.set([30, 30, 35, 255], i * 4);
+    expect(classifyAbsence(frameStats(room), true)).toBe("out_of_frame");
+  });
+
   it("keeps an episode open while the face flickers back", () => {
     const m = new AbsenceMonitor();
     const seq = [true, true, false, true, true, false, true, true, true];

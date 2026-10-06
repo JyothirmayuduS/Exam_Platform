@@ -513,11 +513,12 @@ function StudentExamSession() {
     if (!activeViolation || !screenshotHandleRef.current) return;
     if (capturedViolationIdsRef.current.has(activeViolation.id)) return;
     capturedViolationIdsRef.current.add(activeViolation.id);
+    const capturedAt = Date.now();
     const offsetSec = examStartedAtRef.current
-      ? Math.max(0, Math.round((Date.now() - examStartedAtRef.current) / 1000))
+      ? Math.max(0, Math.round((capturedAt - examStartedAtRef.current) / 1000))
       : null;
-    void screenshotHandleRef.current.captureViolationSnapshot(activeViolation.kind).then((blob) => {
-      if (blob) violationSnapshotsRef.current.push({ label: activeViolation.kind, blob, offsetSec });
+    void screenshotHandleRef.current.captureViolationSnapshot(activeViolation.kind, capturedAt).then((blob) => {
+      if (blob) violationSnapshotsRef.current.push({ label: activeViolation.kind, blob, offsetSec, capturedAt });
     });
     // AI camera evidence: MediaPipe attached a frame from the webcam feed at
     // flag time — keep it for the PDF + R2 evidence folder (dispute-proofing).
@@ -526,6 +527,7 @@ function StudentExamSession() {
         label: `${activeViolation.kind} (camera evidence)`,
         blob: activeViolation.evidenceBlob,
         offsetSec,
+        capturedAt,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

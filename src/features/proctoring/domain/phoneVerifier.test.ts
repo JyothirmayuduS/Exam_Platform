@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { phoneLikelihood, PHONE_VERIFY_MIN } from "@/features/proctoring/domain/phoneVerifier";
+import { acceptPhoneWithoutFace, phoneLikelihood, PHONE_VERIFY_MIN } from "@/features/proctoring/domain/phoneVerifier";
 import type { BBox } from "@/features/proctoring/domain/types";
 
 const box = ([x, y, width, height]: number[]): BBox => ({ x, y, width, height });
@@ -25,5 +25,13 @@ describe("phoneLikelihood", () => {
     const chinHand = phoneLikelihood(0.35, box([0.42, 0.3, 0.07, 0.12]), face, { lum: 0.42, sat: 0.18 });
     expect(deskPhone).toBeGreaterThanOrEqual(PHONE_VERIFY_MIN);
     expect(chinHand).toBeLessThan(PHONE_VERIFY_MIN);
+  });
+
+  it("accepts a phone held up over a hidden face, but not tiny or faint boxes", () => {
+    const heldUp = box([0.3, 0.2, 0.35, 0.5]);
+    expect(acceptPhoneWithoutFace(0.32, heldUp, null)).toBe(true);
+    expect(acceptPhoneWithoutFace(0.32, heldUp, box([0.38, 0.12, 0.22, 0.3]))).toBe(false);
+    expect(acceptPhoneWithoutFace(0.12, heldUp, null)).toBe(false);
+    expect(acceptPhoneWithoutFace(0.4, box([0.5, 0.5, 0.05, 0.05]), null)).toBe(false);
   });
 });
