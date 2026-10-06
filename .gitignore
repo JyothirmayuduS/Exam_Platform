@@ -20,9 +20,11 @@ test-results/
 # /downloads/* there). The AppImage alone exceeds GitHub's 100 MB file limit.
 frontend/public/downloads/VignanExam*
 
-# Model weights and training data — far over GitHub's 100 MB file limit, and
-# training frames can contain student images. Detection uses public/ai/models/.
+# Model weights — far over GitHub's 100 MB file limit; keep local only
+# (backend/training/models, backend/training/runs/*/weights). Detection in the
+# app uses frontend/public/ai/models/.
 *.pt
 !frontend/public/ai/models/*.pt
-training/
+# Downloaded training images are re-pulled by backend/training/pull_export.py
+backend/training/datasets/*/images/
 venv/

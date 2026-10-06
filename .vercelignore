@@ -6,6 +6,7 @@ test-results
 .env.local
 .env
 dist
+backend/training
 backend/supabase/migrations
 backend/supabase/*.sql
 docs

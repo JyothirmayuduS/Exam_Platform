@@ -67,6 +67,8 @@ backend/
     migrations/       Versioned SQL (schema, RLS, edge-function contracts, seeds)
     functions/        Edge functions: livekit-token, store-artifact, send-*-email,
                       mobile-upload, generate-pdf-report, canvas-sync, …
+  training/           YOLO phone/earbuds fine-tuning: pull_export.py (dataset),
+                      train_yolo.sh (train); weights in models/ and runs/ stay local
 docs/                 Architecture, setup, monitoring and proctoring validation notes
 ```
 
