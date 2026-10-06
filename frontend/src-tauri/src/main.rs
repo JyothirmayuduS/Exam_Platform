@@ -1311,17 +1311,19 @@ fn main() {
                     }
                     #[cfg(target_os = "windows")]
                     winlock::reassert();
-                    let apps = check_prohibited_apps();
-                    if !apps.is_empty() {
-                        let list = apps.join(", ");
-                        if let Some(win) = handle.get_webview_window("exam") {
-                            let _ = win.eval(&format!(
-                                "window.dispatchEvent(new CustomEvent('lockdown:prohibited-apps', {{ detail: '{}' }}));",
-                                list.replace('\'', "")
-                            ));
-                            let _ = win.set_focus();
-                        }
-                    }
+                    // Background-app detection temporarily disabled.
+                    // let apps = check_prohibited_apps();
+                    // if !apps.is_empty() {
+                    //     let list = apps.join(", ");
+                    //     if let Some(win) = handle.get_webview_window("exam") {
+                    //         let _ = win.eval(&format!(
+                    //             "window.dispatchEvent(new CustomEvent('lockdown:prohibited-apps', {{ detail: '{}' }}));",
+                    //             list.replace('\'', "")
+                    //         ));
+                    //         let _ = win.set_focus();
+                    //     }
+                    // }
+                    let _ = &handle;
                 }
             });
 

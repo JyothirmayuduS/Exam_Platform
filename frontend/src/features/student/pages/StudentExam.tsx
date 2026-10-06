@@ -603,18 +603,19 @@ function StudentExamSession() {
 
     async function checkAll() {
       const results = runCompatChecks();
-      if (isTauri()) {
-        try {
-          const apps = await invoke<string[]>("check_prohibited_apps");
-          if (apps.length > 0) {
-            results.push({ label: "Background Apps", ok: false, detail: `Prohibited apps running: ${apps.join(", ")}` });
-          } else {
-            results.push({ label: "Background Apps", ok: true, detail: "" });
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      }
+      // Background-app detection temporarily disabled.
+      // if (isTauri()) {
+      //   try {
+      //     const apps = await invoke<string[]>("check_prohibited_apps");
+      //     if (apps.length > 0) {
+      //       results.push({ label: "Background Apps", ok: false, detail: `Could not close: ${apps.join(", ")}. Quit them manually, then re-check.` });
+      //     } else {
+      //       results.push({ label: "Background Apps", ok: true, detail: "" });
+      //     }
+      //   } catch (err) {
+      //     console.error(err);
+      //   }
+      // }
 
       if (!active) return;
       setChecks(results);
