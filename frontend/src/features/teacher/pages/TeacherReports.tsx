@@ -37,7 +37,7 @@ export function Reports({ notify }: { notify: (s: string) => void }) {
   const selectedExam = exams.find((e) => e.id === examId);
   const { data: pool = [] } = useQuery({
     queryKey: ["examPool", examId],
-    queryFn: async () => (await loadExamBundle(examId)).questions,
+    queryFn: async () => (await loadExamBundle(examId, { withAnswers: true })).questions,
     enabled: !!examId,
   });
   const report = useMemo(() => buildExamReport(liveAttempts, pool), [liveAttempts, pool]);

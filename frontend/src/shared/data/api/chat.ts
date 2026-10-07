@@ -19,6 +19,7 @@ export async function listProctorMessages(examId: string): Promise<ProctorMessag
     return {
       id: String(r.id),
       exam_id: String(r.exam_id),
+      attempt_id: r.attempt_id ? String(r.attempt_id) : null,
       sender: String(r.sender ?? "Proctor"),
       sender_role: String(r.sender_role ?? "proctor"),
       body: String(r.body ?? ""),
@@ -35,11 +36,13 @@ export async function sendProctorMessage(opts: {
   senderRole: string;
   body: string;
   kind?: "message" | "broadcast";
+  attemptId?: string;
 }): Promise<boolean> {
   const db = getSupabase();
   if (!db || !opts.body.trim()) return false;
   const { error } = await db.from("proctor_messages").insert({
     exam_id: opts.examId,
+    attempt_id: opts.attemptId ?? null,
     sender: opts.sender.slice(0, 80),
     sender_role: opts.senderRole === "proctor" ? "proctor" : opts.senderRole === "teacher" ? "teacher" : "proctor",
     body: opts.body.trim().slice(0, 500),

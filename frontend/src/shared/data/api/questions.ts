@@ -79,7 +79,7 @@ export async function saveQuestion(question: Omit<DBQuestion, "id"> & { id?: str
  * Falls back to the legacy single-owner query when the join table is missing
  * (migration not yet applied), so this works either way.
  */
-export async function listQuestionsForExam(examId: string): Promise<DBQuestion[]> {
+export async function listQuestionsForExam(examId: string, opts: { withAnswers?: boolean } = {}): Promise<DBQuestion[]> {
   const db = getSupabase();
   if (!db) return [];
   let ids: string[] = [];
@@ -98,7 +98,7 @@ export async function listQuestionsForExam(examId: string): Promise<DBQuestion[]
   if (ids.length === 0) return [];
   const { data, error } = await db
     .from("questions")
-    .select("id, exam_id, title, type, unit, difficulty, marks, options, subjective_mode, created_at")
+    .select(`id, exam_id, title, type, unit, difficulty, marks, options, subjective_mode, created_at${opts.withAnswers ? ", answer" : ""}`)
     .in("id", ids)
     .order("id", { ascending: true });
   if (error || !data) return [];
@@ -146,12 +146,12 @@ export async function unlinkQuestionFromExam(examId: string, questionId: string)
  * `{ exam: null, questions: [] }` when Supabase isn't configured so callers can
  * fall back to their built-in demo questions.
  */
-export async function loadExamBundle(examId: string): Promise<ExamBundle> {
+export async function loadExamBundle(examId: string, opts: { withAnswers?: boolean } = {}): Promise<ExamBundle> {
   const db = getSupabase();
   if (!db) return { exam: null, questions: [] };
   const [examRes, questions] = await Promise.all([
     db.from("exams").select("*").eq("id", examId).maybeSingle(),
-    listQuestionsForExam(examId),
+    listQuestionsForExam(examId, opts),
   ]);
   const exam = examRes.data ? normalizeExamRecord(examRes.data as ExamRecord) : null;
   return { exam, questions };

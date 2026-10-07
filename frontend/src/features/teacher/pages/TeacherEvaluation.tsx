@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FiCheck, FiPaperclip, FiAlertTriangle } from "react-icons/fi";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { loadExamBundle, updateAttemptScore, type DBQuestion, listAttemptViolations, getAttemptExamId, saveViolation, addGradingComment, listGradingComments, listFaculty, assignGradingDelegates, type ViolationEvent, type GradingComment } from "@/shared/data/examApi";
 import { type Attempt, type Flag } from "@/shared/services/rosterModel";
 import {
@@ -18,11 +18,16 @@ import {
   type PaperSlot,
   type QuestionKind,
   type Verdict,
+  examClosed,
+  visibilityFor,
+  type ReleaseSettings,
 } from "@/shared/domain/exam";
 import useLiveAttempts from "@/features/teacher/hooks/useLiveAttempts";
 import useTeacherExams from "@/features/teacher/hooks/useTeacherExams";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
 import AIIntegrityCard from "@/features/proctoring/components/AIIntegrityCard";
+import { usePromptDialog } from "@/shared/components/PromptDialog";
+import ResultReleasePanel from "@/features/teacher/components/ResultReleasePanel";
 import { RecordingReviewModal } from "@/features/proctoring/components/RecordingReview";
 import { uploadArtifactBlob, getArtifactObjectUrl } from "@/shared/services/examStorage";
 import { compressImage } from "@/shared/services/subjectiveUpload";
@@ -149,11 +154,15 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
   const submittedAttemptsCount = liveAttempts.filter((a) => a.state === "Submitted").length;
   const nav = getTeacherNav(liveAttemptsCount, submittedAttemptsCount, 0);
 
+  const queryClient = useQueryClient();
   const { data: examBundle } = useQuery({
-    queryKey: ["examBundle", effectiveExamId],
-    queryFn: () => (effectiveExamId ? loadExamBundle(effectiveExamId) : Promise.resolve({ exam: null, questions: [] })),
+    queryKey: ["examBundle", effectiveExamId, "withAnswers"],
+    queryFn: () => (effectiveExamId ? loadExamBundle(effectiveExamId, { withAnswers: true }) : Promise.resolve({ exam: null, questions: [] })),
     enabled: !!effectiveExamId,
   });
+  const resultsVisible = examBundle?.exam
+    ? visibilityFor((examBundle.exam.settings ?? {}) as ReleaseSettings, { examClosed: examClosed(examBundle.exam), graded: true }).score
+    : false;
 
   // Phone/desktop uploads of handwritten answers, keyed attempt → question →
   // storage path. Fills in answers that never synced back from the exam
@@ -286,7 +295,6 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
     setRoster((cur) => cur.map((c) => (c.id === cid ? { ...c, status: "Graded", awarded } : c)));
   };
 
-  const [visibility, setVisibility] = useState<"OFF" | "ON">("OFF");
   const [saving, setSaving] = useState(false);
 
   const handleBulkGrade = async () => {
@@ -422,7 +430,19 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
       {visible.length === 0 && <div className="p-10 text-center"><p className="font-serif text-lg">No candidates match these filters</p><p className="mt-1 text-[12px] text-ink-soft">Try clearing the search or switching the status tab.</p></div>}
     </section>
 
-    {active && <ReviewSession commentsMandatory={(examBundle?.exam?.settings as { commentsMandatory?: boolean } | undefined)?.commentsMandatory === true} candidate={active} queue={gradeQueue} onClose={closeReview} onNavigate={navigateReview} onFinalize={finalizeGrade} notify={notify} profileName={profile?.full_name ?? "Faculty"} />}
+    {examBundle?.exam && (
+      <div className="mt-6">
+        <ResultReleasePanel
+          exam={examBundle.exam}
+          submitted={total}
+          graded={gradedCount}
+          notify={notify}
+          onSaved={() => void queryClient.invalidateQueries({ queryKey: ["examBundle", effectiveExamId] })}
+        />
+      </div>
+    )}
+
+    {active && <ReviewSession resultsVisible={resultsVisible} commentsMandatory={(examBundle?.exam?.settings as { commentsMandatory?: boolean } | undefined)?.commentsMandatory === true} candidate={active} queue={gradeQueue} onClose={closeReview} onNavigate={navigateReview} onFinalize={finalizeGrade} notify={notify} profileName={profile?.full_name ?? "Faculty"} />}
 
     {showBulkDelegateModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-paper/80 backdrop-blur-sm">
@@ -520,7 +540,8 @@ function useEvaluatorCamera() {
   return { videoRef, state, seconds, stream, retry: () => { setSeconds(0); setAttempt((x) => x + 1); } };
 }
 
-function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, notify, profileName, commentsMandatory }: {
+function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, notify, profileName, commentsMandatory, resultsVisible }: {
+  resultsVisible: boolean;
   candidate: Candidate; queue: Candidate[]; commentsMandatory: boolean;
   onClose: () => void; onNavigate: (cid: string) => void;
   onFinalize: (cid: string, awarded: number) => Promise<void> | void; notify: (m: string) => void; profileName: string
@@ -587,7 +608,7 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
     await onFinalize(cid, awarded);
     setSavingGrade(false);
     setFeedback((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => !k.startsWith(`${cid}:`))));
-    notify(`${candidate.name} · ${awarded}/${max} recorded`);
+    notify(`${candidate.name} · ${awarded}/${max} recorded${resultsVisible ? " · visible to the student" : " · hidden until you release results"}`);
     if (goNext && nextUngraded) onNavigate(nextUngraded.id);
     else onClose();
   };
@@ -971,6 +992,7 @@ function ManualAnswer({ q, cid, score, scored, feedback, setScore, setFeedback, 
 
   // Grading comments (inline text + voice notes + image attachments) — persisted in grading_comments.
   const [comments, setComments] = useState<GradingComment[]>([]);
+  const [promptDialog, ask] = usePromptDialog();
   const [recording, setRecording] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -1018,8 +1040,8 @@ function ManualAnswer({ q, cid, score, scored, feedback, setScore, setFeedback, 
   useEffect(loadComments, [cid, q.id]);
 
   const addInlineComment = async () => {
-    const text = window.prompt("Inline comment for this answer:", "");
-    if (!text?.trim()) return;
+    const text = await ask({ title: "Inline comment", detail: "Attached to this answer for the candidate.", confirmLabel: "Add comment", multiline: true });
+    if (!text) return;
     const ok = await addGradingComment({ attemptId: cid, questionId: String(q.id), comment: text });
     if (ok) loadComments();
   };
@@ -1101,6 +1123,7 @@ function ManualAnswer({ q, cid, score, scored, feedback, setScore, setFeedback, 
 
   return (
     <div className="mt-4">
+      {promptDialog}
       {uploadRef && !uploadedUrl ? (
         <div className="border-l-2 border-forest bg-paper-raised p-4">
           <p className="font-mono text-[10px] uppercase tracking-wider text-forest font-bold mb-2">✓ Uploaded Handwritten Answer</p>

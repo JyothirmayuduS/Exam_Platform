@@ -7,6 +7,7 @@ import { listLiveAttempts, forceSubmitAttempt, extendAttemptTime, sendProctorMes
 import { downloadCsv } from "@/shared/services/sessionReport";
 import { FiUpload, FiSend, FiEye, FiClock, FiMessageSquare, FiAlertTriangle, FiChevronRight } from "react-icons/fi";
 import { Button } from "@/shared/components/ui";
+import { usePromptDialog } from "@/shared/components/PromptDialog";
 import { getSupabase } from "@/shared/data/supabase";
 
 type StatusTab = "All" | AttemptState | "Needs attention";
@@ -35,6 +36,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
   const [sort, setSort] = useState<(typeof SORTS)[number]>("Progress");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [promptDialog, ask] = usePromptDialog();
 
   const { data: attempts = [], isLoading } = useLiveAttempts(examId ?? "", exam?.name ?? "");
 
@@ -118,14 +120,18 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
     });
     notify(error ? `Reminder failed: ${error.message}` : studentEmail ? "Reminder sent to candidate" : `Reminder queued for ${notStarted.length} candidate(s)`);
   };
-  const broadcast = () => {
+  const broadcast = async () => {
     if (!examId) { notify("Select an exam first"); return; }
-    const body = window.prompt("Announcement for all candidates:");
-    if (body?.trim()) {
-      void sendProctorMessage({ examId, sender: "Teacher", senderRole: "teacher", body, kind: "broadcast" }).then((ok) =>
-        notify(ok ? "Announcement broadcast to all candidates" : "Announcement failed — database unavailable"),
-      );
-    }
+    const body = await ask({
+      title: "Send announcement",
+      detail: `Shown to every candidate writing ${exam?.name ?? "this exam"}.`,
+      placeholder: "e.g. 10 minutes remaining — please review your answers.",
+      confirmLabel: "Broadcast",
+      multiline: true,
+    });
+    if (!body) return;
+    const ok = await sendProctorMessage({ examId, sender: "Teacher", senderRole: "teacher", body, kind: "broadcast" });
+    notify(ok ? "Announcement broadcast to all candidates" : "Announcement failed — could not save the message");
   };
   const watchLive = (a: Attempt) => {
     if (!examId) return;
@@ -147,19 +153,26 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
   };
   const messageCandidate = async (a: Attempt) => {
     if (!examId) { notify("Select an exam first"); return; }
-    const body = window.prompt(`Message for ${a.name}:`);
-    if (!body?.trim()) return;
+    const body = await ask({
+      title: `Message ${a.name}`,
+      detail: "Only this candidate sees it, on their exam screen.",
+      confirmLabel: "Send",
+      multiline: true,
+    });
+    if (!body) return;
     const ok = await sendProctorMessage({
       examId,
+      attemptId: a.id,
       sender: "Teacher",
       senderRole: "teacher",
       body,
       kind: "message",
     });
-    notify(ok ? `Message sent to ${a.name}` : "Message failed — database unavailable");
+    notify(ok ? `Message sent to ${a.name}` : "Message failed — could not save the message");
   };
 
   return <>
+    {promptDialog}
     <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
       <div>
         <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Faculty console / Submissions</p>

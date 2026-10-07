@@ -135,6 +135,7 @@ export type StudentRosterRecord = {
 export type ProctorMessage = {
   id: string;
   exam_id: string;
+  attempt_id: string | null;
   sender: string;
   sender_role: string;
   body: string;

@@ -16,6 +16,7 @@ import {
   type ReportRow,
 } from "@/shared/services/sessionReport";
 import JobBanner from "@/shared/components/JobBanner";
+import { usePromptDialog } from "@/shared/components/PromptDialog";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 
 // Proctor console — a live monitoring dashboard for the exam the signed-in
@@ -84,6 +85,7 @@ type FeedLookup = (t: Tile) => RemoteFeed | null;
 export default function ProctorGrid() {
   const { profile } = useCurrentProfile();
   const navigate = useNavigate();
+  const [promptDialog, ask] = usePromptDialog();
   const [searchParams] = useSearchParams();
   const paramExam = searchParams.get("exam") ?? searchParams.get("examId");
   // Sidebar section is route-driven: /proctor → live grid, /proctor/flags →
@@ -447,6 +449,7 @@ export default function ProctorGrid() {
 
   return (
     <RoleLayout role="Proctor" name={profile?.full_name ?? "Proctor"} subtitle="Invigilator" tone={TONE} items={NAV} status={live ? "Live monitoring active" : "Not connected"}>
+      {promptDialog}
       {/* ── Command bar: identity + exam picker + broadcast ───────────────── */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
@@ -475,20 +478,22 @@ export default function ProctorGrid() {
         <div className="flex shrink-0 flex-col items-start gap-1.5 lg:items-end">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => {
-                const body = window.prompt("Broadcast message to all candidates:");
-                if (body?.trim()) {
-                  void sendProctorMessage({
-                    examId: examIdSafe,
-                    sender: profile?.full_name ?? "Proctor",
-                    senderRole: "proctor",
-                    body,
-                    kind: "broadcast",
-                  }).then((ok) => {
-                    if (ok) pushLog("Broadcast sent to all candidates");
-                    else pushLog("Broadcast failed — database unavailable");
-                  });
-                }
+              onClick={async () => {
+                const body = await ask({
+                  title: "Broadcast message",
+                  detail: "Shown to every candidate in this exam.",
+                  confirmLabel: "Broadcast",
+                  multiline: true,
+                });
+                if (!body) return;
+                const ok = await sendProctorMessage({
+                  examId: examIdSafe,
+                  sender: profile?.full_name ?? "Proctor",
+                  senderRole: "proctor",
+                  body,
+                  kind: "broadcast",
+                });
+                pushLog(ok ? "Broadcast sent to all candidates" : "Broadcast failed — could not save the message");
               }}
               className="border border-ink px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-ink hover:bg-ink hover:text-paper transition-colors"
             >
@@ -581,8 +586,13 @@ export default function ProctorGrid() {
               onEscalate={escalate}
               onForceSubmit={forceSubmit}
               onFlag={flagActivity}
-              onLogViolation={() => {
-                const desc = window.prompt("Violation description:", "Manual violation logged by proctor");
+              onLogViolation={async () => {
+                const desc = await ask({
+                  title: "Log violation",
+                  detail: selected ? `Recorded against ${selected.name}.` : undefined,
+                  defaultValue: "Manual violation logged by proctor",
+                  confirmLabel: "Log",
+                });
                 if (desc) logViolation("proctor_manual_log", desc, "warning");
               }}
               onExtend={extendTime}

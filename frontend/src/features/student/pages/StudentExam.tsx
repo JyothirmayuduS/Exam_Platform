@@ -867,7 +867,9 @@ function StudentExamSession() {
     const load = () => {
       void listProctorMessages(EXAM_ID).then((rows) => {
         if (!alive) return;
-        const latest = rows.filter((m) => m.kind === "broadcast").at(-1);
+        const latest = rows
+          .filter((m) => m.kind === "broadcast" || (m.attempt_id && m.attempt_id === attemptIdRef.current))
+          .at(-1);
         if (latest) setBroadcast({ id: latest.id, body: latest.body, sender: latest.sender });
       });
     };

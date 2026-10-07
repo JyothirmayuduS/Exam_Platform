@@ -231,8 +231,9 @@ export async function updateExam(
       ...patch.settings,
     };
   }
-  const { error } = await db.from("exams").update(row).eq("id", examId);
-  return !error;
+  // RLS-filtered updates succeed with zero rows, so require the row back.
+  const { data, error } = await db.from("exams").update(row).eq("id", examId).select("id");
+  return !error && (data?.length ?? 0) > 0;
 }
 
 // ── Exam deletion (guarded) ─────────────────────────────────────────────────
