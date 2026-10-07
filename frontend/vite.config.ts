@@ -6,6 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
+// Set by the Tauri CLI while it builds the exam app. That app ships its pages
+// inside the installer, and a service worker there would pin an old build.
+const buildingExamApp = Boolean(process.env.TAURI_ENV_PLATFORM);
 
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
@@ -31,7 +34,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    VitePWA({
+    !buildingExamApp && VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {

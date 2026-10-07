@@ -17,6 +17,7 @@ export default function ProctorCamera({
   initialStream,
   violationActive = false,
   proctorMessages = [],
+  onLinkError,
 }: {
   room: string;
   identity: string;
@@ -27,7 +28,11 @@ export default function ProctorCamera({
   initialStream?: MediaStream | null;
   violationActive?: boolean;
   proctorMessages?: string[];
+  /** The live video link to the proctor could not be established. */
+  onLinkError?: (message: string) => void;
 }) {
+  const onLinkErrorRef = useRef(onLinkError);
+  onLinkErrorRef.current = onLinkError;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [state, setState] = useState<ProctorState>("connecting");
   const [retryCount, setRetryCount] = useState(0);
@@ -100,6 +105,7 @@ export default function ProctorCamera({
       // Classify the error so the logs are actionable.
       const message = err instanceof Error ? err.message : String(err);
       setLinkError(message);
+      onLinkErrorRef.current?.(message);
       const isAuth    = message.toLowerCase().includes("auth") || message.toLowerCase().includes("permission");
       const isTimeout = message.toLowerCase().includes("timed out");
       const category  = isAuth ? "auth" : isTimeout ? "timeout" : "network";
@@ -136,6 +142,7 @@ export default function ProctorCamera({
     }
     handleRef.current = handle;
     setLinkError(handle ? null : "live video is not configured");
+    if (!handle) onLinkErrorRef.current?.("live video is not configured");
 
     if (handle?.stream) {
       if (!localStreamRef.current) {

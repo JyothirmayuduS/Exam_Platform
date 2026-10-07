@@ -15,6 +15,19 @@ function inKiosk(): boolean {
   return typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
 }
 
+/** Browser user agent tagged with the exam app version (or "web"), stored on
+ *  the attempt so the build a candidate actually ran is visible afterwards. */
+export async function clientUserAgent(): Promise<string> {
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  if (!inKiosk()) return `${ua} VignanExam/web`;
+  try {
+    const { getVersion } = await import("@tauri-apps/api/app");
+    return `${ua} VignanExam/${await getVersion()}`;
+  } catch {
+    return `${ua} VignanExam/unknown`;
+  }
+}
+
 /** Cold-start launch URL, or null when unavailable / not in the kiosk. */
 export async function getLaunchUrl(): Promise<string | null> {
   if (!inKiosk()) return null;
@@ -162,6 +175,17 @@ export function launchExamInLockdown(examId: string, roll: string, onUnconfirmed
     onUnconfirmed();
   }
   return dispose;
+}
+
+/** The exam window was minimized (or a minimize was refused) while locked. */
+export async function onMinimizeAttempt(cb: () => void): Promise<Unlisten> {
+  if (!inKiosk()) return () => {};
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    return await listen<null>("lockdown:minimize-attempted", () => cb());
+  } catch {
+    return () => {};
+  }
 }
 
 /** Lockdown shell notices: blocked conditions and informational pings. */

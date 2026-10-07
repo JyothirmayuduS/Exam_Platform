@@ -44,6 +44,7 @@ import {
   requestKeyboardLock,
   enterLockdown,
   leaveLockdown,
+  clientUserAgent,
   LAUNCHED_FROM_LINK_KEY,
 } from "@/shared/platform/lockdownBridge";
 import { defaultWatermarkText, renderWatermarkTemplate } from "@/shared/services/watermark";
@@ -224,6 +225,7 @@ function StudentExamSession() {
   const deviceSession = useMemo(() => deviceSessionId(EXAM_ID), [EXAM_ID]);
   const [deviceConflict, setDeviceConflict] = useState<null | "busy" | "submitted">(null);
   const conflictLoggedRef = useRef(false);
+  const linkErrorLoggedRef = useRef(false);
   const claimRestoredRef = useRef(false);
   const deviceConflictRef = useRef(deviceConflict);
   deviceConflictRef.current = deviceConflict;
@@ -778,11 +780,12 @@ function StudentExamSession() {
       // Only start if they are past the gate
       if (step !== "gate" && step !== "installed" && step !== "check") {
         attemptStartedRef.current = true;
-        void import("@/shared/data/examApi").then(m => 
-          m.startAttempt({ 
-            examId: EXAM_ID, 
-            studentId: studentIdRef.current!, 
-            total: questions.length 
+        void Promise.all([import("@/shared/data/examApi"), clientUserAgent()]).then(([m, userAgent]) =>
+          m.startAttempt({
+            examId: EXAM_ID,
+            studentId: studentIdRef.current!,
+            total: questions.length,
+            userAgent,
           })
         ).then(id => {
           if (id) setAttemptId(id);
@@ -1391,11 +1394,12 @@ function StudentExamSession() {
     }
     // Update the DB attempt with the generated paper and consent.
     if (supabaseConfigured && attemptId) {
-      void import("@/shared/data/examApi").then(m => m.startAttempt({
+      void Promise.all([import("@/shared/data/examApi"), clientUserAgent()]).then(([m, userAgent]) => m.startAttempt({
         examId: EXAM_ID,
         studentId: studentIdRef.current!,
         total: questions.length,
-        paper: paperRef.current
+        paper: paperRef.current,
+        userAgent,
       }));
       if (consentGiven && attemptId) {
         void import("@/shared/data/examApi").then((m) =>
@@ -2022,6 +2026,12 @@ function StudentExamSession() {
                 initialStream={cameraStream}
                 violationActive={!!activeViolation}
                 proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
+                onLinkError={(message) => {
+                  if (linkErrorLoggedRef.current || !studentIdRef.current || step !== "exam") return;
+                  linkErrorLoggedRef.current = true;
+                  void saveViolation(attemptId ?? null, EXAM_ID, studentIdRef.current, "live_video_failed",
+                    `Live video link failed: ${message.slice(0, 200)}`, { severity: "warning", source: "system" });
+                }}
               />
               <span className="exam-rec">Recording</span>
             </div>

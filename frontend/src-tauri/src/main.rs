@@ -24,6 +24,35 @@ fn quiet_command(program: &str) -> std::process::Command {
     cmd
 }
 
+// The exam app serves its own bundled pages. A service worker left in the
+// WebView2 profile by an older build keeps answering with that build's cached
+// pages (WebView2 sends worker requests past the app's asset handler), so new
+// installs would never run their own code. Remove it, never allow another.
+const NO_SERVICE_WORKER_JS: &str = r#"
+(() => {
+  const sw = navigator.serviceWorker;
+  if (!sw) return;
+  try {
+    sw.register = () => Promise.reject(new Error("service workers are disabled in the exam browser"));
+  } catch (_) {}
+  sw.getRegistrations().then(async (regs) => {
+    const controlled = !!sw.controller;
+    if (!regs.length && !controlled) return;
+    await Promise.all(regs.map((r) => r.unregister().catch(() => false)));
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch (_) {}
+    let reloaded = false;
+    try { reloaded = sessionStorage.getItem("__vignanSwEvicted") === "1"; } catch (_) {}
+    if (controlled && !reloaded) {
+      try { sessionStorage.setItem("__vignanSwEvicted", "1"); } catch (_) {}
+      location.reload();
+    }
+  }).catch(() => {});
+})();
+"#;
+
 const LOCKDOWN_JS: &str = r#"
 (() => {
   if (window.__vignanLockdown) return;
@@ -467,6 +496,14 @@ fn enter_lockdown(app: tauri::AppHandle) {
                 let _ = win.set_resizable(false);
                 let _ = win.set_minimizable(false);
                 let _ = win.set_closable(false);
+                #[cfg(target_os = "windows")]
+                if let Ok(hwnd) = win.hwnd() {
+                    let notify = handle.clone();
+                    winlock::guard_minimize(hwnd.0 as *mut _, move || {
+                        use tauri::Emitter;
+                        let _ = notify.emit("lockdown:minimize-attempted", ());
+                    });
+                }
                 set_capture_excluded(&win, true);
                 if !screen_capture_excluded(handle.clone()) {
                     use tauri::Emitter;
@@ -555,6 +592,8 @@ fn set_kiosk_presentation(locked: bool) {
 fn reassert_kiosk(win: &tauri::WebviewWindow) {
     if win.is_minimized().unwrap_or(false) {
         let _ = win.unminimize();
+        use tauri::Emitter;
+        let _ = win.emit("lockdown:minimize-attempted", ());
     }
     if !win.is_fullscreen().unwrap_or(true) {
         let _ = win.set_fullscreen(true);
@@ -1408,6 +1447,7 @@ fn main() {
             .visible(true)
             // Before page scripts on every load, so a reload or navigation
             // never leaves a page without the lockdown layer.
+            .initialization_script(NO_SERVICE_WORKER_JS)
             .initialization_script(LOCKDOWN_JS)
             .on_permission_request(|_, req| match req {
                 // Camera and microphone are needed for proctoring identity

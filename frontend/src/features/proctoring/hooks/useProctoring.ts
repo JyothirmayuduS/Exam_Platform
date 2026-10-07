@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AIViolation } from "@/features/proctoring/components/ProctorAI";
 import { saveViolation } from "@/shared/data/examApi";
+import { onMinimizeAttempt } from "@/shared/platform/lockdownBridge";
 
 export type Violation = { id: number; kind: string; at: string; evidenceBlob?: Blob };
 
@@ -46,7 +47,16 @@ export default function useProctoring(active: boolean, attemptId?: string, examI
     document.addEventListener("fullscreenchange", onFullscreen);
     window.addEventListener("offline", onOffline);
 
+    let disposed = false;
+    let unlistenMinimize: (() => void) | undefined;
+    void onMinimizeAttempt(() => flag("Tried to minimize the exam window")).then((un) => {
+      if (disposed) un();
+      else unlistenMinimize = un;
+    });
+
     return () => {
+      disposed = true;
+      unlistenMinimize?.();
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("fullscreenchange", onFullscreen);
