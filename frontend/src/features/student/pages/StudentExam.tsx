@@ -38,6 +38,9 @@ import {
   screenCaptureStatus,
   keyboardLockStatus,
   requestKeyboardLock,
+  enterLockdown,
+  leaveLockdown,
+  LAUNCHED_FROM_LINK_KEY,
 } from "@/shared/platform/lockdownBridge";
 import { defaultWatermarkText, renderWatermarkTemplate } from "@/shared/services/watermark";
 import ExamWatermark from "@/features/student/components/exam/ExamWatermark";
@@ -1050,12 +1053,28 @@ function StudentExamSession() {
   //    recording parts were streamed live, so at most a merged-video or tail
   //    snapshot is lost — acceptable vs. trapping the student in the app.
   const returnedToStudentSideRef = useRef(false);
+
+  // The app starts as a normal window; the kiosk lock holds only while an
+  // exam is open here, and is released when the student leaves the page.
+  useEffect(() => {
+    if (!isTauri() || !EXAM_ID || step === "submitted") return;
+    void enterLockdown();
+  }, [EXAM_ID, step]);
+  useEffect(() => () => { void leaveLockdown(); }, []);
+
   useEffect(() => {
     if (step !== "submitted" || !isTauri() || returnedToStudentSideRef.current) return;
 
     const doExit = () => {
       if (returnedToStudentSideRef.current) return;
       returnedToStudentSideRef.current = true;
+      let fromLink = false;
+      try { fromLink = sessionStorage.getItem(LAUNCHED_FROM_LINK_KEY) === "1"; } catch { /* storage unavailable */ }
+      if (!fromLink) {
+        // Opened from the app's own dashboard: unlock and go back to it.
+        void leaveLockdown().finally(() => navigate("/student/exams", { replace: true }));
+        return;
+      }
       void openStudentSide("/student/exams").finally(() => {
         void invoke("exit_app").catch(() => { /* app already closed */ });
       });

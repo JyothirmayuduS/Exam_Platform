@@ -9,7 +9,7 @@ import * as Sentry from "@sentry/react";
 import LogRocket from 'logrocket';
 import { AuthProvider } from './features/auth/auth'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { examPathFromDeepLink, getLaunchUrl, hasSessionHandoff, hydrateSessionFromDeepLink, onVignanDeepLink, RESUME_PATH_KEY } from './shared/platform/lockdownBridge'
+import { examPathFromDeepLink, getLaunchUrl, hasSessionHandoff, hydrateSessionFromDeepLink, LAUNCHED_FROM_LINK_KEY, onVignanDeepLink, RESUME_PATH_KEY } from './shared/platform/lockdownBridge'
 
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN?.replace(/^[\"']|[\"']$/g, '');
 const LOGROCKET_ID = import.meta.env.VITE_LOGROCKET_ID?.replace(/^[\"']|[\"']$/g, '');
@@ -85,6 +85,7 @@ const onOnboarding = window.location.pathname === "/" || /\/index\.html?$/i.test
 function applyDeeplink(url: string, restoreSession = true) {
   const target = examPathFromDeepLink(url, entry);
   if (!target) return;
+  try { sessionStorage.setItem(LAUNCHED_FROM_LINK_KEY, "1"); } catch { /* storage unavailable */ }
 
   const route = () => {
     if (window.location.pathname + window.location.search === target) return;

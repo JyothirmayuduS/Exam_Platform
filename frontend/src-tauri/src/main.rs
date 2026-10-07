@@ -28,7 +28,21 @@ const LOCKDOWN_JS: &str = r#"
 (() => {
   if (window.__vignanLockdown) return;
   window.__vignanLockdown = true;
-  const block = (e) => { e.preventDefault(); e.stopPropagation(); return false; };
+  // Engaged by the native enter_lockdown / leave_lockdown commands; sign-in
+  // and the dashboard behave like a normal app.
+  let locked = false;
+  Object.defineProperty(window, '__vignanLocked', {
+    configurable: true,
+    get: () => locked,
+    set: (v) => {
+      locked = !!v;
+      document.documentElement?.classList.toggle('vignan-locked', locked);
+    },
+  });
+  const block = (e) => {
+    if (!locked) return true;
+    e.preventDefault(); e.stopPropagation(); return false;
+  };
 
   // No right-click context menu.
   document.addEventListener('contextmenu', block, true);
@@ -51,7 +65,7 @@ const LOCKDOWN_JS: &str = r#"
     return false;
   };
   const onKey = (e) => {
-    if (!blockedCombo(e)) return;
+    if (!locked || !blockedCombo(e)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     if ((e.key || '').toLowerCase() === 'printscreen') navigator.clipboard?.writeText('').catch(() => {});
@@ -77,6 +91,7 @@ const LOCKDOWN_JS: &str = r#"
 
   // Warn the invigilator layer when the window loses focus (possible cheating).
   window.addEventListener('blur', () => {
+    if (!locked) return;
     window.dispatchEvent(new CustomEvent('lockdown:focus-lost'));
   });
 
@@ -85,7 +100,7 @@ const LOCKDOWN_JS: &str = r#"
     const root = document.head || document.documentElement;
     if (!root) return false;
     const style = document.createElement('style');
-    style.textContent = '*{-webkit-user-select:none!important;user-select:none!important;} input,textarea{-webkit-user-select:text!important;user-select:text!important;}';
+    style.textContent = 'html.vignan-locked *{-webkit-user-select:none!important;user-select:none!important;} html.vignan-locked input,html.vignan-locked textarea{-webkit-user-select:text!important;user-select:text!important;}';
     root.appendChild(style);
     return true;
   };
@@ -240,10 +255,7 @@ fn open_student_side(url: String) -> Result<(), String> {
 
 #[tauri::command]
 fn exit_app() {
-    enable_task_manager();
-    let flag_path = std::env::temp_dir().join("vignan_exit.flag");
-    let _ = std::fs::write(flag_path, "1");
-    std::process::exit(0);
+    quit_cleanly();
 }
 
 #[cfg(target_os = "macos")]
@@ -343,6 +355,171 @@ fn in_permission_phase() -> bool {
     PERMISSION_PHASE.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// The app opens as a normal window (sign-in, dashboard). The kiosk lock is
+/// engaged only while an exam page is open.
+static LOCKDOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static WATCHDOG_SPAWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn lockdown_engaged() -> bool {
+    LOCKDOWN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Exclude (or re-include) the exam window from OS screenshots and capture.
+fn set_capture_excluded(win: &tauri::WebviewWindow, excluded: bool) {
+    #[cfg(target_os = "macos")]
+    if let Ok(ns_win) = win.ns_window() {
+        unsafe {
+            let ns_win = ns_win as *mut objc2::runtime::AnyObject;
+            let sharing_type: isize = if excluded { 0 } else { 1 };
+            let _: () = objc2::msg_send![ns_win, setSharingType: sharing_type];
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(hwnd) = win.hwnd() {
+        unsafe {
+            SetWindowDisplayAffinity(hwnd.0 as *mut _, if excluded { 0x11 } else { 0 });
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = (win, excluded);
+}
+
+/// Black out every monitor except the one the exam window is on. The monitor
+/// list order is not the display order, so the exam's own monitor is matched
+/// by position rather than assumed to be first.
+fn open_blackouts(app: &tauri::AppHandle) {
+    let exam_pos = app
+        .get_webview_window("exam")
+        .and_then(|w| w.current_monitor().ok().flatten())
+        .map(|m| *m.position());
+    // `WebviewUrl::App("about:blank")` would load the exam app itself into the
+    // blackout window; an external blank page cannot.
+    if let (Ok(monitors), Ok(blank)) = (app.available_monitors(), "about:blank".parse::<tauri::Url>()) {
+        for (i, m) in monitors.iter().enumerate() {
+            if Some(*m.position()) == exam_pos || (exam_pos.is_none() && i == 0) {
+                continue;
+            }
+            let label = format!("blackout_{}", i);
+            if app.get_webview_window(&label).is_some() {
+                continue;
+            }
+            let _ = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::External(blank.clone()))
+                .title("Blackout")
+                .background_color(tauri::window::Color(0, 0, 0, 255))
+                .fullscreen(true)
+                .always_on_top(true)
+                .decorations(false)
+                .skip_taskbar(true)
+                .focused(false)
+                .position(m.position().x.into(), m.position().y.into())
+                .build();
+        }
+    }
+}
+
+fn close_blackouts(app: &tauri::AppHandle) {
+    for (label, win) in app.webview_windows() {
+        if label.starts_with("blackout_") {
+            let _ = win.destroy();
+        }
+    }
+}
+
+/// Relaunches the exam browser if it is killed mid-exam.
+fn spawn_watchdog_once() {
+    if WATCHDOG_SPAWNED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut watchdog_path = exe.clone();
+        watchdog_path.set_file_name(format!("vignan-watchdog{}", std::env::consts::EXE_SUFFIX));
+        if watchdog_path.exists() {
+            let _ = std::process::Command::new(watchdog_path)
+                .arg(std::process::id().to_string())
+                .arg(exe)
+                .spawn();
+        }
+    }
+}
+
+/// Lock the exam window down: fullscreen above everything, system keys and
+/// app switching blocked, other monitors blacked out, capture excluded.
+#[tauri::command]
+fn enter_lockdown(app: tauri::AppHandle) {
+    let first = !LOCKDOWN.swap(true, std::sync::atomic::Ordering::SeqCst);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if first {
+            #[cfg(target_os = "macos")]
+            keylock::start();
+            disable_task_manager();
+            open_blackouts(&handle);
+        }
+        if let Some(win) = handle.get_webview_window("exam") {
+            if first {
+                let _ = win.set_decorations(false);
+                let _ = win.set_resizable(false);
+                let _ = win.set_minimizable(false);
+                let _ = win.set_closable(false);
+                set_capture_excluded(&win, true);
+            }
+            let _ = win.eval("window.__vignanLocked = true;");
+            if !in_permission_phase() {
+                reassert_kiosk(&win);
+            }
+        }
+    });
+    spawn_watchdog_once();
+}
+
+/// Back to a normal window after the exam (dashboard, sign-out).
+#[tauri::command]
+fn leave_lockdown(app: tauri::AppHandle) {
+    if !LOCKDOWN.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    PERMISSION_PHASE.store(false, std::sync::atomic::Ordering::SeqCst);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        enable_task_manager();
+        #[cfg(target_os = "macos")]
+        {
+            keylock::set_system_hotkeys(true);
+            set_kiosk_presentation(false);
+        }
+        close_blackouts(&handle);
+        if let Some(win) = handle.get_webview_window("exam") {
+            let _ = win.eval("window.__vignanLocked = false;");
+            let _ = win.set_always_on_top(false);
+            #[cfg(target_os = "macos")]
+            if let Ok(ns_win) = win.ns_window() {
+                unsafe {
+                    let ns_win = ns_win as *mut objc2::runtime::AnyObject;
+                    let _: () = objc2::msg_send![ns_win, setLevel: 0_isize];
+                }
+            }
+            set_capture_excluded(&win, false);
+            let _ = win.set_fullscreen(false);
+            let _ = win.set_decorations(true);
+            let _ = win.set_resizable(true);
+            let _ = win.set_minimizable(true);
+            let _ = win.set_closable(true);
+            let _ = win.maximize();
+            let _ = win.set_focus();
+        }
+    });
+}
+
+/// Quit for good: restore the desktop and tell the watchdog not to relaunch.
+fn quit_cleanly() -> ! {
+    enable_task_manager();
+    #[cfg(target_os = "macos")]
+    keylock::set_system_hotkeys(true);
+    let flag_path = std::env::temp_dir().join("vignan_exit.flag");
+    let _ = std::fs::write(flag_path, "1");
+    std::process::exit(0);
+}
+
 #[cfg(target_os = "macos")]
 fn set_kiosk_presentation(locked: bool) {
     use objc2_app_kit::{NSApplication, NSApplicationPresentationOptions};
@@ -427,6 +604,9 @@ fn end_permission_phase(app: tauri::AppHandle) {
     let _ = app.run_on_main_thread(move || {
         #[cfg(target_os = "windows")]
         winlock::set_bypass(false);
+        if !lockdown_engaged() {
+            return;
+        }
         if let Some(win) = handle.get_webview_window("exam") {
             reassert_kiosk(&win);
         }
@@ -994,7 +1174,7 @@ mod keylock {
             return event;
         }
         // System Settings and permission dialogs must stay operable.
-        if super::in_permission_phase() {
+        if super::in_permission_phase() || !super::lockdown_engaged() {
             return event;
         }
         if should_block(kind, event) {
@@ -1116,7 +1296,9 @@ fn main() {
             screen_capture_status,
             relaunch_app,
             keyboard_lock_status,
-            keyboard_lock_request
+            keyboard_lock_request,
+            enter_lockdown,
+            leave_lockdown
         ])
         // Register first so a second process exits before other plugins start.
         // Its deep-link feature forwards Windows/Linux argv to the same plugin
@@ -1136,9 +1318,14 @@ fn main() {
                 use tauri::Emitter;
                 let _ = app.emit("vignan-deeplink", url.clone());
             }
-            if !in_permission_phase() {
-                if let Some(win) = app.get_webview_window("exam") {
-                    reassert_kiosk(&win);
+            if let Some(win) = app.get_webview_window("exam") {
+                if lockdown_engaged() {
+                    if !in_permission_phase() {
+                        reassert_kiosk(&win);
+                    }
+                } else {
+                    let _ = win.unminimize();
+                    let _ = win.set_focus();
                 }
             }
         }))
@@ -1158,9 +1345,10 @@ fn main() {
             }
             #[cfg(target_os = "macos")]
             {
-                // Lock down macOS to create a true kiosk mode (disables Cmd+Tab, Dock, Menu Bar, Spaces)
-                set_kiosk_presentation(true);
-                keylock::start();
+                // Presentation options and the keyboard lock are applied by
+                // enter_lockdown when an exam opens; here the system hot keys
+                // are reset in case a crashed exam left them off.
+                keylock::set_system_hotkeys(true);
                 if let Some(mtm) = objc2::MainThreadMarker::new() {
                     let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
 
@@ -1187,15 +1375,8 @@ fn main() {
                 tauri::WebviewUrl::App("index.html".into()),
             )
             .title("Vignan Exam Browser")
-            .fullscreen(true)
-            .always_on_top(true)
-            .decorations(false)
-            .resizable(false)
             .maximized(true)
-            .skip_taskbar(false)
             .visible(true)
-            .closable(false)
-            .minimizable(false)
             // Before page scripts on every load, so a reload or navigation
             // never leaves a page without the lockdown layer.
             .initialization_script(LOCKDOWN_JS)
@@ -1216,58 +1397,7 @@ fn main() {
             })
             .build()
             .expect("Failed to build exam window");
-            
-            // Note: `.focus(true)` was deprecated and removed; the window is focused by default.
             let _ = win.set_focus();
-
-            if let Some(win) = app.get_webview_window("exam") {
-                let _ = win.set_fullscreen(true);
-                let _ = win.set_always_on_top(true);
-                
-                #[cfg(target_os = "macos")]
-                {
-                    if let Ok(ns_win) = win.ns_window() {
-                        unsafe {
-                            // Cast to AnyObject pointer to send messages
-                            let ns_win = ns_win as *mut objc2::runtime::AnyObject;
-                            // 1000 is usually CGShieldingWindowLevel or NSScreenSaverWindowLevel
-                            // This ensures the window is above notifications and other overlay apps.
-                            let _: () = objc2::msg_send![ns_win, setLevel: 1000_isize];
-                            // 0 = NSWindowSharingNone: the window is excluded from
-                            // every OS screen-capture API. A student pressing
-                            // Cmd+Shift+3/4/5 gets a screenshot of the desktop
-                            // WITHOUT the exam content (wallpaper shows through).
-                            //
-                            // Consequence: the kiosk's own getDisplayMedia feed is
-                            // also excluded. The proctor still sees the candidate
-                            // through the (always-granted) camera stream and the
-                            // per-second webcam snapshot timeline; screen motion
-                            // evidence is replaced by camera + AI + lockdown events.
-                            let _: () = objc2::msg_send![ns_win, setSharingType: 0_isize];
-                        }
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    // WDA_EXCLUDEFROMCAPTURE (0x11): the exam window disappears
-                    // from PrintScreen, Snipping Tool (Win+Shift+S) and every
-                    // capture API — the screenshot shows everything else but a
-                    // black hole where the exam was. Same trade as macOS: the
-                    // kiosk's own screen-share feed is excluded; proctor evidence
-                    // comes from the camera stream + AI + lockdown events.
-                    if let Ok(hwnd) = win.hwnd() {
-                        unsafe {
-                            SetWindowDisplayAffinity(hwnd.0 as *mut _, 0x00000011);
-                        }
-                    }
-                }
-                
-                let _ = win.eval(LOCKDOWN_JS);
-                // (No fake __TAURI_INTERNALS__ eval here either — see LOCKDOWN_JS
-                // note. Overwriting the real bridge after page load was also
-                // breaking invoke()/listen() mid-session.)
-                let _ = win.set_focus();
-            }
 
             // VM detection: don't silently exit — show the reason in the kiosk
             // window so the student (and invigilator) can see WHY the app won't
@@ -1282,50 +1412,10 @@ fn main() {
                 return Ok(()); // keep the window up; no exam is served
             }
 
-            disable_task_manager();
-
-            // Blackout every monitor except the one the exam window is on. The
-            // monitor list order is not the display order, so the exam's own
-            // monitor is matched by position rather than assumed to be first.
-            // `WebviewUrl::App("about:blank")` would load the exam app itself
-            // into the blackout window; an external blank page cannot.
-            let exam_pos = app
-                .get_webview_window("exam")
-                .and_then(|w| w.current_monitor().ok().flatten())
-                .map(|m| *m.position());
-            if let (Ok(monitors), Ok(blank)) = (app.available_monitors(), "about:blank".parse::<tauri::Url>()) {
-                for (i, m) in monitors.iter().enumerate() {
-                    if Some(*m.position()) == exam_pos || (exam_pos.is_none() && i == 0) {
-                        continue;
-                    }
-                    let _ = tauri::WebviewWindowBuilder::new(
-                        app,
-                        format!("blackout_{}", i),
-                        tauri::WebviewUrl::External(blank.clone()),
-                    )
-                    .title("Blackout")
-                    .background_color(tauri::window::Color(0, 0, 0, 255))
-                    .fullscreen(true)
-                    .always_on_top(true)
-                    .decorations(false)
-                    .skip_taskbar(true)
-                    .focused(false)
-                    .position(m.position().x.into(), m.position().y.into())
-                    .build();
-                }
-            }
-
-            // Spawn Watchdog
-            if let Ok(exe) = std::env::current_exe() {
-                let mut watchdog_path = exe.clone();
-                watchdog_path.set_file_name(format!("vignan-watchdog{}", std::env::consts::EXE_SUFFIX));
-                if watchdog_path.exists() {
-                    let _ = std::process::Command::new(watchdog_path)
-                        .arg(std::process::id().to_string())
-                        .arg(exe)
-                        .spawn();
-                }
-            }
+            // A crashed exam can leave the taskbar hidden and the Ctrl+Alt+Del
+            // policies set; the app starts unlocked, so put the desktop back.
+            #[cfg(target_os = "windows")]
+            winlock::restore_desktop();
 
             // Prohibited app watchdog: instead of force-killing the exam (which
             // loses the recording), surface a visible lockdown notice in the
@@ -1336,14 +1426,14 @@ fn main() {
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     tick += 1;
-                    if in_permission_phase() {
+                    if in_permission_phase() || !lockdown_engaged() {
                         continue;
                     }
                     // Minimize, Mission Control, a stray click on another
                     // window: pull the exam back within a second.
                     let main = handle.clone();
                     let _ = handle.run_on_main_thread(move || {
-                        if in_permission_phase() {
+                        if in_permission_phase() || !lockdown_engaged() {
                             return;
                         }
                         if let Some(win) = main.get_webview_window("exam") {
@@ -1378,7 +1468,7 @@ fn main() {
                 WindowEvent::Focused(false) => {
                     // A macOS permission dialog or System Settings is in front
                     // on purpose; grabbing focus back would hide it.
-                    if in_permission_phase() {
+                    if in_permission_phase() || !lockdown_engaged() {
                         return;
                     }
                     // Re-assert the lockdown if the student tries to minimize or unfocus.
@@ -1390,6 +1480,13 @@ fn main() {
                     }
                 }
                 WindowEvent::CloseRequested { api, .. } => {
+                    if window.label() != "exam" {
+                        return;
+                    }
+                    // Outside an exam the window closes like any other app.
+                    if !lockdown_engaged() {
+                        quit_cleanly();
+                    }
                     // Refuse the close (red X button, Alt+F4, Cmd+W). Exiting
                     // here also killed the app when macOS delivered a spurious
                     // close during fullscreen transitions — the student lost the

@@ -20,6 +20,9 @@ vi.mock("@/shared/platform/platform", async (importOriginal) => {
 });
 vi.mock("@/shared/platform/lockdownBridge", () => ({
   launchExamInLockdown: vi.fn(() => () => {}),
+  enterLockdown: vi.fn(async () => {}),
+  leaveLockdown: vi.fn(async () => {}),
+  LAUNCHED_FROM_LINK_KEY: "vignan.launchedFromLink",
   openStudentSide: vi.fn(async () => true),
   mediaPermissionStatus: vi.fn(async () => "granted"),
   openMediaSettings: vi.fn(async () => true),

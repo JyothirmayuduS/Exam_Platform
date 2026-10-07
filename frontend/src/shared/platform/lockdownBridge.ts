@@ -302,6 +302,31 @@ export async function endPermissionPhase(): Promise<void> {
   }
 }
 
+/** Full kiosk lock for the exam page (the app starts as a normal window). */
+export async function enterLockdown(): Promise<void> {
+  if (!inKiosk()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("enter_lockdown");
+  } catch {
+    /* not available in this shell build */
+  }
+}
+
+/** Back to a normal window once the exam is over. */
+export async function leaveLockdown(): Promise<void> {
+  if (!inKiosk()) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("leave_lockdown");
+  } catch {
+    /* not available in this shell build */
+  }
+}
+
+/** Set when the app was opened by a vignan-exam:// link from the website. */
+export const LAUNCHED_FROM_LINK_KEY = "vignan.launchedFromLink";
+
 export const RESUME_PATH_KEY = "vignan.resumePath";
 
 /**

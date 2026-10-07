@@ -4,7 +4,12 @@ import { MemoryRouter, useNavigate } from "react-router-dom";
 import StudentExam from "@/features/student/pages/StudentExam";
 
 const { launch, cancel } = vi.hoisted(() => ({ launch: vi.fn(), cancel: vi.fn() }));
-vi.mock("@/shared/platform/lockdownBridge", () => ({ launchExamInLockdown: launch }));
+vi.mock("@/shared/platform/lockdownBridge", () => ({
+  launchExamInLockdown: launch,
+  enterLockdown: vi.fn(async () => {}),
+  leaveLockdown: vi.fn(async () => {}),
+  LAUNCHED_FROM_LINK_KEY: "vignan.launchedFromLink",
+}));
 vi.mock("@/shared/platform/platform", () => ({
   lockdownReady: () => false,
   isTauri: () => false,
