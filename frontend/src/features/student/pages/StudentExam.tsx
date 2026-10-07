@@ -25,6 +25,7 @@ import {
   type DBQuestion,
   type PaperSlot,
 } from "@/shared/data/examApi";
+import type { ProctorMessage } from "@/shared/data/api/types";
 import { lockdownReady, isTauri, downloadUrl, osLabel, detectOS, probeInstaller } from "@/shared/platform/platform";
 import {
   launchExamInLockdown,
@@ -259,8 +260,11 @@ function StudentExamSession() {
   }
   // True while the invigilator has paused this candidate (attempt.state = "paused").
   const [proctorPaused, setProctorPaused] = useState(false);
-  // Latest exam-wide broadcast from the proctor/teacher consoles.
-  const [broadcast, setBroadcast] = useState<{ id: string; body: string; sender: string } | null>(null);
+  const [announcements, setAnnouncements] = useState<ProctorMessage[]>([]);
+  const seenAnnouncementsKey = `vignan.announcementsSeen.${EXAM_ID}`;
+  const [seenAnnouncements, setSeenAnnouncements] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(seenAnnouncementsKey) ?? "[]") as string[]; } catch { return []; }
+  });
 
   // Screen recording runs separately from the webcam snapshot timeline.
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -859,31 +863,29 @@ function StudentExamSession() {
     [examName],
   );
 
-  // Live broadcasts from the proctor/teacher console (proctor_messages,
-  // kind = broadcast) shown as a toast while the exam is running.
+  // Announcements from the teacher/proctor consoles: every broadcast plus
+  // messages addressed to this attempt. Unread ones stay pinned until the
+  // candidate acknowledges them; the poll covers a dropped realtime socket.
   useEffect(() => {
     if (step !== "exam" || !supabaseConfigured) return;
     let alive = true;
     const load = () => {
       void listProctorMessages(EXAM_ID).then((rows) => {
         if (!alive) return;
-        const latest = rows
-          .filter((m) => m.kind === "broadcast" || (m.attempt_id && m.attempt_id === attemptIdRef.current))
-          .at(-1);
-        if (latest) setBroadcast({ id: latest.id, body: latest.body, sender: latest.sender });
+        setAnnouncements(rows.filter((m) => m.kind === "broadcast" || (m.attempt_id && m.attempt_id === attemptIdRef.current)));
       });
     };
     load();
     const unsub = subscribeToMessages(EXAM_ID, load);
-    return () => { alive = false; unsub(); };
+    const poll = window.setInterval(load, 15000);
+    return () => { alive = false; unsub(); window.clearInterval(poll); };
   }, [step, EXAM_ID]);
-
-  // Auto-dismiss the broadcast toast after 8 seconds.
-  useEffect(() => {
-    if (!broadcast) return;
-    const id = window.setTimeout(() => setBroadcast(null), 8000);
-    return () => window.clearTimeout(id);
-  }, [broadcast]);
+  const unreadAnnouncements = announcements.filter((m) => !seenAnnouncements.includes(m.id));
+  const acknowledgeAnnouncements = () => {
+    const next = Array.from(new Set([...seenAnnouncements, ...announcements.map((m) => m.id)]));
+    setSeenAnnouncements(next);
+    try { localStorage.setItem(seenAnnouncementsKey, JSON.stringify(next)); } catch { /* storage unavailable */ }
+  };
 
   // React to the invigilator pausing/resuming/FORCE-SUBMITTING this attempt
   // (realtime on the attempts row). The teacher console writes state directly
@@ -1733,7 +1735,7 @@ function StudentExamSession() {
           </div>
         </div>
       )}
-      {(broadcast || flagThresholdWarning || activeViolation || seatingHint) && (
+      {(unreadAnnouncements.length > 0 || flagThresholdWarning || activeViolation || seatingHint) && (
         <div id="exam-banner" style={{ display: "flex" }}>
           {seatingHint && (
             <div className="exam-alert" role="status">
@@ -1744,14 +1746,26 @@ function StudentExamSession() {
               </div>
             </div>
           )}
-          {broadcast && (
-            <div className="exam-alert" style={{ borderLeftColor: "var(--pri)" }}>
+          {unreadAnnouncements.length > 0 && (
+            <div className="exam-alert" role="alert" style={{ borderLeftColor: "var(--pri)", borderLeftWidth: 4 }}>
               <i>i</i>
               <div>
-                <h3>Message from {broadcast.sender}</h3>
-                <p>{broadcast.body}</p>
+                <h3>
+                  {unreadAnnouncements.length > 1 ? `${unreadAnnouncements.length} new announcements` : `Announcement from ${unreadAnnouncements[0].sender}`}
+                </h3>
+                {unreadAnnouncements.slice().reverse().map((m) => (
+                  <p key={m.id} style={{ marginTop: 4, whiteSpace: "pre-wrap", color: "var(--ink)" }}>
+                    {unreadAnnouncements.length > 1 && <b>{m.sender} · {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}: </b>}
+                    {m.body}
+                  </p>
+                ))}
+                <button
+                  onClick={acknowledgeAnnouncements}
+                  style={{ marginTop: 8, padding: "4px 12px", border: "1px solid var(--pri)", borderRadius: 4, color: "var(--pri)", fontSize: 13, fontWeight: 600 }}
+                >
+                  Got it
+                </button>
               </div>
-              <button onClick={() => setBroadcast(null)}>×</button>
             </div>
           )}
           {flagThresholdWarning && (
@@ -1815,6 +1829,22 @@ function StudentExamSession() {
             </div>
             <div className="exam-sm exam-mute">{answeredCount}/{questions.length} complete</div>
           </section>
+          {announcements.length > 0 && (
+            <section className="exam-panel" aria-label="Announcements">
+              <h2>Announcements · {announcements.length}</h2>
+              <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                {announcements.slice().reverse().map((m) => (
+                  <div key={m.id} style={{ padding: "8px 0", borderTop: "1px solid var(--line)" }}>
+                    <div className="exam-sm exam-mute">
+                      {m.sender} · {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      {m.kind !== "broadcast" && " · to you"}
+                    </div>
+                    <div className="exam-sm" style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
           <QuestionPanel
             questions={questions}
             currentIndex={current}

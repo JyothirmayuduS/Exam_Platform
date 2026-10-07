@@ -3,12 +3,13 @@ import { useSearchParams } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
 import { byNewest } from "@/shared/domain/exam/phase";
 import { supabaseConfigured } from "@/shared/data/env";
-import { listLiveAttempts, subscribeToAttempts, forceSubmitAttempt, saveViolation, setAttemptPaused, listExamsForTeacher, listProctoringStats, listProctorAssignments, saveProctorAssignments, listFaculty, type LiveAttempt, type ViolationEvent, type FacultyMember } from "@/shared/data/examApi";
+import { listLiveAttempts, subscribeToAttempts, forceSubmitAttempt, saveViolation, setAttemptPaused, listExamsForTeacher, listProctoringStats, listProctorAssignments, saveProctorAssignments, listFaculty, sendProctorMessage, type LiveAttempt, type ViolationEvent, type FacultyMember } from "@/shared/data/examApi";
 import { sendProctorAssignmentEmail } from "@/features/teacher/services/emailApi";
 import ProctorChatPanel from "@/features/proctoring/components/ProctorChatPanel";
 import { startProctorViewing, identityLabel, type RemoteFeed } from "@/features/proctoring/services/proctorViewer";
 import { startVoiceBroadcast, voiceRoom } from "@/features/proctoring/services/proctorVoice";
 import JobBanner from "@/shared/components/JobBanner";
+import { usePromptDialog } from "@/shared/components/PromptDialog";
 import { downloadSessionReportPdf } from "@/shared/services/sessionReport";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
@@ -83,6 +84,22 @@ export default function TeacherProctoring() {
     setStage("monitor");
   };
   const selectedExam = examList.find((e) => e.id === selectedExamId) ?? null;
+
+  const [promptDialog, ask] = usePromptDialog();
+  const [announceStatus, setAnnounceStatus] = useState<string | null>(null);
+  const announce = async () => {
+    if (!selectedExamId) return;
+    const body = await ask({
+      title: "Announce to all candidates",
+      detail: `Pinned on every candidate's exam screen in ${selectedExam?.name ?? "this exam"} until they acknowledge it.`,
+      placeholder: "e.g. Question 4 has a typo — option B should read 25, not 52.",
+      confirmLabel: "Announce",
+      multiline: true,
+    });
+    if (!body) return;
+    const ok = await sendProctorMessage({ examId: selectedExamId, sender: profile?.full_name || "Teacher", senderRole: "teacher", body, kind: "broadcast" });
+    setAnnounceStatus(ok ? `Announced at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Announcement failed — try again");
+  };
 
   const [students, setStudents] = useState<Student[]>([]);
   const [live, setLive] = useState(false);
@@ -468,6 +485,7 @@ export default function TeacherProctoring() {
   }
 
   return <RoleLayout role="Teacher" name={profile?.full_name ?? ""} subtitle={profileSubtitle(profile)} tone="#284B34" items={nav} status={live ? "Live monitoring active" : "Not connected"}>
+    {promptDialog}
     <JobBanner label={pdfJob ?? (zipping ? zipStep ?? "Packing evidence ZIP…" : null)} />
 
     {/* Session header card */}
@@ -509,6 +527,13 @@ export default function TeacherProctoring() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {announceStatus && <span className="font-mono text-[10px] text-soft" role="status">{announceStatus}</span>}
+          <button
+            onClick={() => void announce()}
+            className="border border-forest bg-forest px-3 py-2 font-mono text-[11px] uppercase tracking-wider text-paper transition hover:bg-forest-soft"
+          >
+            Announce to all candidates
+          </button>
           <button
             onClick={() => {
               setShowAssignModal(true);
