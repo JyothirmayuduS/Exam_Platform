@@ -7,6 +7,7 @@ import { getSupabase } from "@/shared/data/supabase";
 import { publishExam, type ExamRecord } from "@/shared/data/examApi";
 import { NumberField } from "@/shared/components/ui";
 
+const NEW_BATCH = "__new__";
 const PURPOSES = ["Academic exam", "Campus placement", "Skill / certification", "Mock test", "Other"];
 
 export default function CreateTestModal({
@@ -25,7 +26,8 @@ export default function CreateTestModal({
   const [duration, setDuration] = useState(45);
   const [deadline, setDeadline] = useState("");
   const [batch, setBatch] = useState("");
-  const [batches, setBatches] = useState<string[]>([]);
+  const [batches, setBatches] = useState<{ name: string; students: number }[]>([]);
+  const [newBatch, setNewBatch] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -38,9 +40,9 @@ export default function CreateTestModal({
       .select("batch")
       .then((res: { data?: { batch?: string | null }[] | null }) => {
         if (!active || !res.data) return;
-        const seen = new Set<string>();
-        for (const r of res.data) if (r.batch) seen.add(r.batch);
-        setBatches(Array.from(seen).sort());
+        const counts = new Map<string, number>();
+        for (const r of res.data) if (r.batch) counts.set(r.batch, (counts.get(r.batch) ?? 0) + 1);
+        setBatches(Array.from(counts, ([name, students]) => ({ name, students })).sort((a, b) => a.name.localeCompare(b.name)));
       });
     return () => { active = false; };
   }, []);
@@ -184,14 +186,33 @@ export default function CreateTestModal({
             </label>
           )}
 
-          <label className="block text-[12px] text-ink-soft">
-            <span className="font-medium text-ink">Assigned batch / program</span><span className="text-alert"> *</span>
-            <span className="mt-0.5 block text-[11px]">Which students can see this test? Pick an existing program or type a new one.</span>
-            <input list="create-test-batches" value={batch} onChange={(e) => setBatch(e.target.value)} placeholder={batches[0] ?? "e.g. CSE · Sem III"} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none placeholder:text-ink-soft/60 focus:border-forest" />
-            <datalist id="create-test-batches">
-              {batches.map((b) => <option key={b} value={b} />)}
-            </datalist>
-          </label>
+          <div className="block text-[12px] text-ink-soft">
+            <label htmlFor="create-test-batch" className="font-medium text-ink">Assigned batch / program<span className="text-alert"> *</span></label>
+            <span className="mt-0.5 block text-[11px]">Which students can see this test? Pick an existing program or add a new one.</span>
+            <select
+              id="create-test-batch"
+              value={newBatch ? NEW_BATCH : batch}
+              onChange={(e) => {
+                if (e.target.value === NEW_BATCH) { setNewBatch(true); setBatch(""); }
+                else { setNewBatch(false); setBatch(e.target.value); }
+              }}
+              className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"
+            >
+              <option value="" disabled>{batches.length ? "Select a program" : "Loading programs…"}</option>
+              {batches.map((b) => <option key={b.name} value={b.name}>{b.name} · {b.students} student{b.students === 1 ? "" : "s"}</option>)}
+              <option value={NEW_BATCH}>+ New program…</option>
+            </select>
+            {newBatch && (
+              <input
+                autoFocus
+                aria-label="New program name"
+                value={batch}
+                onChange={(e) => setBatch(e.target.value)}
+                placeholder="e.g. CSE · Sem III"
+                className="mt-2 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none placeholder:text-ink-soft/60 focus:border-forest"
+              />
+            )}
+          </div>
 
           {error && <p className="border border-alert/40 bg-alert/5 px-4 py-3 text-[12px] text-alert">{error}</p>}
         </div>
