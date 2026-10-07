@@ -1110,8 +1110,17 @@ function StudentExamSession() {
     if (kiosk) {
       // The kiosk window sits above everything; lower it so the macOS
       // dialogs are visible inside the exam browser instead of behind it.
-      permissionPhaseRef.current = true;
-      await beginPermissionPhase();
+      // Only when a dialog can actually appear: with everything already
+      // granted the window stays fullscreen and locked.
+      const [camNow, micNow, screenNow] = await Promise.all([
+        mediaPermissionStatus("camera"),
+        mediaPermissionStatus("microphone"),
+        screenCaptureStatus(),
+      ]);
+      if (camNow !== "granted" || micNow !== "granted" || screenNow !== "granted") {
+        permissionPhaseRef.current = true;
+        await beginPermissionPhase();
+      }
       await requestMediaAccess("camera");
       await requestMediaAccess("microphone");
       const lock = await requestKeyboardLock();

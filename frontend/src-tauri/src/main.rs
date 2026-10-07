@@ -363,31 +363,60 @@ fn set_kiosk_presentation(locked: bool) {
     }
 }
 
+/// Put the exam window back in kiosk state if it was minimized, left
+/// fullscreen, lost its level or lost focus. Must run on the main thread.
+fn reassert_kiosk(win: &tauri::WebviewWindow) {
+    if win.is_minimized().unwrap_or(false) {
+        let _ = win.unminimize();
+    }
+    if !win.is_fullscreen().unwrap_or(true) {
+        let _ = win.set_fullscreen(true);
+    }
+    let _ = win.set_always_on_top(true);
+    #[cfg(target_os = "macos")]
+    {
+        set_kiosk_presentation(true);
+        if let Ok(ns_win) = win.ns_window() {
+            unsafe {
+                let ns_win = ns_win as *mut objc2::runtime::AnyObject;
+                let _: () = objc2::msg_send![ns_win, setLevel: 1000_isize];
+            }
+        }
+    }
+    if !win.is_focused().unwrap_or(false) {
+        let _ = win.set_focus();
+    }
+}
+
 /// Lower the kiosk so macOS permission dialogs and System Settings appear in
 /// front of it: normal window level, not always-on-top, out of fullscreen,
-/// presentation options relaxed, and no focus re-grab.
+/// presentation options relaxed, and no focus re-grab. Windows has no such
+/// dialogs (media consent is switched on in place), so the kiosk stays locked.
 #[tauri::command]
 fn begin_permission_phase(app: tauri::AppHandle) {
-    PERMISSION_PHASE.store(true, std::sync::atomic::Ordering::SeqCst);
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = handle.get_webview_window("exam") {
-            let _ = win.set_always_on_top(false);
-            #[cfg(target_os = "macos")]
-            if let Ok(ns_win) = win.ns_window() {
-                unsafe {
-                    let ns_win = ns_win as *mut objc2::runtime::AnyObject;
-                    let _: () = objc2::msg_send![ns_win, setLevel: 0_isize];
+    #[cfg(target_os = "windows")]
+    let _ = app;
+    #[cfg(not(target_os = "windows"))]
+    {
+        PERMISSION_PHASE.store(true, std::sync::atomic::Ordering::SeqCst);
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(win) = handle.get_webview_window("exam") {
+                let _ = win.set_always_on_top(false);
+                #[cfg(target_os = "macos")]
+                if let Ok(ns_win) = win.ns_window() {
+                    unsafe {
+                        let ns_win = ns_win as *mut objc2::runtime::AnyObject;
+                        let _: () = objc2::msg_send![ns_win, setLevel: 0_isize];
+                    }
                 }
+                let _ = win.set_fullscreen(false);
+                let _ = win.maximize();
             }
-            let _ = win.set_fullscreen(false);
-            let _ = win.maximize();
-        }
-        #[cfg(target_os = "macos")]
-        set_kiosk_presentation(false);
-        #[cfg(target_os = "windows")]
-        winlock::set_bypass(true);
-    });
+            #[cfg(target_os = "macos")]
+            set_kiosk_presentation(false);
+        });
+    }
 }
 
 /// Restore the full lockdown after the permission dialogs are answered.
@@ -396,21 +425,10 @@ fn end_permission_phase(app: tauri::AppHandle) {
     PERMISSION_PHASE.store(false, std::sync::atomic::Ordering::SeqCst);
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
-        #[cfg(target_os = "macos")]
-        set_kiosk_presentation(true);
         #[cfg(target_os = "windows")]
         winlock::set_bypass(false);
         if let Some(win) = handle.get_webview_window("exam") {
-            let _ = win.set_fullscreen(true);
-            let _ = win.set_always_on_top(true);
-            #[cfg(target_os = "macos")]
-            if let Ok(ns_win) = win.ns_window() {
-                unsafe {
-                    let ns_win = ns_win as *mut objc2::runtime::AnyObject;
-                    let _: () = objc2::msg_send![ns_win, setLevel: 1000_isize];
-                }
-            }
-            let _ = win.set_focus();
+            reassert_kiosk(&win);
         }
     });
 }
@@ -1118,11 +1136,10 @@ fn main() {
                 use tauri::Emitter;
                 let _ = app.emit("vignan-deeplink", url.clone());
             }
-            if let Some(win) = app.get_webview_window("exam") {
-                let _ = win.unminimize();
-                let _ = win.set_fullscreen(true);
-                let _ = win.set_always_on_top(true);
-                let _ = win.set_focus();
+            if !in_permission_phase() {
+                if let Some(win) = app.get_webview_window("exam") {
+                    reassert_kiosk(&win);
+                }
             }
         }))
         .plugin(tauri_plugin_shell::init())
@@ -1267,23 +1284,34 @@ fn main() {
 
             disable_task_manager();
 
-            // Blackout extra monitors
-            if let Ok(monitors) = app.available_monitors() {
-                if monitors.len() > 1 {
-                    for (i, m) in monitors.iter().enumerate().skip(1) {
-                        let _ = tauri::WebviewWindowBuilder::new(
-                            app, 
-                            format!("blackout_{}", i), 
-                            tauri::WebviewUrl::App("about:blank".into())
-                        )
-                        .title("Blackout")
-                        .fullscreen(true)
-                        .always_on_top(true)
-                        .decorations(false)
-                        .initialization_script("document.body.style.backgroundColor = 'black'; document.body.style.cursor = 'none';")
-                        .position(m.position().x.into(), m.position().y.into())
-                        .build();
+            // Blackout every monitor except the one the exam window is on. The
+            // monitor list order is not the display order, so the exam's own
+            // monitor is matched by position rather than assumed to be first.
+            // `WebviewUrl::App("about:blank")` would load the exam app itself
+            // into the blackout window; an external blank page cannot.
+            let exam_pos = app
+                .get_webview_window("exam")
+                .and_then(|w| w.current_monitor().ok().flatten())
+                .map(|m| *m.position());
+            if let (Ok(monitors), Ok(blank)) = (app.available_monitors(), "about:blank".parse::<tauri::Url>()) {
+                for (i, m) in monitors.iter().enumerate() {
+                    if Some(*m.position()) == exam_pos || (exam_pos.is_none() && i == 0) {
+                        continue;
                     }
+                    let _ = tauri::WebviewWindowBuilder::new(
+                        app,
+                        format!("blackout_{}", i),
+                        tauri::WebviewUrl::External(blank.clone()),
+                    )
+                    .title("Blackout")
+                    .background_color(tauri::window::Color(0, 0, 0, 255))
+                    .fullscreen(true)
+                    .always_on_top(true)
+                    .decorations(false)
+                    .skip_taskbar(true)
+                    .focused(false)
+                    .position(m.position().x.into(), m.position().y.into())
+                    .build();
                 }
             }
 
@@ -1304,9 +1332,25 @@ fn main() {
             // kiosk. The web layer listens for this event and shows the reason.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
+                let mut tick: u64 = 0;
                 loop {
-                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    tick += 1;
                     if in_permission_phase() {
+                        continue;
+                    }
+                    // Minimize, Mission Control, a stray click on another
+                    // window: pull the exam back within a second.
+                    let main = handle.clone();
+                    let _ = handle.run_on_main_thread(move || {
+                        if in_permission_phase() {
+                            return;
+                        }
+                        if let Some(win) = main.get_webview_window("exam") {
+                            reassert_kiosk(&win);
+                        }
+                    });
+                    if tick % 3 != 0 {
                         continue;
                     }
                     #[cfg(target_os = "windows")]
@@ -1338,9 +1382,12 @@ fn main() {
                         return;
                     }
                     // Re-assert the lockdown if the student tries to minimize or unfocus.
-                    let _ = window.set_fullscreen(true);
-                    let _ = window.set_always_on_top(true);
-                    let _ = window.set_focus();
+                    if window.label() != "exam" {
+                        return;
+                    }
+                    if let Some(win) = window.app_handle().get_webview_window("exam") {
+                        reassert_kiosk(&win);
+                    }
                 }
                 WindowEvent::CloseRequested { api, .. } => {
                     // Refuse the close (red X button, Alt+F4, Cmd+W). Exiting

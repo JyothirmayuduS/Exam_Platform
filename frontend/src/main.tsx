@@ -98,7 +98,7 @@ function applyDeeplink(url: string, restoreSession = true) {
   // redirect to /login while the native webview is still hydrating. Legacy
   // links without a handoff keep their synchronous route-update behavior.
   if (restoreSession && hasSessionHandoff(url)) {
-    void hydrateSessionFromDeepLink(url).finally(route);
+    void withTimeout(hydrateSessionFromDeepLink(url), 6000, { ok: false }).finally(route);
   } else {
     if (restoreSession) void hydrateSessionFromDeepLink(url);
     route();
@@ -164,8 +164,16 @@ function takeResumePath(): string | null {
   }
 }
 
+/** Resolve to `fallback` if `p` has not settled within `ms`. */
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>((resolve) => window.setTimeout(() => resolve(fallback), ms))]);
+}
+
 async function boot() {
   if (inTauri) {
+    // Each step below waits on the native bridge or the network (a session
+    // refresh). A stalled one used to leave the kiosk on a blank white page
+    // forever, so every step is time-boxed and the app always mounts.
     // Kiosk: land on the exam entry path, subscribe to OS URL events, then
     // read the plugin's current launch URL (if the OS already delivered it).
     if (onOnboarding && window.location.pathname !== entry) {
@@ -174,14 +182,14 @@ async function boot() {
     try {
       // Await registration BEFORE querying the current URL. Otherwise an OS
       // event between the query and listener registration is lost.
-      await onVignanDeepLink(applyDeeplink);
+      await withTimeout(onVignanDeepLink(applyDeeplink), 3000, () => {});
       // Cold start: fetch the launch URL the plugin holds in memory, merge its
       // exam/roll into the entry path BEFORE mounting so the first render
       // already points at the right exam (no flash of wrong content).
-      const url = await getLaunchUrl().catch(() => null);
+      const url = await withTimeout(getLaunchUrl().catch(() => null), 3000, null);
       const resume = takeResumePath();
       if (url) {
-        await hydrateSessionFromDeepLink(url);
+        await withTimeout(hydrateSessionFromDeepLink(url), 6000, { ok: false });
         applyDeeplink(url, false);
       } else if (resume) {
         // Relaunched by the exam itself (Screen Recording grant): back to it.
