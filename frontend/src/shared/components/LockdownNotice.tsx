@@ -28,10 +28,9 @@ export default function LockdownNotice() {
   }, []);
 
   // Screenshot-exclusion diagnostic: the shell applies NSWindowSharingNone /
-  // WDA_EXCLUDEFROMCAPTURE during setup, BEFORE the web layer can subscribe to
-  // events — so poll the command once at mount instead of listening for a
-  // lost early event. Only macOS/Windows have a capture-exclusion API; on
-  // Linux the kiosk lockdown alone guards the exam.
+  // WDA_EXCLUDEFROMCAPTURE when an exam locks the window down and emits
+  // lockdown:capture-visible if that fails. This mount check covers a reload
+  // while already locked down; outside lockdown the shell reports success.
   useEffect(() => {
     if (!isTauri()) return;
     let alive = true;

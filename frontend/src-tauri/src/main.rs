@@ -378,7 +378,12 @@ fn set_capture_excluded(win: &tauri::WebviewWindow, excluded: bool) {
     #[cfg(target_os = "windows")]
     if let Ok(hwnd) = win.hwnd() {
         unsafe {
-            SetWindowDisplayAffinity(hwnd.0 as *mut _, if excluded { 0x11 } else { 0 });
+            let hwnd = hwnd.0 as *mut _;
+            // WDA_EXCLUDEFROMCAPTURE needs Windows 10 2004+; older builds
+            // reject it, so fall back to WDA_MONITOR (captured as black).
+            if SetWindowDisplayAffinity(hwnd, if excluded { 0x11 } else { 0 }) == 0 && excluded {
+                SetWindowDisplayAffinity(hwnd, 0x1);
+            }
         }
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -463,6 +468,10 @@ fn enter_lockdown(app: tauri::AppHandle) {
                 let _ = win.set_minimizable(false);
                 let _ = win.set_closable(false);
                 set_capture_excluded(&win, true);
+                if !screen_capture_excluded(handle.clone()) {
+                    use tauri::Emitter;
+                    let _ = handle.emit("lockdown:capture-visible", ());
+                }
             }
             let _ = win.eval("window.__vignanLocked = true;");
             if !in_permission_phase() {
@@ -992,8 +1001,13 @@ async fn capture_display_jpeg(app: tauri::AppHandle) -> Result<String, String> {
 
 /// Diagnostic: is the exam window excluded from OS screen capture? The web
 /// layer shows a lockdown notice if the exclusion could not be applied.
+/// Sign-in and the dashboard run in a normal window that is deliberately
+/// capturable, so only a locked-down window can fail this check.
 #[tauri::command]
 fn screen_capture_excluded(app: tauri::AppHandle) -> bool {
+    if !lockdown_engaged() {
+        return true;
+    }
     #[cfg(target_os = "macos")]
     {
         if let Some(win) = app.get_webview_window("exam") {
