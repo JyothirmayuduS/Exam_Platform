@@ -112,6 +112,21 @@ jobs:
             }
           '
 
+      # Windows Installer only replaces an installed app when the version rises,
+      # so every build carries a unique, increasing version.
+      - name: Stamp a unique app version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const file = "src-tauri/tauri.conf.json";
+            const conf = JSON.parse(readFileSync(file, "utf8"));
+            conf.version = `0.2.${process.env.RUN_NUMBER}`;
+            writeFileSync(file, JSON.stringify(conf, null, 2) + "\n");
+            console.log("version", conf.version);
+          '
+
       - name: Build locked native bundles from this checkout
         run: npm run tauri:build -- --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} ${{ matrix.config }} -- --locked
 
