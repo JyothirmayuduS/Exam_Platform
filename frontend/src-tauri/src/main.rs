@@ -284,7 +284,8 @@ fn av_status(kind: &str) -> String {
 
 /// Current OS camera/microphone permission without prompting. A macOS TCC
 /// "Don't Allow" is remembered by bundle id; only System Settings undoes it.
-/// Windows WebView2 grants web media permissions implicitly.
+/// Windows has no app-level gate; the webview grant comes from
+/// `on_permission_request`.
 #[tauri::command]
 fn media_permission_prompt(kind: String) -> String {
     #[cfg(target_os = "macos")]
@@ -1278,6 +1279,20 @@ fn main() {
         std::process::exit(0);
     }
     tauri::Builder::default()
+        // Proctoring needs the camera and microphone on every launch. Without
+        // this, WebView2 / WKWebView show their own "allow camera?" prompt,
+        // which the kiosk can cover and a student can block, leaving the
+        // proctor with no feed. Only the app's own bundled pages are granted.
+        .on_permission_request(|webview, kind| {
+            use tauri::webview::{PermissionKind, PermissionResponse};
+            let own_page = webview.url().map_or(false, |u| {
+                u.scheme() == "tauri" || u.host_str() == Some("tauri.localhost")
+            });
+            match kind {
+                PermissionKind::Camera | PermissionKind::Microphone if own_page => PermissionResponse::Allow,
+                _ => PermissionResponse::Default,
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             check_prohibited_apps,
             exit_app,

@@ -24,6 +24,14 @@ export async function publishExam(
 /** Trigger the Supabase Edge Function to send emails to students */
 
 
+/** Shareable student link for an exam; the same route the invitation emails use. */
+export function examJoinLink(examId: string): string {
+  const origin = typeof window !== "undefined" && /^https?:/.test(window.location.origin)
+    ? window.location.origin
+    : "https://exam-platform-gray-nine.vercel.app";
+  return `${origin}/student/exam?examId=${encodeURIComponent(examId)}`;
+}
+
 export async function triggerExamEmail(
   examId: string,
   studentIds?: string[],

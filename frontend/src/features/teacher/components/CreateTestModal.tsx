@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { getSupabase } from "@/shared/data/supabase";
-import { publishExam, type ExamRecord } from "@/shared/data/examApi";
+import { examJoinLink, publishExam, type ExamRecord } from "@/shared/data/examApi";
 import { NumberField } from "@/shared/components/ui";
 
 const NEW_BATCH = "__new__";
@@ -72,7 +72,7 @@ export default function CreateTestModal({
       pool_count: 0,
       total_marks: 0,
       scheduled_at: assessmentType === "deadline" && deadline ? new Date(deadline).toISOString() : null,
-      join_link: `https://vignan.exam/join/${id.toLowerCase()}`,
+      join_link: examJoinLink(id),
       settings: {
         language,
         purpose,

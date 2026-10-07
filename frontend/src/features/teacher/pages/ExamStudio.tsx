@@ -22,6 +22,7 @@ import {
 } from "@/shared/domain/exam";
 import { NegativeMarkingFields, SectionList, SectionTimingFields } from "@/features/teacher/components/exam-studio/AdvancedFields";
 import {
+  examJoinLink,
   listExamsForTeacher,
   listQuestionsForExam,
   listAllQuestions,
@@ -118,7 +119,7 @@ export default function ExamStudio({
   const sections = useMemo(() => summarizeSections(questions), [questions]);
   const topics = useMemo(() => new Set(questions.map((q) => q.unit || "General")), [questions]);
   const perStudent = Math.min(Number(s.perStudent) || 1, Math.max(1, questions.length));
-  const studentLink = () => `https://vignan.exam/join/${examId.toLowerCase()}`;
+  const studentLink = () => examJoinLink(examId);
 
   const patch = <K extends keyof S,>(k: K, v: S[K]) => setS((cur) => ({ ...cur, [k]: v }));
 
