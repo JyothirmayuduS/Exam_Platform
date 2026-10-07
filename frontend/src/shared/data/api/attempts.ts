@@ -151,6 +151,33 @@ async function upsertAttemptPatch(opts: {
   return !retryErr;
 }
 
+export type AttemptClaim = "ok" | "busy" | "submitted" | "forbidden" | "not_found" | "invalid" | "error";
+
+/**
+ * Claim (or renew) this device's hold on an attempt. "busy" means the same
+ * candidate has the exam open on another device that is still active.
+ * "error" covers network/RPC failures and must not lock the candidate out.
+ */
+/** Stable id for this tab/app window's hold on an exam; survives reloads, not a second device or tab. */
+const memoSessions = new Map<string, string>();
+export function deviceSessionId(examId: string): string {
+  const key = `vignan.deviceSession.${examId}`;
+  let id = memoSessions.get(key);
+  try { id ??= sessionStorage.getItem(key) ?? undefined; } catch { /* storage unavailable */ }
+  id ??= crypto.randomUUID();
+  memoSessions.set(key, id);
+  try { sessionStorage.setItem(key, id); } catch { /* storage unavailable */ }
+  return id;
+}
+
+export async function claimAttemptSession(attemptId: string, sessionId: string): Promise<AttemptClaim> {
+  const db = getSupabase();
+  if (!db || !attemptId) return "error";
+  const { data, error } = await db.rpc("claim_attempt_session", { p_attempt: attemptId, p_session: sessionId });
+  if (error) return "error";
+  return (data as AttemptClaim) ?? "error";
+}
+
 /** Autosave the student's answers + progress. Self-heals a missing attempt row. */
 export async function saveAnswers(opts: {
   examId: string;
@@ -159,6 +186,8 @@ export async function saveAnswers(opts: {
   answered: number;
   minutesUsed: number;
   total?: number;
+  /** Device session holding the attempt; the DB rejects writes from any other device. */
+  sessionId?: string;
 }): Promise<boolean> {
   return upsertAttemptPatch({
     examId: opts.examId,
@@ -169,6 +198,7 @@ export async function saveAnswers(opts: {
       answered: opts.answered,
       minutes_used: opts.minutesUsed,
       auto_saved_at: new Date().toISOString(),
+      ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
     },
   });
 }
@@ -182,12 +212,14 @@ export async function submitAttempt(opts: {
   minutesUsed: number;
   score?: number | null;
   total?: number;
+  sessionId?: string;
 }): Promise<boolean> {
   return upsertAttemptPatch({
     examId: opts.examId,
     studentId: opts.studentId,
     total: opts.total,
     patch: {
+      ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
       state: "submitted",
       answers: opts.answers,
       answered: opts.answered,

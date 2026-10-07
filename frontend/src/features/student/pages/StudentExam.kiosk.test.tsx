@@ -46,7 +46,7 @@ vi.mock("@/features/auth/hooks/useCurrentProfile", () => ({
 // No backend in this test: the paper never loads, but the pre-flight check is
 // rendered before any DB work and is the surface under test.
 vi.mock("@/shared/data/env", () => ({ supabaseConfigured: false, env: {} }));
-vi.mock("@/shared/data/examApi", () => ({}));
+vi.mock("@/shared/data/examApi", () => ({ deviceSessionId: () => "test-device-session" }));
 vi.mock("@/shared/services/examStorage", () => ({}));
 vi.mock("@/features/proctoring/services/serverProctor", () => ({}));
 vi.mock("@/features/student/hooks/useOfflineSync", () => ({ default: () => {} }));

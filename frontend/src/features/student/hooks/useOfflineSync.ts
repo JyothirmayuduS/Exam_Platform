@@ -23,7 +23,8 @@ export default function useOfflineSync(studentId: string | null) {
                   answers: data.answers,
                   answered: data.answered,
                   minutesUsed: data.minutesUsed,
-                  score: data.score
+                  score: data.score,
+                  sessionId: data.sessionId,
                 });
               } else {
                 await saveAnswers({
@@ -31,7 +32,8 @@ export default function useOfflineSync(studentId: string | null) {
                   studentId,
                   answers: data.answers,
                   answered: data.answered,
-                  minutesUsed: data.minutesUsed
+                  minutesUsed: data.minutesUsed,
+                  sessionId: data.sessionId,
                 });
               }
               // Clear the pending sync flag

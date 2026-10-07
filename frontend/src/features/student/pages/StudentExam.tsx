@@ -20,6 +20,9 @@ import {
   startAttempt,
   saveAnswers,
   submitAttempt,
+  claimAttemptSession,
+  deviceSessionId,
+  saveViolation,
   listProctorMessages,
   subscribeToMessages,
   type DBQuestion,
@@ -216,6 +219,14 @@ function StudentExamSession() {
   // Mirror the attempt id so long-lived effects always read the latest value.
   const attemptIdRef = useRef<string | undefined>(undefined);
   useEffect(() => { attemptIdRef.current = attemptId; }, [attemptId]);
+  // Same credentials on a second laptop/tab: only the device holding the
+  // attempt may write; the other gets a blocking screen.
+  const deviceSession = useMemo(() => deviceSessionId(EXAM_ID), [EXAM_ID]);
+  const [deviceConflict, setDeviceConflict] = useState<null | "busy" | "submitted">(null);
+  const conflictLoggedRef = useRef(false);
+  const claimRestoredRef = useRef(false);
+  const deviceConflictRef = useRef(deviceConflict);
+  deviceConflictRef.current = deviceConflict;
   // Real violation snapshot blobs (captured at violation moment), with the
   // offset in seconds from the exam start for the PDF + seek-bar timeline.
   const violationSnapshotsRef = useRef<ViolationSnap[]>([]);
@@ -782,6 +793,46 @@ function StudentExamSession() {
     }
   }, [supabaseConfigured, EXAM_ID, questions.length, step]);
 
+  useEffect(() => {
+    if (!supabaseConfigured || !attemptId || step === "gate" || step === "installed" || step === "check" || step === "submitted") return;
+    let alive = true;
+    // On taking (or retaking) the attempt, pull answers already saved by an
+    // earlier session so this device's autosave doesn't overwrite them.
+    const restoreSaved = async () => {
+      const db = getSupabase();
+      if (!db) return;
+      const { data } = await db.from("attempts").select("answers").eq("id", attemptId).maybeSingle();
+      const saved = (data?.answers ?? {}) as Record<string, unknown>;
+      if (!alive) return;
+      const ids = new Set(questions.map((q) => q.id));
+      for (const [qid, value] of Object.entries(saved)) {
+        if (ids.has(qid) && answersRef.current[qid] === undefined && value !== null && value !== "") setAnswer(qid, value);
+      }
+    };
+    const claim = async () => {
+      const res = await claimAttemptSession(attemptId, deviceSession);
+      if (!alive) return;
+      if (res === "ok") {
+        if (!claimRestoredRef.current || deviceConflictRef.current) {
+          claimRestoredRef.current = true;
+          await restoreSaved();
+        }
+        setDeviceConflict(null);
+      } else if (res === "submitted") setDeviceConflict("submitted");
+      else if (res === "busy") {
+        setDeviceConflict("busy");
+        if (!conflictLoggedRef.current && studentIdRef.current) {
+          conflictLoggedRef.current = true;
+          void saveViolation(attemptId, EXAM_ID, studentIdRef.current, "multiple_devices",
+            "Same candidate tried to open this exam on a second device while it was active on another", { severity: "critical", source: "system" });
+        }
+      }
+    };
+    void claim();
+    const id = window.setInterval(() => void claim(), 15000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [attemptId, step, deviceSession, EXAM_ID, questions, setAnswer]);
+
   const { secondsLeft, setSecondsLeft, timeString, tone: timerTone } = useExamTimer({
     durationMinutes: durationMin,
     // A proctor pause freezes the countdown until the attempt is resumed.
@@ -992,6 +1043,7 @@ function StudentExamSession() {
       answered: answeredCount,
       minutesUsed,
       total: questions.length,
+      sessionId: deviceSession,
     });
 
     if (!success) {
@@ -1000,6 +1052,7 @@ function StudentExamSession() {
           answers,
           answered: answeredCount,
           minutesUsed,
+          sessionId: deviceSession,
           isSubmit: false
         }));
       } catch {}
@@ -1396,6 +1449,7 @@ function StudentExamSession() {
         minutesUsed,
         total: questions.length,
         score: grade.score,
+        sessionId: deviceSession,
       });
 
       if (!success) {
@@ -1408,6 +1462,7 @@ function StudentExamSession() {
             answered: answeredCount,
             minutesUsed,
             score: grade.score,
+            sessionId: deviceSession,
             isSubmit: true
           }));
         } catch {}
@@ -1726,6 +1781,25 @@ function StudentExamSession() {
   return (
     <div className="exam-body">
       <ExamWatermark primary={watermarkLine} secondary={watermarkMeta} />
+      {deviceConflict && (
+        <div className="exam-scrim" role="alertdialog" aria-labelledby="device-conflict-title" style={{ zIndex: 95, background: "rgba(26, 24, 20, 0.95)" }}>
+          <div className="exam-dialog" style={{ textAlign: "center", maxWidth: 460 }}>
+            <h3 id="device-conflict-title">
+              {deviceConflict === "submitted" ? "This exam was already submitted" : "This exam is open on another device"}
+            </h3>
+            <p className="exam-mute" style={{ marginTop: 8 }}>
+              {deviceConflict === "submitted"
+                ? "Your account submitted this exam from another device. Nothing more can be saved here."
+                : "Your account is already writing this exam on another laptop or window. Only one device can write the exam, and this attempt has been reported to your invigilator."}
+            </p>
+            {deviceConflict === "busy" && (
+              <p className="exam-sm" style={{ marginTop: 12 }}>
+                If the other device crashed or was closed, this screen unlocks by itself within a minute and you can continue with your saved answers.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       {proctorPaused && (
         <div className="exam-scrim" style={{ zIndex: 90, background: "rgba(26, 24, 20, 0.92)" }}>
           <div className="exam-dialog" style={{ textAlign: "center", maxWidth: 420 }}>

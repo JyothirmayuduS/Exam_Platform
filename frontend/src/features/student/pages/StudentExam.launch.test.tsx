@@ -25,7 +25,7 @@ vi.mock("@/features/auth/hooks/useCurrentProfile", () => ({
   default: () => ({ profile: { roll: "R/1 A" }, loading: false }),
 }));
 vi.mock("@/shared/data/env", () => ({ supabaseConfigured: false, env: {} }));
-vi.mock("@/shared/data/examApi", () => ({}));
+vi.mock("@/shared/data/examApi", () => ({ deviceSessionId: () => "test-device-session" }));
 vi.mock("@/shared/services/examStorage", () => ({}));
 vi.mock("@/features/proctoring/services/serverProctor", () => ({}));
 vi.mock("@/features/student/hooks/useOfflineSync", () => ({ default: () => {} }));
