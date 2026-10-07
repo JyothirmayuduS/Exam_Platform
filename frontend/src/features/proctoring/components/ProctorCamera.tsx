@@ -38,7 +38,6 @@ export default function ProctorCamera({
   // True when localStreamRef holds tracks WE created (must stop on teardown);
   // false when they came from initialStream (caller owns them — never stop).
   const ownsStreamRef = useRef(false);
-  const cameraRecordRef = useRef<RecorderHandle | null>(null);
   const screenRecordRef = useRef<RecorderHandle | null>(null);
 
   // Issue #10: track when a violation started so we can auto-clear a stale
@@ -206,8 +205,6 @@ export default function ProctorCamera({
         localStreamRef.current = null;
         ownsStreamRef.current = false;
       }
-      cameraRecordRef.current?.stop();
-      cameraRecordRef.current = null;
       screenRecordRef.current?.stop();
       screenRecordRef.current = null;
     };
@@ -243,26 +240,9 @@ export default function ProctorCamera({
       if (starting) return;
       starting = true; // lock immediately — synchronous, so safe before any await
 
-      // NOTE: Per-second screenshot capture is disabled (no flooding R2 with JPEGs).
-      // Only continuous video recording (camera + screen) is kept — goes to Cloudflare R2.
-
-      // Camera recording — guarded independently so a screen-share failure
-      // doesn't prevent camera recording from starting.
-      if (!cameraRecordRef.current && video.srcObject instanceof MediaStream) {
-        try {
-          cameraRecordRef.current = startVideoRecording({
-            stream: video.srcObject,
-            examId,
-            examName,
-            roll: studentId,
-            kind: "camera",
-          });
-          console.debug("[ProctorCamera] camera recording started");
-        } catch (err) {
-          console.error("[ProctorCamera] camera recording failed to start", err);
-        }
-      }
-
+      // The camera + microphone recording is the exam's own crash-safe
+      // recorder (StudentExam); only the screen is recorded here. Its parts
+      // upload live because the kiosk can close before a final upload ends.
       if (!screenRecordRef.current && screenStream) {
         try {
           screenRecordRef.current = startVideoRecording({
@@ -271,6 +251,7 @@ export default function ProctorCamera({
             examName,
             roll: studentId,
             kind: "screen",
+            liveParts: true,
           });
           // A MediaRecorder left running on an ENDED display track writes black
           // frames — stop the moment the OS/browser ends the share so a black
@@ -291,7 +272,6 @@ export default function ProctorCamera({
       // If the component unmounted while we were in start(), tear everything
       // down immediately so streams aren't orphaned.
       if (unmounted) {
-        cameraRecordRef.current?.stop(); cameraRecordRef.current = null;
         screenRecordRef.current?.stop(); screenRecordRef.current = null;
         console.debug("[ProctorCamera] unmounted during start — streams released");
       }
@@ -305,9 +285,7 @@ export default function ProctorCamera({
     return () => {
       unmounted = true;
       video.removeEventListener("playing", start);
-      cameraRecordRef.current?.stop();
       screenRecordRef.current?.stop();
-      cameraRecordRef.current = null;
       screenRecordRef.current = null;
       console.debug("[ProctorCamera] recording cleanup — streams released", { examId, studentId });
 

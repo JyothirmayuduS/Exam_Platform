@@ -279,6 +279,8 @@ function StudentExamSession() {
 
   // Screen recording runs separately from the webcam snapshot timeline.
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recorderOnScreenRef = useRef(false);
+  const submitStartedRef = useRef(false);
   const recordedChunksRef = useRef<Blob[]>([]);
   // Crash-proof recording: every chunk the recorder emits is also uploaded to
   // R2 immediately (parts/exam_NNNNNNNN.webm). A browser crash mid-exam then
@@ -388,11 +390,10 @@ function StudentExamSession() {
     const cam = cameraStreamRef.current;
     if (!cam) return;
     const camLive = cam.getVideoTracks().some((t) => t.readyState === "live");
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+    if (recorderOnScreenRef.current) {
+      recorderOnScreenRef.current = false;
       if (camLive) startExamRecorder(cam);
-      else mediaRecorderRef.current.stop();
-    } else if (camLive) {
-      startExamRecorder(cam);
+      else if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") mediaRecorderRef.current.stop();
     }
     // Point the screenshot frame source at the camera too (it was the screen).
     const el = hiddenVideoRef.current;
@@ -1406,23 +1407,29 @@ function StudentExamSession() {
       }
     }
     
-    // Start Recording and Screenshots. Record the screen stream only while its
-    // video track is actually LIVE — a dead/ended display track records BLACK
-    // frames (the black-screen video symptom). Fall back to the camera stream,
-    // which always has real frames.
+    // The exam recording is the reviewer's main evidence: the candidate's
+    // camera WITH the microphone. The screen is recorded separately by
+    // ProctorCamera. Only without a live camera does this fall back to the
+    // screen, still carrying the microphone so voices stay audible.
     const liveVideo = (ms?: MediaStream | null) =>
       !!ms && ms.getVideoTracks().some((t) => t.readyState === "live");
-    const targetStream = liveVideo(screenStreamRef.current)
-      ? screenStreamRef.current
-      : liveVideo(cameraStreamRef.current)
-        ? cameraStreamRef.current
+    const cam = cameraStreamRef.current;
+    const screenVideo = screenStreamRef.current?.getVideoTracks().find((t) => t.readyState === "live");
+    const micTracks = cam?.getAudioTracks().filter((t) => t.readyState === "live") ?? [];
+    const targetStream = liveVideo(cam)
+      ? cam
+      : screenVideo
+        ? new MediaStream([screenVideo, ...micTracks])
         : null;
+    recorderOnScreenRef.current = !!targetStream && targetStream !== cam;
     if (targetStream) startExamRecorder(targetStream);
 
     setStep("exam");
   }
 
   async function doSubmit() {
+    if (submitStartedRef.current) return;
+    submitStartedRef.current = true;
     // Tear down the optional phone desk-monitor session before evidence upload.
     setEndMonitor(true);
     if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});

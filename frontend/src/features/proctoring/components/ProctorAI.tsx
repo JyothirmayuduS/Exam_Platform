@@ -593,6 +593,7 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
   // Rolling ambient-noise floor for the adaptive voice gate (see AUDIO config).
   const noiseFloorRef = useRef(0.004);
   const noiseFloorAtRef = useRef(0);
+  const voiceSpeakingRef = useRef(false);
 
   // Timing refs
   const rafRef   = useRef(0);
@@ -705,7 +706,15 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     const ctx      = new AudioContext();
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 512;
-    ctx.createMediaStreamSource(cameraStream).connect(analyser);
+    const source = ctx.createMediaStreamSource(cameraStream);
+    source.connect(analyser);
+    // Speech uses its own longer window (~43 ms) so a pause between syllables
+    // is not read as silence; the 512-point analyser above keeps the earbud
+    // thresholds, which are counted in its frequency bins.
+    const voiceAnalyser = ctx.createAnalyser();
+    voiceAnalyser.fftSize = 2048;
+    source.connect(voiceAnalyser);
+    const voiceBuf = new Float32Array(new ArrayBuffer(voiceAnalyser.fftSize * 4));
 
     // Browsers start a fresh AudioContext SUSPENDED unless it was created in a
     // direct user-gesture call stack — and the exam flow creates this one from
@@ -730,6 +739,52 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     audioCtxRef.current = ctx;
     analyserRef.current = analyser;
     audioBufRef.current = new Float32Array(new ArrayBuffer(analyser.frequencyBinCount * 4));
+
+    // Voice activity on its own timer: the vision loop runs on animation
+    // frames, which stall while models run or the frame is not ready, and
+    // speech is bursty, so "N loud samples in a row" missed real talking.
+    // Speech is the share of loud samples over the last VOICE_WINDOW_MS.
+    const samples: { t: number; loud: boolean }[] = [];
+    let lastVoiceEmit = 0;
+    let shownLevel = -1;
+    const voiceTimer = window.setInterval(() => {
+      if (ctx.state !== "running") return;
+      const now = Date.now();
+      voiceAnalyser.getFloatTimeDomainData(voiceBuf);
+      let sum = 0;
+      for (let i = 0; i < voiceBuf.length; i++) sum += voiceBuf[i] * voiceBuf[i];
+      const rms = Math.sqrt(sum / voiceBuf.length);
+      // Adaptive gate over the ambient floor (quiet laptop mics peak ~0.02).
+      const floor = noiseFloorRef.current;
+      if (rms < floor) {
+        noiseFloorRef.current = floor + (rms - floor) * 0.05;
+      } else if (now - noiseFloorAtRef.current > 5_000) {
+        noiseFloorRef.current = floor + (rms - floor) * 0.02;
+        noiseFloorAtRef.current = now;
+      }
+      const gate = Math.max(AUDIO.VOICE_RMS_MIN, noiseFloorRef.current * AUDIO.VOICE_NOISE_FACTOR);
+      samples.push({ t: now, loud: rms > gate });
+      while (samples.length && now - samples[0].t > AUDIO.VOICE_WINDOW_MS) samples.shift();
+      const loudCount = samples.reduce((n, s) => n + (s.loud ? 1 : 0), 0);
+      const activity = loudCount / samples.length;
+      const wasSpeaking = voiceSpeakingRef.current;
+      const speaking = wasSpeaking
+        ? activity >= AUDIO.VOICE_RELEASE_RATIO
+        : activity >= AUDIO.VOICE_ACTIVE_RATIO && loudCount >= AUDIO.VOICE_MIN_LOUD;
+      voiceSpeakingRef.current = speaking;
+      const level = Math.min(1, rms / Math.max(0.06, gate * 2));
+      if (speaking && !wasSpeaking) {
+        lastVoiceEmit = now;
+        emit("audio_detected", "Sustained voice or unexpected audio detected", Math.max(level, activity));
+      } else if (speaking && now - lastVoiceEmit >= AUDIO.VOICE_REPEAT_MS) {
+        lastVoiceEmit = now;
+        emit("audio_detected", "Voice/audio still detected", Math.max(level, activity));
+      }
+      if (speaking !== wasSpeaking || Math.abs(level - shownLevel) > 0.05) {
+        shownLevel = level;
+        setStatus((s) => ({ ...s, voiceLevel: level, voiceSpeaking: speaking }));
+      }
+    }, AUDIO.VOICE_SAMPLE_MS);
 
     // Web Speech API for lightweight STT
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -772,6 +827,8 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
 
     return () => {
       sttAlive = false;
+      window.clearInterval(voiceTimer);
+      voiceSpeakingRef.current = false;
       void ctx.close();
       audioCtxRef.current = null;
       analyserRef.current = null;
@@ -935,7 +992,6 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
     let multiFaceStreak = 0;
     let framingStreak = 0;
     let lastFraming: Framing = "ok";
-    let audioStreak = 0;
     let earbudsStreak = 0;
     let landmarksVisible = false;
 
@@ -1301,33 +1357,14 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         } catch { /* skip */ }
       }
 
-      // ── Audio / voice (sustained before flagging) ──────
+      // ── Earbud leak (speech itself is detected on the audio timer) ──────
       if (analyserRef.current && audioBufRef.current && now - tAudio.current > AUDIO_MS) {
         tAudio.current = now;
         analyserRef.current.getFloatTimeDomainData(audioBufRef.current);
         const rms = Math.sqrt(
           audioBufRef.current.reduce((acc, v) => acc + v * v, 0) / audioBufRef.current.length
         );
-        // Adaptive gate: track the AMBIENT noise floor (rolling min ≈ the
-        // quietest 5 s window) and require speech to clear a multiple of it —
-        // quiet laptop mics peaked at 0.02 RMS, far under the old fixed 0.04.
-        const floor = noiseFloorRef.current;
-        if (rms < floor) {
-          noiseFloorRef.current = floor + (rms - floor) * 0.05; // fast fall
-        } else if (now - noiseFloorAtRef.current > 5_000) {
-          noiseFloorRef.current = floor + (rms - floor) * 0.02; // slow rise
-          noiseFloorAtRef.current = now;
-        }
-        const voiceGate = Math.max(AUDIO.VOICE_RMS_MIN, noiseFloorRef.current * AUDIO.VOICE_NOISE_FACTOR);
-        const voiceLevel    = Math.min(1, rms / Math.max(0.06, voiceGate * 2));
-        const voiceSpeaking = rms > voiceGate;
-        if (voiceSpeaking) audioStreak += 1;
-        else audioStreak = Math.max(0, audioStreak - 1);
-        if (audioStreak === AUDIO.SUSTAIN) {
-          emit("audio_detected", "Sustained voice or unexpected audio detected", voiceLevel);
-        } else if (audioStreak > AUDIO.SUSTAIN && audioStreak % 12 === 0) {
-          emit("audio_detected", "Voice/audio still detected", voiceLevel);
-        }
+        const voiceSpeaking = voiceSpeakingRef.current;
 
         // ── Earbud/headphone leak detection ─────────────────────────────────
         // A faint PERSISTENT BROADBAND signal is the earbud-leak signature:
@@ -1387,8 +1424,6 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
         } else {
           earbudsStreak = Math.max(0, earbudsStreak - 1);
         }
-
-        setStatus(s => ({ ...s, voiceLevel, voiceSpeaking: voiceSpeaking && audioStreak >= 2 }));
       }
 
       rafRef.current = requestAnimationFrame(tick);

@@ -122,6 +122,14 @@ export const AUDIO = {
   VOICE_RMS_MIN: 0.012,   // absolute floor — never flag below this
   VOICE_NOISE_FACTOR: 3,  // speech must exceed 3× the ambient noise floor
   SUSTAIN: 3,       // ~0.45 s of sustained sound before flagging — faster response
+  // Voice activity: share of loud samples over a sliding window, so normal
+  // bursty speech (pauses between words) still counts as talking.
+  VOICE_SAMPLE_MS: 100,
+  VOICE_WINDOW_MS: 1_500,
+  VOICE_ACTIVE_RATIO: 0.35,  // ≥35% of the window loud → speaking
+  VOICE_RELEASE_RATIO: 0.15, // stays "speaking" until activity drops below 15%
+  VOICE_MIN_LOUD: 4,         // and at least 4 loud samples (~0.4 s of sound)
+  VOICE_REPEAT_MS: 10_000,   // re-log while the candidate keeps talking
   // ── Earbud/headphone leak detection ────────────────────────────────────────
   // Earbuds leak only a FAINT signal into the mic (far quieter than direct
   // speech). Its signature: persistent (never pauses like speech), low-level,

@@ -164,6 +164,7 @@ export default function ExamStudio({
     };
     const res = await publishExam(rec);
     if (!res.ok) { notify("Save failed: " + res.error); return null; }
+    setExam(rec);
     onSaved?.(rec);
     return rec;
   };
@@ -427,6 +428,7 @@ export default function ExamStudio({
           studentLink={studentLink()}
           onClose={() => setShareOpen(false)}
           notify={notify}
+          onPublished={(rec) => { setExam(rec); onSaved?.(rec); }}
           onResult={(r) => { setShareOpen(false); setResult(r); }}
         />
       )}
@@ -663,9 +665,10 @@ function PreviewDialog({ exam, sections, questions, duration, perStudent, s, onC
 // ─────────────────────────────────────────────────────────────────────────────
 // Publish & share dialog
 // ─────────────────────────────────────────────────────────────────────────────
-function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, studentLink, onClose, notify, onResult }: {
+function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, studentLink, onClose, notify, onPublished, onResult }: {
   exam: ExamRecord; name: string; duration: number; perStudent: number; pool: number; totalMarks: number;
   s: S; studentLink: string; onClose: () => void; notify: (m: string) => void;
+  onPublished: (rec: ExamRecord) => void;
   onResult: (r: { status: string; when?: string; link: string; notified?: number }) => void;
 }) {
   const [roster, setRoster] = useState<{ id: string; roll: string; full_name: string; email: string }[]>([]);
@@ -736,6 +739,7 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
       setBusy(false);
       return;
     }
+    onPublished(record);
     setStep("publish", { state: "done", detail: status === "scheduled" ? `Opens ${whenLabel}` : "Live now" });
 
     setStep("enroll", { state: "running" });
