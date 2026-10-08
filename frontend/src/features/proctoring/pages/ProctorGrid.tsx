@@ -38,6 +38,8 @@ type Tile = {
   progress: number;
   studentId?: string;
   authId?: string | null;
+  /** Newest first. */
+  violations: ViolationEvent[];
 };
 
 const NAV = [
@@ -64,8 +66,9 @@ function attemptToTile(a: LiveAttempt): Tile {
   let reason: string | undefined = undefined;
   let time: string | undefined = undefined;
 
-  if (a.violations && a.violations.length > 0) {
-    const latest = [...a.violations].sort((v1, v2) => new Date(v2.created_at).getTime() - new Date(v1.created_at).getTime())[0];
+  const violations = [...(a.violations ?? [])].sort((v1, v2) => new Date(v2.created_at).getTime() - new Date(v1.created_at).getTime());
+  if (violations.length > 0) {
+    const latest = violations[0];
     const isHigh = a.violations.some(v => v.severity === "high" || v.severity === "critical");
     severity = isHigh ? "high" : "low";
     reason = latest.description || latest.severity;
@@ -73,7 +76,7 @@ function attemptToTile(a: LiveAttempt): Tile {
     time = diffMin === 0 ? "just now" : `${diffMin}m ago`;
   }
 
-  return { id: a.id, name, roll, initials: initialsOf(name), severity, reason, time, status, progress: pct, studentId: a.student?.id, authId: a.student?.auth_id ?? null };
+  return { id: a.id, name, roll, initials: initialsOf(name), severity, reason, time, status, progress: pct, studentId: a.student?.id, authId: a.student?.auth_id ?? null, violations };
 }
 
 type ViewMode = "split" | "camera" | "screen";
@@ -164,9 +167,16 @@ export default function ProctorGrid() {
   useEffect(() => {
     if (!supabaseConfigured || !examId) { setTiles([]); setLive(false); return; }
     let active = true;
+    let seq = 0;
     const load = async () => {
-      const rows = await listLiveAttempts(examId);
-      if (!active) return;
+      const mine = ++seq;
+      let rows: LiveAttempt[];
+      try {
+        rows = await listLiveAttempts(examId, { throwOnError: true });
+      } catch {
+        return;
+      }
+      if (!active || mine !== seq) return;
       setLive(true);
       const mapped = rows.map(attemptToTile);
       setTiles(mapped);
@@ -768,7 +778,25 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
           </div>
           <audio ref={listenAudioRef} playsInline className="hidden" />
         </div>
-        <div className="border-t border-line px-4 py-3 text-[12px] text-soft">{selected.reason ?? "No active proctoring flags. All checks passing."}</div>
+        <div className="border-t border-line px-4 py-3">
+          <p className="font-mono text-[10px] uppercase tracking-widest text-soft">
+            Violations{selected.violations.length > 0 ? ` · ${selected.violations.length}` : ""}
+          </p>
+          {selected.violations.length === 0 ? (
+            <p className="mt-2 text-[12px] text-soft">No proctoring flags. All checks passing.</p>
+          ) : (
+            <ul className="mt-2 max-h-64 space-y-1.5 overflow-y-auto pr-1">
+              {selected.violations.map((v) => (
+                <li key={v.id} className={`border px-3 py-2 ${v.severity === "high" || v.severity === "critical" ? "border-alert/30 bg-alert/[0.04]" : "border-line bg-paper"}`}>
+                  <p className="text-[12px] leading-snug">{v.description || v.violation_type}</p>
+                  <p className="mt-0.5 font-mono text-[9px] text-soft">
+                    {v.severity} · {new Date(v.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       <div className="border border-line p-4">

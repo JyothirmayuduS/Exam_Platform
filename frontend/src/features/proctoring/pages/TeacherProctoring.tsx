@@ -206,9 +206,16 @@ export default function TeacherProctoring() {
   useEffect(() => {
     if (!supabaseConfigured || !selectedExamId) return;
     let active = true;
+    let seq = 0;
     const load = async () => {
-      const rows = await listLiveAttempts(selectedExamId);
-      if (!active) return;
+      const mine = ++seq;
+      let rows: LiveAttempt[];
+      try {
+        rows = await listLiveAttempts(selectedExamId, { throwOnError: true });
+      } catch {
+        return;
+      }
+      if (!active || mine !== seq) return;
       setLive(true);
       const mapped = rows.map(attemptToStudent);
       setStudents(mapped);

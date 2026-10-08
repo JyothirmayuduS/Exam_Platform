@@ -4,26 +4,35 @@
 // turns enough to show that ear. Hair and curtain stripes at the face edge are
 // elongated, touch the crop border, or sit next to other dark pixels.
 //
-// Fitted on two sessions: 13/23 bud crops caught, 2/582 other crops flagged.
+// Refit on five session reports (~760 frames): 10/16 bud frames caught, 1
+// false hit (was 3/16 and 2). Buds filling the ear when the head is turned
+// hard ran past the old 0.15 area cap; buds deeper in the ear sat on the edge
+// of the single patch and merged with hair, so a second patch further out is
+// also tried.
 
 import type { BBox } from "./types";
 
 export const DARK_BUD = {
   SIZE: 24,
   // Ear is in view when the face is this many times wider on its side of the nose.
-  MIN_VISIBLE: 1.4,
+  MIN_VISIBLE: 2.0,
   AREA_MIN: 0.03,
-  AREA_MAX: 0.15,
+  AREA_MAX: 0.2,
   MAX_TOUCH: 1,
   MAX_ELONGATION: 3,
-  MIN_RING: 0.7,
+  MIN_RING: 0.65,
   // 0.35 adds bud crops seen at an angle (blob less square) without new false hits.
   MIN_FILL: 0.35,
+  /** Patch centres, as a fraction of face width outward from the jaw landmark. */
+  SHIFTS: [0.05, 0.1],
 } as const;
 
-export type EarPatch = { box: BBox; visible: number };
+export type EarPatch = { box: BBox; visible: number; side: "left" | "right" };
 
-/** Ear crops beside landmarks 234 / 454, with how much of that ear faces the camera. */
+/**
+ * Ear crops beside landmarks 234 / 454, with how much of that ear faces the
+ * camera. One left/right pair per entry in `DARK_BUD.SHIFTS`, nearest first.
+ */
 export function earPatches(lms: ReadonlyArray<{ x: number; y: number }>): EarPatch[] {
   const nose = lms[1];
   const left = lms[234];
@@ -39,14 +48,17 @@ export function earPatches(lms: ReadonlyArray<{ x: number; y: number }>): EarPat
   const s = fw * 0.32;
   const dl = Math.abs(nose.x - left.x);
   const dr = Math.abs(right.x - nose.x);
-  return [
-    { q: left, dir: -1, visible: dl / Math.max(dr, 1e-6) },
-    { q: right, dir: 1, visible: dr / Math.max(dl, 1e-6) },
-  ].map(({ q, dir, visible }) => {
-    const cx = q.x + dir * fw * 0.05;
-    const cy = q.y + fw * 0.05;
-    return { box: { x: cx - s / 2, y: cy - s / 2, width: s, height: s }, visible };
-  });
+  const sides = [
+    { q: left, dir: -1, side: "left" as const, visible: dl / Math.max(dr, 1e-6) },
+    { q: right, dir: 1, side: "right" as const, visible: dr / Math.max(dl, 1e-6) },
+  ];
+  return DARK_BUD.SHIFTS.flatMap((shift) =>
+    sides.map(({ q, dir, side, visible }) => {
+      const cx = q.x + dir * fw * shift;
+      const cy = q.y + fw * 0.05;
+      return { box: { x: cx - s / 2, y: cy - s / 2, width: s, height: s }, visible, side };
+    }),
+  );
 }
 
 /** `px` is a SIZE×SIZE RGBA crop of one ear patch. */

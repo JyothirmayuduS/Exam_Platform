@@ -1284,10 +1284,14 @@ export default function ProctorAI({ cameraStream, active, onViolation, onStatus 
               }
             }
             const ears = earPatchRef.current && now - earPatchRef.current.at <= 700 ? earPatchRef.current.patches : [];
+            const budSides = new Set<EarPatch["side"]>();
             for (const ear of ears) {
-              if (ear.visible < DARK_BUD.MIN_VISIBLE) continue;
+              if (ear.visible < DARK_BUD.MIN_VISIBLE || budSides.has(ear.side)) continue;
               const dark = darkEarbudAt(video, ear);
-              if (dark) dets.push(dark);
+              if (dark) {
+                budSides.add(ear.side);
+                dets.push(dark);
+              }
             }
             dets = refineDetections(dets, face, now);
           }

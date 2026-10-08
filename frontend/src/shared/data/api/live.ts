@@ -5,8 +5,15 @@
 import { getSupabase } from "@/shared/data/supabase";
 import type { AttemptState, ViolationSeverity, ViolationSource, ViolationEvent, LiveAttempt, Student } from "@/shared/data/api/types";
 
-/** All attempts for an exam, joined with the student, newest activity first. */
-export async function listLiveAttempts(examId?: string | null): Promise<LiveAttempt[]> {
+/**
+ * All attempts for an exam, joined with the student, newest activity first.
+ * `throwOnError` lets polling consoles keep their last good roster instead of
+ * blanking it on a transient query failure.
+ */
+export async function listLiveAttempts(
+  examId?: string | null,
+  opts: { throwOnError?: boolean } = {},
+): Promise<LiveAttempt[]> {
   const db = getSupabase();
   if (!db) return [];
   let query = db
@@ -15,6 +22,7 @@ export async function listLiveAttempts(examId?: string | null): Promise<LiveAtte
     .order("auto_saved_at", { ascending: false });
   if (examId) query = query.eq("exam_id", examId);
   const { data, error } = await query;
+  if (error && opts.throwOnError) throw new Error(error.message);
 
   const attempts: LiveAttempt[] = error
     ? []
@@ -105,12 +113,14 @@ export async function listLiveAttempts(examId?: string | null): Promise<LiveAtte
   // actions) and attach them to the right attempt. Events are matched by
   // attempt_id when the candidate has started, otherwise by student_id so
   // warnings sent before a candidate begins still surface on their tile.
+  if (!examId) return attempts;
+  const { data: vioData, error: vioError } = await db
+    .from("violation_events")
+    .select("*")
+    .eq("exam_id", examId)
+    .order("created_at", { ascending: true });
+  if (vioError && opts.throwOnError) throw new Error(vioError.message);
   try {
-    const { data: vioData, error: vioError } = await db
-      .from("violation_events")
-      .select("*")
-      .eq("exam_id", examId)
-      .order("created_at", { ascending: true });
     if (!vioError && vioData) {
       const byAttempt = new Map<string, ViolationEvent[]>();
       const byStudent = new Map<string, ViolationEvent[]>();
@@ -185,13 +195,29 @@ export async function listAttemptViolations(attemptId: string): Promise<Violatio
   });
 }
 
-/** Realtime: fire `onChange` when any attempt for this exam changes. */
+const POLL_MS = 5000;
+const COALESCE_MS = 400;
 
-
+/**
+ * Fire `onChange` when any attempt, enrollment or violation for this exam
+ * changes. Realtime events are coalesced (a flagged candidate can emit dozens
+ * per minute), and a poll runs alongside: realtime delivery is filtered by RLS
+ * and silently drops events if the channel joined before the staff session
+ * token was attached, which left live consoles stuck on "no flags".
+ */
 export function subscribeToAttempts(examId: string, onChange: () => void): () => void {
   const db = getSupabase();
   if (!db) return () => undefined;
-  
+
+  let pending: ReturnType<typeof setTimeout> | null = null;
+  const fire = () => {
+    if (pending) return;
+    pending = setTimeout(() => { pending = null; onChange(); }, COALESCE_MS);
+  };
+  const poll = setInterval(() => {
+    if (typeof document === "undefined" || document.visibilityState === "visible") onChange();
+  }, POLL_MS);
+
   // Use a unique channel name to prevent "cannot add postgres_changes callbacks after subscribe()" 
   // when multiple components hook into the same exam.
   const channelId = `attempts-${examId}-${Math.random().toString(36).slice(2)}`;
@@ -200,20 +226,22 @@ export function subscribeToAttempts(examId: string, onChange: () => void): () =>
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "attempts", filter: `exam_id=eq.${examId}` },
-      () => onChange(),
+      fire,
     )
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "enrollments", filter: `exam_id=eq.${examId}` },
-      () => onChange(),
+      fire,
     )
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "violation_events", filter: `exam_id=eq.${examId}` },
-      () => onChange(),
+      fire,
     )
     .subscribe();
   return () => {
+    clearInterval(poll);
+    if (pending) clearTimeout(pending);
     db.removeChannel(channel);
   };
 }

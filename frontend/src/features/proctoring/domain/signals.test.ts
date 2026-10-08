@@ -140,6 +140,10 @@ describe("dark earbud", () => {
     expect(isDarkEarbud(crop((x, y) => (Math.hypot(x - 11, y - 12) < 3.5 ? 30 : 190)))).toBe(true);
   });
 
+  it("finds a bud that fills much of the ear when the head is turned hard", () => {
+    expect(isDarkEarbud(crop((x, y) => (Math.hypot(x - 12, y - 12) < 5.6 ? 30 : 190)))).toBe(true);
+  });
+
   it("ignores a hair band along the crop edge and a plain cheek", () => {
     expect(isDarkEarbud(crop((x) => (x < 5 ? 30 : 190)))).toBe(false);
     expect(isDarkEarbud(crop(() => 180))).toBe(false);
@@ -150,8 +154,11 @@ describe("dark earbud", () => {
     lms[1] = { x: 0.6, y: 0.5 };
     lms[234] = { x: 0.3, y: 0.5 };
     lms[454] = { x: 0.7, y: 0.5 };
-    const [left, right] = earPatches(lms);
+    const patches = earPatches(lms);
+    const [left, right] = patches;
     expect(left!.visible).toBeGreaterThan(DARK_BUD.MIN_VISIBLE);
     expect(right!.visible).toBeLessThan(1);
+    expect(patches).toHaveLength(2 * DARK_BUD.SHIFTS.length);
+    expect(patches[2]!.box.x).toBeLessThan(left!.box.x);
   });
 });
