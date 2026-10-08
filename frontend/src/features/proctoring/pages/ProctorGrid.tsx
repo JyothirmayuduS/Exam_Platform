@@ -18,6 +18,8 @@ import {
 import JobBanner from "@/shared/components/JobBanner";
 import { ExtraTimeBadge, LiveExtraTimeControl } from "@/features/proctoring/components/LiveExtraTime";
 import useOwnsExam from "@/features/proctoring/hooks/useOwnsExam";
+import ConnectionBadge from "@/shared/components/ConnectionBadge";
+import { remoteConnectionState, type ConnectionState } from "@/shared/services/lowBandwidth";
 import { usePromptDialog } from "@/shared/components/PromptDialog";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 
@@ -383,6 +385,15 @@ export default function ProctorGrid() {
 
 
   const ownsCurrentExam = useOwnsExam(examId);
+  const netFor = (t: Tile): ConnectionState | null => {
+    const feed = feedFor(t);
+    return remoteConnectionState({
+      quality: feed?.quality,
+      inRoom: !!feed,
+      writing: t.status === "Writing" || t.status === "Paused",
+      viewerConnected: viewerState === "connected",
+    });
+  };
   const onTimeAdded = (total: number) => {
     if (!selected) return;
     const id = selected.id;
@@ -579,7 +590,7 @@ export default function ProctorGrid() {
         <section>
           <div className={`grid gap-3 ${size === "S" ? "grid-cols-3 sm:grid-cols-4 lg:grid-cols-5" : size === "M" ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4" : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"}`}>
             {visible.map((t) => (
-              <MonitorTile key={t.id} tile={t} feed={feedFor(t)} view={view} selected={selectedId === t.id} onSelect={() => setSelectedId(t.id)} />
+              <MonitorTile key={t.id} tile={t} feed={feedFor(t)} net={netFor(t)} view={view} selected={selectedId === t.id} onSelect={() => setSelectedId(t.id)} />
             ))}
           </div>
           {visible.length === 0 && (
@@ -592,6 +603,7 @@ export default function ProctorGrid() {
             <DetailPanel
               selected={selected}
               feed={selected ? feedFor(selected) : null}
+              net={selected ? netFor(selected) : null}
               note={note}
               setNote={setNote}
               onSend={sendMessage}
@@ -682,7 +694,7 @@ function FeedVideo({
   );
 }
 
-function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; feed: RemoteFeed | null; view: ViewMode; selected: boolean; onSelect: () => void }) {
+function MonitorTile({ tile, feed, net, view, selected, onSelect }: { tile: Tile; feed: RemoteFeed | null; net: ConnectionState | null; view: ViewMode; selected: boolean; onSelect: () => void }) {
   // Severity is the ONLY thing that colors a tile: 2px left rail + label chip.
   // (Progress previously drove the dot color — misleading: a candidate 95%
   // through with a critical flag looked "healthy".)
@@ -705,6 +717,7 @@ function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; fee
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <p className="truncate text-[12px] font-medium">{tile.name}</p>
+                {net && <ConnectionBadge state={net} compact className="shrink-0" />}
               </div>
               <p className="truncate font-mono text-[9px] text-soft">{tile.roll} · {tile.status}{tile.status === "Writing" ? ` ${tile.progress}%` : ""}</p>
               <ExtraTimeBadge extraMinutes={tile.extraMinutes} accommodationMinutes={tile.accommodationMinutes} className="block truncate" />
@@ -723,8 +736,8 @@ function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; fee
   );
 }
 
-function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalate, onForceSubmit, onFlag, onLogViolation, canAddTime, onTimeAdded, onTimeMessage, onScreenshot, speaking, voiceBusy, onSpeak, log }: {
-  selected: Tile | undefined; feed: RemoteFeed | null; note: string; setNote: (v: string) => void;
+function DetailPanel({ selected, feed, net, note, setNote, onSend, onPause, onEscalate, onForceSubmit, onFlag, onLogViolation, canAddTime, onTimeAdded, onTimeMessage, onScreenshot, speaking, voiceBusy, onSpeak, log }: {
+  selected: Tile | undefined; feed: RemoteFeed | null; net: ConnectionState | null; note: string; setNote: (v: string) => void;
   onSend: () => void; onPause: () => void; onEscalate: () => void; onForceSubmit: () => void;
   onFlag: () => void; onLogViolation: () => void; onScreenshot: () => void;
   canAddTime: boolean; onTimeAdded: (totalExtra: number) => void; onTimeMessage: (text: string) => void;
@@ -750,7 +763,7 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
         <div className="border-b border-line px-4 py-3">
           <p className="font-mono text-[10px] uppercase tracking-widest text-soft">Focused candidate</p>
           <div className="mt-1 flex items-center justify-between gap-3">
-            <div className="min-w-0"><h2 className="truncate font-serif text-lg font-semibold">{selected.name}</h2><p className="font-mono text-[10px] text-soft">{selected.roll} · {selected.status} · {selected.progress}%</p></div>
+            <div className="min-w-0"><h2 className="truncate font-serif text-lg font-semibold">{selected.name}</h2><p className="font-mono text-[10px] text-soft">{selected.roll} · {selected.status} · {selected.progress}%</p>{net && <ConnectionBadge state={net} className="mt-1" />}</div>
             <span className="shrink-0 font-mono text-[10px] uppercase" style={{ color: severityTone[selected.severity] }}>{severityLabel[selected.severity]}</span>
           </div>
         </div>

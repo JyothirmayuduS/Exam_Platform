@@ -18,6 +18,8 @@ import { FiVideo, FiMonitor, FiSmartphone, FiGrid, FiArrowLeft, FiMic, FiMicOff,
 import ProctoringAssessmentSelect from "@/features/proctoring/components/ProctoringAssessmentSelect";
 import { ExtraTimeBadge, LiveExtraTimeControl } from "@/features/proctoring/components/LiveExtraTime";
 import useOwnsExam from "@/features/proctoring/hooks/useOwnsExam";
+import ConnectionBadge from "@/shared/components/ConnectionBadge";
+import { remoteConnectionState, type ConnectionState } from "@/shared/services/lowBandwidth";
 import { Button } from "@/shared/components/ui";
 import type { ProctorAssignment } from "@/shared/data/examApi";
 
@@ -73,6 +75,7 @@ function attemptToStudent(a: LiveAttempt): Student {
 }
 
 type FeedLookup = (s: Student) => RemoteFeed | null;
+type NetLookup = (s: Student) => ConnectionState | null;
 
 export default function TeacherProctoring() {
   const { profile } = useCurrentProfile();
@@ -328,6 +331,16 @@ export default function TeacherProctoring() {
       (s.authId ? byId.get(s.authId.toLowerCase()) : null) ??
       null;
   }, [feeds]);
+
+  const netFor: NetLookup = (s) => {
+    const feed = feedFor(s);
+    return remoteConnectionState({
+      quality: feed?.quality,
+      inRoom: !!feed,
+      writing: s.status === "Writing" || s.status === "Paused",
+      viewerConnected: viewerState === "connected",
+    });
+  };
 
   const visible = useMemo(() => {
     const filtered = filter === "Flagged only" ? students.filter((s) => s.violation) : filter === "Submitted" ? students.filter((s) => s.status === "Submitted") : students;
@@ -641,9 +654,9 @@ export default function TeacherProctoring() {
       <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 border-b border-line xl:border-b-0 xl:border-r">
           {view === "wall" ? (
-            <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} mobileFeedFor={mobileFeedByRoll} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }} />
+            <VideoWall visible={visible} selected={selected} onSelect={selectCandidate} feedFor={feedFor} netFor={netFor} mobileFeedFor={mobileFeedByRoll} source={wallSource} onSourceChange={(s) => { setWallSource(s); sessionStorage.setItem("proctor-wall-source", s); }} />
           ) : view === "activity" ? (
-            <ActivityView visible={visible} selected={selected} onSelect={selectCandidate} />
+            <ActivityView visible={visible} selected={selected} onSelect={selectCandidate} netFor={netFor} />
           ) : (
             <div className="p-5">
               <ProctorChatPanel examId={selectedExamId} senderName={profile?.full_name ?? "Teacher"} senderRole="teacher" onCountChange={setChatCount} maxHeight={420} />
@@ -743,6 +756,7 @@ export default function TeacherProctoring() {
                   <div className="min-w-0">
                     <h2 className="truncate font-serif text-xl font-semibold">{selected.name}</h2>
                     <p className="mt-1 font-mono text-[10px] text-ink-soft">{selected.roll} · {selected.status} · {selected.progress}%</p>
+                    {(() => { const net = netFor(selected); return net ? <ConnectionBadge state={net} className="mt-1.5" /> : null; })()}
                   </div>
                   <span className={`shrink-0 border px-2 py-1 font-mono text-[9px] uppercase tracking-wider ${selected.violation ? "border-alert/40 bg-alert/5 text-alert" : "border-success/40 bg-success/5 text-success"}`}>
                     {selected.violation ? "Flagged" : "Clear"}
@@ -931,11 +945,12 @@ export default function TeacherProctoring() {
   </RoleLayout>;
 }
 
-function VideoWall({ visible, selected, onSelect, feedFor, mobileFeedFor, source, onSourceChange }: {
+function VideoWall({ visible, selected, onSelect, feedFor, netFor, mobileFeedFor, source, onSourceChange }: {
   visible: Student[];
   selected: Student | null;
   onSelect: (student: Student) => void;
   feedFor: FeedLookup;
+  netFor: NetLookup;
   mobileFeedFor: Map<string, RemoteFeed>;
   source: "camera" | "screen" | "phone";
   onSourceChange: (s: "camera" | "screen" | "phone") => void;
@@ -1037,7 +1052,10 @@ function VideoWall({ visible, selected, onSelect, feedFor, mobileFeedFor, source
               </div>
 
               <div className="border-t border-line px-2.5 py-2">
-                <p className="truncate text-[12px] font-medium">{student.name}</p>
+                <div className="flex items-center justify-between gap-1.5">
+                  <p className="truncate text-[12px] font-medium">{student.name}</p>
+                  {(() => { const net = netFor(student); return net ? <ConnectionBadge state={net} compact className="shrink-0" /> : null; })()}
+                </div>
                 <p className={`mt-0.5 truncate font-mono text-[9px] ${isViolated ? "text-alert" : "text-ink-soft"}`}>
                   {isViolated
                     ? student.violation
@@ -1166,7 +1184,7 @@ function AudioPlayer({ track }: { track: any }) {
   );
 }
 
-function ActivityView({ visible, selected, onSelect }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void }) {
+function ActivityView({ visible, selected, onSelect, netFor }: { visible: Student[]; selected: Student | null; onSelect: (student: Student) => void; netFor: NetLookup }) {
   return (
     <div className="p-5 sm:p-6">
       <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Activity stream</p>
@@ -1185,8 +1203,9 @@ function ActivityView({ visible, selected, onSelect }: { visible: Student[]; sel
             }`}
           >
             <div className="min-w-0">
-              <p className="text-[13px] font-medium">
-                {student.name} <span className="ml-2 font-mono text-[10px] text-ink-soft">{student.roll}</span>
+              <p className="flex items-center gap-2 text-[13px] font-medium">
+                {student.name} <span className="font-mono text-[10px] text-ink-soft">{student.roll}</span>
+                {(() => { const net = netFor(student); return net ? <ConnectionBadge state={net} compact /> : null; })()}
               </p>
               <p className="mt-1 truncate text-[11px] text-ink-soft">Last event: {student.violation || "Status updated recently"}</p>
               <ExtraTimeBadge extraMinutes={student.extraMinutes} accommodationMinutes={student.accommodationMinutes} className="mt-0.5 block" />

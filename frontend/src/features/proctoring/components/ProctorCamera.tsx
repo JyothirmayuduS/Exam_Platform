@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { startProctorPublishing, type ProctorHandle, type ProctorState } from "@/features/proctoring/services/proctor";
+import { startProctorPublishing, type LinkQuality, type ProctorHandle, type ProctorState } from "@/features/proctoring/services/proctor";
 import { env } from "@/shared/data/env";
 import { startVideoRecording, type RecorderHandle } from "@/features/proctoring/services/recorder";
 
@@ -18,6 +18,8 @@ export default function ProctorCamera({
   violationActive = false,
   proctorMessages = [],
   onLinkError,
+  lowBandwidth = false,
+  onQuality,
 }: {
   room: string;
   identity: string;
@@ -30,9 +32,17 @@ export default function ProctorCamera({
   proctorMessages?: string[];
   /** The live video link to the proctor could not be established. */
   onLinkError?: (message: string) => void;
+  /** Weak link: cap the live video harder and hold recording uploads. */
+  lowBandwidth?: boolean;
+  /** LiveKit's measure of this student's link ("unknown" when not connected). */
+  onQuality?: (q: LinkQuality) => void;
 }) {
   const onLinkErrorRef = useRef(onLinkError);
   onLinkErrorRef.current = onLinkError;
+  const onQualityRef = useRef(onQuality);
+  onQualityRef.current = onQuality;
+  const lowBandwidthRef = useRef(lowBandwidth);
+  lowBandwidthRef.current = lowBandwidth;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [state, setState] = useState<ProctorState>("connecting");
   const [retryCount, setRetryCount] = useState(0);
@@ -83,8 +93,13 @@ export default function ProctorCamera({
     // promise rejection that leaves the component in an undefined state.
     let handle: Awaited<ReturnType<typeof startProctorPublishing>> = null;
     // State events count only while this attempt is the current one.
-    const onState = (s: ProctorState) => { if (gen === connectGen.current) setState(s); };
-    const publishing = startProctorPublishing({ room, identity, screenStream, localStream: initialStream, onState });
+    const onState = (s: ProctorState) => {
+      if (gen !== connectGen.current) return;
+      setState(s);
+      if (s !== "connected") onQualityRef.current?.("unknown");
+    };
+    const onQ = (q: LinkQuality) => { if (gen === connectGen.current) onQualityRef.current?.(q); };
+    const publishing = startProctorPublishing({ room, identity, screenStream, localStream: initialStream, onState, onQuality: onQ });
     try {
       // Race the connect against a 15-second timeout so we never wait forever
       // on a hung LiveKit server (e.g., during maintenance).
@@ -141,6 +156,7 @@ export default function ProctorCamera({
       return;
     }
     handleRef.current = handle;
+    handle?.setLowBandwidth(lowBandwidthRef.current);
     setLinkError(handle ? null : "live video is not configured");
     if (!handle) onLinkErrorRef.current?.("live video is not configured");
 
@@ -217,6 +233,11 @@ export default function ProctorCamera({
     };
   }, [room, identity, initialStream, screenStream]);
 
+  useEffect(() => {
+    handleRef.current?.setLowBandwidth(lowBandwidth);
+    screenRecordRef.current?.setLowBandwidth(lowBandwidth);
+  }, [lowBandwidth]);
+
   // Auto-reconnect when camera dies
   useEffect(() => {
     // Local-only after a failed video link keeps retrying, more slowly.
@@ -232,7 +253,7 @@ export default function ProctorCamera({
     return () => clearTimeout(id);
   }, [state, retryCount, connect, linkError]);
 
-  // Per-second proctoring screenshot capture & Video Recording
+  // Screen recording (uploaded to R2)
   useEffect(() => {
     if (!env.proctorCapture || !examId || !studentId) return;
     const video = videoRef.current;
@@ -260,6 +281,7 @@ export default function ProctorCamera({
             kind: "screen",
             liveParts: true,
           });
+          screenRecordRef.current.setLowBandwidth(lowBandwidthRef.current);
           // A MediaRecorder left running on an ENDED display track writes black
           // frames — stop the moment the OS/browser ends the share so a black
           // screen_*.webm never lands in R2.

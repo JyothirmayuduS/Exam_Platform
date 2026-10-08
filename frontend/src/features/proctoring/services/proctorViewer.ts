@@ -24,6 +24,8 @@ export type RemoteFeed = {
   cameraTrack: any | null;
   screenTrack: any | null;
   audioTrack: any | null;
+  /** LiveKit's measure of the student's link: excellent / good / poor / lost. */
+  quality: "excellent" | "good" | "poor" | "lost" | "unknown";
 };
 
 export type ViewerHandle = {
@@ -100,7 +102,7 @@ export async function startProctorViewing(opts: {
   const emit = () => opts.onFeeds?.([...feeds.values()]);
   const ensure = (identity: string): RemoteFeed => {
     let f = feeds.get(identity);
-    if (!f) { f = { identity, camera: null, screen: null, cameraTrack: null, screenTrack: null, audioTrack: null }; feeds.set(identity, f); }
+    if (!f) { f = { identity, camera: null, screen: null, cameraTrack: null, screenTrack: null, audioTrack: null, quality: "unknown" }; feeds.set(identity, f); }
     return f;
   };
 
@@ -110,12 +112,19 @@ export async function startProctorViewing(opts: {
   room.on(RoomEvent.Disconnected, () => opts.onState?.("disconnected"));
 
   room.on(RoomEvent.ParticipantConnected, (p: any) => console.debug("[proctor-viewer] participant joined:", p?.identity));
+  room.on(RoomEvent.ConnectionQualityChanged, (quality: string, participant: any) => {
+    const feed = feeds.get(String(participant?.identity ?? ""));
+    if (!feed || feed.quality === quality) return;
+    feed.quality = (quality as RemoteFeed["quality"]) ?? "unknown";
+    emit();
+  });
 
   // Store the track only. Tiles attach it to their own <video> — an extra
   // off-DOM attach() with adaptiveStream left feeds paused/black.
   room.on(RoomEvent.TrackSubscribed, (track: any, _pub: any, participant: any) => {
     console.debug("[proctor-viewer] track subscribed:", track?.kind, "source:", track?.source, "from:", participant?.identity);
     const feed = ensure(String(participant?.identity ?? "unknown"));
+    if (participant?.connectionQuality) feed.quality = participant.connectionQuality;
     if (track?.kind === "video") {
       const isScreen = String(track?.source ?? "").includes("screen");
       if (isScreen) { feed.screenTrack = track; }
@@ -160,6 +169,7 @@ export async function startProctorViewing(opts: {
         const track = pub?.track;
         if (!track || pub?.isSubscribed === false) continue;
         const feed = ensure(String(participant?.identity ?? "unknown"));
+        if (participant?.connectionQuality) feed.quality = participant.connectionQuality;
         if (track.kind === "video") {
           const isScreen = String(track?.source ?? pub?.source ?? "").includes("screen");
           if (isScreen) { feed.screenTrack = track; }

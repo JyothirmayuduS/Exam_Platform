@@ -19,27 +19,81 @@ vi.mock("@/shared/data/api/students", () => ({ getStudentIdByRoll: vi.fn().mockR
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-describe("per-second camera capture", () => {
-  function video() {
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+describe("webcam snapshots", () => {
+  const canvasWidths: number[] = [];
+  function video(width = 640, height = 480) {
+    canvasWidths.length = 0;
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+      canvasWidths.push(this.width);
+      return { drawImage: vi.fn() } as unknown as CanvasRenderingContext2D;
+    } as unknown as HTMLCanvasElement["getContext"]);
     vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/jpeg;base64,YWJj");
     const element = document.createElement("video");
-    Object.defineProperties(element, { videoWidth: { value: 640 }, videoHeight: { value: 480 }, readyState: { value: 2 } });
+    Object.defineProperties(element, { videoWidth: { value: width }, videoHeight: { value: height }, readyState: { value: 2 } });
     return element;
   }
-  it("captures every second without AI warnings, timestamps at capture, and flushes on stop", async () => {
+  const start = Date.parse("2026-09-01T10:00:00Z");
+
+  it("does not take a snapshot every second: one at start, then one every 20 s", async () => {
     vi.useFakeTimers();
-    const start = Date.parse("2026-09-01T10:00:00Z");
     vi.setSystemTime(start);
     const handle = startScreenshotCapture({ examId: "EXAM", roll: "R1" });
     handle.setVideo(video());
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(outbox.enqueue).toHaveBeenCalledTimes(6);
-    expect(outbox.enqueue.mock.calls.map((c) => c[0])).toEqual(Array.from({ length: 6 }, (_, i) => `EXAM/R1/screenshots/snap_${start + i * 1000}.jpg`));
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(outbox.enqueue).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(41_000);
+    expect(outbox.enqueue.mock.calls.map((c) => c[0])).toEqual(
+      [0, 20_000, 40_000, 60_000].map((ms) => `EXAM/R1/screenshots/snap_${start + ms}.jpg`),
+    );
     expect(await handle.stop()).toBe(true);
-    await vi.advanceTimersByTimeAsync(10000);
-    expect(outbox.enqueue).toHaveBeenCalledTimes(6);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(outbox.enqueue).toHaveBeenCalledTimes(4);
     expect(outbox.flush).toHaveBeenCalledTimes(1);
+  });
+
+  it("slows to one every 30 s on a weak connection and back to 20 s when it recovers", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(start);
+    const handle = startScreenshotCapture({ examId: "EXAM", roll: "R1" });
+    handle.setVideo(video());
+    handle.setLowBandwidth(true);
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(outbox.enqueue).toHaveBeenCalledTimes(4); // 0, 30, 60, 90 s
+    handle.setLowBandwidth(false);
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(outbox.enqueue).toHaveBeenCalledTimes(6); // +20, +40 s
+    expect(await handle.stop()).toBe(true);
+  });
+
+  it("compresses periodic snapshots to small thumbnails", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(start);
+    const handle = startScreenshotCapture({ examId: "EXAM", roll: "R1" });
+    handle.setVideo(video(1920, 1080));
+    expect(canvasWidths).toEqual([480]);
+    expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenLastCalledWith("image/jpeg", 0.5);
+    await handle.stop();
+  });
+
+  it("still captures a frame the moment a violation is flagged", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(start);
+    vi.mocked(r2PutBlob).mockResolvedValue("EXAM/R1/violations/x.jpg");
+    const handle = startScreenshotCapture({ examId: "EXAM", roll: "R1" });
+    handle.setVideo(video(1920, 1080));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const flaggedAt = start + 5_000;
+    const blob = await handle.captureViolationSnapshot("phone_detected", flaggedAt);
+    expect(blob).toBeInstanceOf(Blob);
+    expect(r2PutBlob).toHaveBeenCalledWith(expect.objectContaining({
+      examId: "EXAM", ownerSegment: "R1", kind: "violations", name: `${flaggedAt}_phone_detected.jpg`,
+    }));
+    // Compressed, but sharper than the periodic thumbnails.
+    expect(canvasWidths.at(-1)).toBe(960);
+    expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenLastCalledWith("image/jpeg", 0.7);
+    // The violation frame is extra: the periodic schedule is unchanged.
+    expect(outbox.enqueue).toHaveBeenCalledTimes(1);
+    await handle.stop();
   });
 });
 

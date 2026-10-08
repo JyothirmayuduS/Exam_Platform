@@ -10,8 +10,13 @@
 
 import { r2PutBlob } from "@/shared/services/r2Function";
 import { storageFolderSegment } from "@/shared/services/examStorage";
+import { RECORDING_BITRATE } from "@/shared/services/lowBandwidth";
 
-export type RecorderHandle = { stop: () => void };
+export type RecorderHandle = {
+  stop: () => void;
+  /** Weak link: keep live parts on the device and upload them once it recovers. */
+  setLowBandwidth: (on: boolean) => void;
+};
 
 async function putRecording(opts: {
   examId: string;
@@ -68,14 +73,39 @@ export function startVideoRecording(opts: {
 
   const recorder = new MediaRecorder(stream, {
     mimeType,
-    videoBitsPerSecond: 2_500_000, // 2.5 Mbps HD
+    videoBitsPerSecond: RECORDING_BITRATE[kind],
   });
 
   const chunks: Blob[] = [];
   let started = false;
   let partSeq = 0;
-  // Serialised chain so parts upload in order without overlapping.
-  let partChain: Promise<void> = Promise.resolve();
+  let lowBandwidth = false;
+  // Parts upload one at a time, in order. While the link is weak they wait.
+  const pendingParts: { seq: number; blob: Blob }[] = [];
+  let draining = false;
+  const drainParts = async () => {
+    if (draining) return;
+    draining = true;
+    try {
+      while (pendingParts.length && !lowBandwidth) {
+        const part = pendingParts[0];
+        try {
+          await r2PutBlob({
+            examId: folder,
+            ownerSegment: roll,
+            kind: "recordings",
+            name: `parts/${kind}_${String(part.seq).padStart(8, "0")}.webm`,
+            blob: part.blob,
+          });
+        } catch {
+          /* live part upload is best-effort */
+        }
+        pendingParts.shift();
+      }
+    } finally {
+      draining = false;
+    }
+  };
 
   const start = () => {
     if (started) return;
@@ -88,25 +118,15 @@ export function startVideoRecording(opts: {
     if (!e.data || e.data.size <= 0) return;
     chunks.push(e.data);
     if (liveParts) {
-      const blob = e.data;
-      partChain = partChain.then(async () => {
-        try {
-          partSeq += 1;
-          await r2PutBlob({
-            examId: folder,
-            ownerSegment: roll,
-            kind: "recordings",
-            name: `parts/${kind}_${String(partSeq).padStart(8, "0")}.webm`,
-            blob,
-          });
-        } catch {
-          /* live part upload is best-effort */
-        }
-      });
+      partSeq += 1;
+      pendingParts.push({ seq: partSeq, blob: e.data });
+      void drainParts();
     }
   };
 
   recorder.onstop = () => {
+    lowBandwidth = false;
+    void drainParts();
     const blob = new Blob(chunks, { type: "video/webm" });
     if (blob.size === 0) {
       console.warn(`[recorder] ${kind} recording is empty, skipping R2 upload`);
@@ -120,6 +140,10 @@ export function startVideoRecording(opts: {
   return {
     stop: () => {
       if (recorder.state !== "inactive") recorder.stop();
+    },
+    setLowBandwidth: (on) => {
+      lowBandwidth = on;
+      if (!on) void drainParts();
     },
   };
 }

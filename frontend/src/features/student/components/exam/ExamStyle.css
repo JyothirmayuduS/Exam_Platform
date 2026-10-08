@@ -84,6 +84,8 @@
 .exam-saved.saving i,
 .exam-saved.offline i { background: #E8B86D; }
 .exam-saved.saving i { animation: exam-p 1s infinite; }
+.exam-saved.net-weak i { background: #E8B86D; }
+.exam-saved.net-lost i { background: #E07A6B; animation: exam-p 1s infinite; }
 
 .exam-timer {
   font: 600 20px var(--mono);

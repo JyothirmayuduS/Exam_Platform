@@ -12,14 +12,36 @@
 import { Room, RoomEvent, Track, createLocalTracks } from "livekit-client";
 import { env, livekitConfigured, resolveLivekitUrl } from "@/shared/data/env";
 import { getSupabase } from "@/shared/data/supabase";
+import { cameraEncoding, screenEncoding, type VideoEncodingProfile } from "@/shared/services/lowBandwidth";
 
 export type ProctorState = "connecting" | "connected" | "reconnecting" | "disconnected" | "local-only";
+
+export type LinkQuality = "excellent" | "good" | "poor" | "lost" | "unknown";
 
 export type ProctorHandle = {
   room: InstanceType<typeof Room> | null;
   stream: MediaStream | null;
+  /** Weak link: lower the live camera/screen bitrate, frame rate and size. */
+  setLowBandwidth: (on: boolean) => void;
   stop: () => void;
 };
+
+/** Re-encode a published track in place (no renegotiation, no new capture). */
+async function applyEncoding(sender: RTCRtpSender | undefined, profile: VideoEncodingProfile): Promise<void> {
+  if (!sender) return;
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings?.length) params.encodings = [{}];
+    for (const enc of params.encodings) {
+      enc.maxBitrate = profile.maxBitrate;
+      enc.maxFramerate = profile.maxFramerate;
+      enc.scaleResolutionDownBy = profile.scaleResolutionDownBy;
+    }
+    await sender.setParameters(params);
+  } catch (err) {
+    console.warn("[proctor] could not change video encoding:", err);
+  }
+}
 
 /** Ask the Edge Function for a short-lived LiveKit access token. Throws with a
  *  readable reason (shown on the camera tile) instead of failing silently. */
@@ -68,6 +90,8 @@ export async function startProctorPublishing(opts: {
    */
   localStream?: MediaStream | null;
   onState?: (s: ProctorState) => void;
+  /** LiveKit's measure of this student's own link. */
+  onQuality?: (q: LinkQuality) => void;
 }): Promise<ProctorHandle | null> {
   if (!livekitConfigured) return null;
   const creds = await fetchProctorToken(opts.room, opts.identity);
@@ -82,6 +106,11 @@ export async function startProctorPublishing(opts: {
   room.on(RoomEvent.Reconnecting, () => report("reconnecting"));
   room.on(RoomEvent.Reconnected, () => report("connected"));
   room.on(RoomEvent.Disconnected, () => report("disconnected"));
+  room.on(RoomEvent.ConnectionQualityChanged, (quality: string, participant: { identity?: string } | undefined) => {
+    if (stopped || participant?.identity !== room.localParticipant.identity) return;
+    opts.onQuality?.(quality as LinkQuality);
+  });
+  const published: { camera?: { sender?: RTCRtpSender }; screen?: { sender?: RTCRtpSender } } = {};
 
   // MediaStreamTracks WE own (created or cloned) — stopped on teardown. The
   // caller's original stream tracks are NEVER stopped.
@@ -100,7 +129,20 @@ export async function startProctorPublishing(opts: {
     try {
       // Keep audio unmuted on the wire so proctors can listen.
       if (track.kind === "audio") track.enabled = true;
-      await room.localParticipant.publishTrack(track, { source, name });
+      const isScreen = source === Track.Source.ScreenShare;
+      const profile = isScreen ? screenEncoding(false) : cameraEncoding(false);
+      const pub = await room.localParticipant.publishTrack(track, {
+        source,
+        name,
+        // One capped layer: simulcast adds extra uplink a weak link can't carry.
+        simulcast: false,
+        ...(track.kind === "video"
+          ? isScreen
+            ? { screenShareEncoding: { maxBitrate: profile.maxBitrate, maxFramerate: profile.maxFramerate } }
+            : { videoEncoding: { maxBitrate: profile.maxBitrate, maxFramerate: profile.maxFramerate } }
+          : {}),
+      });
+      if (track.kind === "video" && pub.track) published[isScreen ? "screen" : "camera"] = pub.track;
       return true;
     } catch (err) {
       console.warn(`[proctor] publish ${name} FAILED:`, err);
@@ -155,12 +197,19 @@ export async function startProctorPublishing(opts: {
     // The published local stream: caller's stream when reused (preview keeps
     // working even though LiveKit encodes the clones), else the tracks we
     // created.
-    const published = opts.localStream?.getTracks().length
+    const previewStream = opts.localStream?.getTracks().length
       ? opts.localStream
       : new MediaStream(ownedTracks);
+    let lowBandwidth = false;
     return {
       room,
-      stream: published ?? null,
+      stream: previewStream ?? null,
+      setLowBandwidth: (on) => {
+        if (on === lowBandwidth || stopped) return;
+        lowBandwidth = on;
+        void applyEncoding(published.camera?.sender, cameraEncoding(on));
+        void applyEncoding(published.screen?.sender, screenEncoding(on));
+      },
       stop: () => {
         stopped = true;
         void room.disconnect();

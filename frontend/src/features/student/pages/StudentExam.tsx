@@ -62,6 +62,10 @@ import useProctoring from "@/features/proctoring/hooks/useProctoring";
 import useKeyboardShortcuts from "@/features/student/hooks/useKeyboardShortcuts";
 import useOfflineSync from "@/features/student/hooks/useOfflineSync";
 import useConnectionLost from "@/features/student/hooks/useConnectionLost";
+import useConnectionState from "@/features/student/hooks/useConnectionState";
+import ConnectionBadge from "@/shared/components/ConnectionBadge";
+import { RECORDING_BITRATE } from "@/shared/services/lowBandwidth";
+import type { LinkQuality } from "@/features/proctoring/services/proctor";
 import { clearPending, planResume, readPending, resumeSection, saveOrQueue, writePending, type ResumePlan } from "@/features/student/domain/resume";
 import useCurrentProfile from "@/features/auth/hooks/useCurrentProfile";
 import { invoke } from "@tauri-apps/api/core";
@@ -296,6 +300,13 @@ function StudentExamSession() {
   // Mirrors useAutosave's consecutive failures (declared further down) for the clocks above it.
   const [saveFailures, setSaveFailures] = useState(0);
   const connectionLost = useConnectionLost(saveFailures);
+  // Good / weak / lost. Anything but good turns on low-bandwidth mode: harder
+  // caps on the live video, slower snapshots, recording parts held locally.
+  const [videoQuality, setVideoQuality] = useState<LinkQuality>("unknown");
+  const connectionState = useConnectionState(connectionLost, videoQuality);
+  const lowBandwidth = connectionState !== "good";
+  const lowBandwidthRef = useRef(lowBandwidth);
+  lowBandwidthRef.current = lowBandwidth;
   const recordedChunksRef = useRef<Blob[]>([]);
   // Crash-proof recording: every chunk the recorder emits is also uploaded to
   // R2 immediately (parts/exam_NNNNNNNN.webm). A browser crash mid-exam then
@@ -316,6 +327,9 @@ function StudentExamSession() {
     try {
       while (partsQueueRef.current.length > 0) {
         if (deadline > 0 && Date.now() > deadline) break;
+        // Weak link: keep the parts (they are also in recordedChunksRef) and
+        // upload once it recovers. The submit drain passes a deadline and runs anyway.
+        if (deadline === 0 && lowBandwidthRef.current) break;
         const item = partsQueueRef.current[0];
         let attempts = 0;
         let ok = false;
@@ -337,7 +351,7 @@ function StudentExamSession() {
       }
     } finally {
       partsBusyRef.current = false;
-      if (partsQueueRef.current.length > 0) void drainRecordingParts();
+      if (partsQueueRef.current.length > 0 && !lowBandwidthRef.current) void drainRecordingParts();
     }
   }
   const queueRecordingPart = (blob: Blob) => {
@@ -368,7 +382,8 @@ function StudentExamSession() {
           "video/webm",
           "video/mp4",
         ].find((t) => MediaRecorder.isTypeSupported(t)) || "";
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 1600000 } : { videoBitsPerSecond: 1600000 });
+      const bitrate = recorderOnScreenRef.current ? RECORDING_BITRATE.screen : RECORDING_BITRATE.camera;
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: bitrate } : { videoBitsPerSecond: bitrate });
       mr.ondataavailable = (e) => {
         if (e.data.size <= 0) return;
         // 1) Local accumulation / merged full video at submit (unchanged).
@@ -573,7 +588,8 @@ function StudentExamSession() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViolation]);
 
-  // Capture the STUDENT every second, whether or not AI raises a warning.
+  // Periodic webcam snapshots (every 20 s, 30 s on a weak link) whether or not
+  // AI raises a warning; violations capture their own frame immediately above.
   // The screen stream remains the source for the separate screen recording.
   useEffect(() => {
     if (step !== "exam") return;
@@ -586,13 +602,13 @@ function StudentExamSession() {
         examId: EXAM_ID,
         examName: examNameRef.current,
         roll: STUDENT_ROLL,
-        intervalMs: 1000,
         onError: (message) => {
           console.warn("[StudentExam]", message);
           setArtifactStatus({ state: "partial", detail: message });
         },
       });
       screenshotHandleRef.current.setVideo(el);
+      screenshotHandleRef.current.setLowBandwidth(lowBandwidthRef.current);
     }
     // Server-side watchdog: same screen feed, downsampled, analysed server-side.
     if (screenStreamRef.current) {
@@ -614,6 +630,12 @@ function StudentExamSession() {
       }
     };
   }, [step]);
+
+  useEffect(() => {
+    screenshotHandleRef.current?.setLowBandwidth(lowBandwidth);
+    if (!lowBandwidth && partsQueueRef.current.length > 0) void drainRecordingParts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lowBandwidth]);
 
   // Download gate: only offer the installer after confirming the link resolves
   // to real installer bytes. Without the probe, an unhosted path returns a 404
@@ -1990,6 +2012,7 @@ function StudentExamSession() {
         totalQuestions={questions.length}
         timeString={timeString}
         timerToneClass={timerTone}
+        connection={connectionState}
         isFullscreen={isFullscreen}
         autosaveStatus={autosaveStatus}
         lastSavedAt={lastSavedAt}
@@ -2118,7 +2141,12 @@ function StudentExamSession() {
         {/* RIGHT */}
         <div className="exam-aside" style={{ alignSelf: "start" }}>
           <section className="exam-panel">
-            <h2>Proctoring</h2>
+            <h2 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>Proctoring <ConnectionBadge state={connectionState} compact /></h2>
+            {connectionState === "weak" && (
+              <p className="exam-sm exam-mute" style={{ margin: "0 0 8px" }}>
+                Weak connection: live video is reduced to keep the exam running. Your answers still save.
+              </p>
+            )}
             
             <div className="exam-cam exam-cam-live">
               <ProctorCamera
@@ -2131,6 +2159,8 @@ function StudentExamSession() {
                 initialStream={cameraStream}
                 violationActive={!!activeViolation}
                 proctorMessages={violations.slice(-3).map((v) => `${v.kind} at ${v.at}`)}
+                lowBandwidth={lowBandwidth}
+                onQuality={setVideoQuality}
                 onLinkError={(message) => {
                   if (linkErrorLoggedRef.current || !studentIdRef.current || step !== "exam") return;
                   linkErrorLoggedRef.current = true;

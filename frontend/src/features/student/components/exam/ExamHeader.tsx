@@ -1,5 +1,6 @@
 import type { SaveStatus } from "@/features/student/hooks/useAutosave";
 import { isTauri } from "@/shared/platform/platform";
+import type { ConnectionState } from "@/shared/services/lowBandwidth";
 import "./ExamStyle.css";
 
 type ExamHeaderProps = {
@@ -16,6 +17,13 @@ type ExamHeaderProps = {
   isFullscreen: boolean;
   autosaveStatus: SaveStatus;
   lastSavedAt: string | null;
+  connection?: ConnectionState;
+};
+
+const NET_LABEL: Record<ConnectionState, string> = {
+  good: "Connection good",
+  weak: "Connection weak · video reduced",
+  lost: "Connection lost",
 };
 
 const SAVE_LABEL: Record<SaveStatus, string> = {
@@ -36,6 +44,7 @@ export default function ExamHeader({
   onToggleFullscreen,
   isFullscreen,
   autosaveStatus,
+  connection,
 }: ExamHeaderProps) {
   const timerClass = timerToneClass.includes("alert") ? "c" : timerToneClass.includes("amber") ? "w" : "";
   const saveClass = autosaveStatus === "saving" ? "saving" : autosaveStatus === "local" || autosaveStatus === "failed" ? "offline" : "";
@@ -68,6 +77,13 @@ export default function ExamHeader({
         <i />
         {SAVE_LABEL[autosaveStatus]}
       </div>
+
+      {connection && (
+        <div className={`exam-saved net-${connection}`} role="status" data-connection={connection}>
+          <i />
+          {NET_LABEL[connection]}
+        </div>
+      )}
 
       <div className={`exam-timer ${timerClass}`} role="timer" aria-live="off" aria-label={`Time remaining ${timeString}`}>
         {timeString}
