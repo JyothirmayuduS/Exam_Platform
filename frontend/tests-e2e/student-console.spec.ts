@@ -5,7 +5,7 @@ test.describe("Student console (demo)", () => {
   test("signs in and lands on the dashboard", async ({ page }) => {
     await demoLogin(page, "student");
     await expect(page).toHaveURL(/\/student/);
-    await expect(page.getByRole("heading", { name: /my enrolled exams/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /overview/i })).toBeVisible();
   });
 
   test("my exams page renders", async ({ page }) => {

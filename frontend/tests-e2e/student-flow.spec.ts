@@ -16,6 +16,6 @@ test.describe('Student Exam Flow', () => {
     await expect(page).toHaveURL(/.*\/student/);
 
     // Ensure dashboard loads with exams
-    await expect(page.getByRole('heading', { name: /enrolled exams/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: /overview/i })).toBeVisible({ timeout: 10000 });
   });
 });

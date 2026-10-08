@@ -1,6 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+
+// Installers are gitignored (hosted in blob storage); these flows need one staged locally.
+const hasStagedDmg = existsSync("public/downloads/VignanExam.dmg");
 
 async function asMac(page: Page) {
   await page.addInitScript(() => {
@@ -32,6 +36,7 @@ async function interceptOSBoundary(page: Page) {
 test.beforeEach(async ({ page }) => { await asMac(page); });
 
 test("Mac installer download contains the actual staged DMG bytes", async ({ page }) => {
+  test.skip(!hasStagedDmg, "no staged installer in public/downloads");
   await demoStudent(page);
   await page.goto("/student/exam?examId=INSTALLER-SMOKE");
   const link = page.getByRole("link", { name: "Download", exact: true });
@@ -50,6 +55,7 @@ test("Mac installer download contains the actual staged DMG bytes", async ({ pag
 });
 
 test("first installed click requests the right protocol URL and retry/back work", async ({ page }) => {
+  test.skip(!hasStagedDmg, "no staged installer in public/downloads");
   await demoStudent(page);
   await interceptOSBoundary(page);
   await page.goto("/student/exam?examId=SMOKE%26ONE");
