@@ -45,7 +45,7 @@ async function startAttemptOnce(opts: StartAttemptOpts): Promise<string | null> 
 
   const { data: existing } = await db
     .from("attempts")
-    .select("id, state")
+    .select("id, state, paper")
     .eq("exam_id", opts.examId)
     .eq("student_id", opts.studentId)
     .maybeSingle();
@@ -61,7 +61,11 @@ async function startAttemptOnce(opts: StartAttemptOpts): Promise<string | null> 
       total: opts.total,
       user_agent: opts.userAgent ?? null,
     };
-    if (opts.paper && opts.paper.length > 0) patch.paper = opts.paper;
+    // The stored paper is what the saved answers were given against; never
+    // replace it (a re-randomised paper would put them on other questions).
+    const stored = (existing as { paper?: unknown }).paper;
+    const hasPaper = Array.isArray(stored) && stored.length > 0;
+    if (!hasPaper && opts.paper && opts.paper.length > 0) patch.paper = opts.paper;
     const { error } = await db.from("attempts").update(patch).eq("id", existing.id);
     if (error) return null;
     return existing.id;

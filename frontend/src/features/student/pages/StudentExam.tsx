@@ -1474,13 +1474,15 @@ function StudentExamSession() {
       // Start at the first question of the section the student picked.
       goTo(startIndexRef.current);
     }
-    // Update the DB attempt with the generated paper and consent.
+    // Update the DB attempt with the generated paper and consent. A resumed
+    // attempt keeps the paper it already has, so restored answers stay on
+    // the questions they were given for.
     if (supabaseConfigured && attemptId) {
       void Promise.all([import("@/shared/data/examApi"), clientUserAgent()]).then(([m, userAgent]) => m.startAttempt({
         examId: EXAM_ID,
         studentId: studentIdRef.current!,
         total: questions.length,
-        paper: paperRef.current,
+        ...(resumed ? {} : { paper: paperRef.current }),
         userAgent,
       }));
       if (consentGiven && attemptId) {
@@ -1910,10 +1912,11 @@ function StudentExamSession() {
               <div>
                 <h3>Connection lost — your answers are saved on this device</h3>
                 <p>
-                  Keep working and keep this window open. The timer is paused here until the connection
-                  returns; it then resyncs with the exam server and your answers upload automatically.
+                  Keep working and keep this window open. Your answers upload automatically when the
+                  connection returns.
                   {lastSavedAt ? ` Last saved to the server at ${lastSavedAt}.` : ""}
                 </p>
+                <p style={{ marginTop: 4, fontWeight: 600 }}>The exam clock keeps running. Reconnect to see the time left.</p>
               </div>
             </div>
           )}

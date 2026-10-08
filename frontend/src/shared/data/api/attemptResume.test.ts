@@ -114,6 +114,20 @@ describe("no second attempt", () => {
     expect(db.inserts).toBe(0);
   });
 
+  it("re-opening keeps the stored paper instead of writing a re-generated one", async () => {
+    const stored = [{ id: "q7" }, { id: "q2" }, { id: "q9" }];
+    const db = fakeAttempts({ id: "att-1", state: "in_progress", answers: { q7: 1 }, paper: stored }, 600);
+    await startAttempt({ examId: EXAM, studentId: STUDENT, total: 3, paper: [{ id: "q2" }, { id: "q9" }, { id: "q7" }] as never });
+    expect(db.row?.paper).toEqual(stored);
+  });
+
+  it("an attempt without a paper yet gets the generated one", async () => {
+    const db = fakeAttempts({ id: "att-1", state: "in_progress", answers: {}, paper: [] }, 600);
+    const paper = [{ id: "q1" }, { id: "q2" }];
+    await startAttempt({ examId: EXAM, studentId: STUDENT, total: 2, paper: paper as never });
+    expect(db.row?.paper).toEqual(paper);
+  });
+
   it("two starts at once share one request and create one row", async () => {
     const db = fakeAttempts(null, 600);
     const [a, b] = await Promise.all([
