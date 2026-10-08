@@ -70,6 +70,16 @@ export default function useExamState(questions: ExamQuestionLike[]) {
     markVisited(questionId);
   }, [markVisited]);
 
+  /** Replace all answers with a recovered copy (resume after reload). */
+  const restoreAnswers = useCallback((restored: Record<string, unknown>) => {
+    setAnswers({ ...restored });
+    setVisited((prev) => {
+      const next = new Set(prev);
+      for (const id of Object.keys(restored)) next.add(id);
+      return next;
+    });
+  }, []);
+
   const clearAnswer = useCallback((questionId: string) => {
     setAnswers((prev) => {
       if (!(questionId in prev)) return prev;
@@ -136,6 +146,7 @@ export default function useExamState(questions: ExamQuestionLike[]) {
     goLast,
     goLastVisited,
     setAnswer,
+    restoreAnswers,
     clearAnswer,
     toggleReview,
     isReviewed,

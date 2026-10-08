@@ -73,8 +73,17 @@ export default function useSectionTimer({ windows, active, storageKey, onExpire 
     return true;
   }, [index, windows]);
 
+  /** Jump to a position recovered from the server after a reload. */
+  const restore = useCallback((nextIndex: number, nextSecondsLeft: number) => {
+    if (!windows.length) return;
+    setIndex(Math.max(0, Math.min(windows.length - 1, nextIndex)));
+    setSecondsLeft(Math.max(0, Math.floor(nextSecondsLeft)));
+    expiredRef.current = -1;
+  }, [windows.length]);
+
   const current = windows[index];
   return {
+    restore,
     enabled: windows.length > 0,
     index,
     current,

@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 import { getSupabase } from "@/shared/data/supabase";
-import type { PaperSlot } from "@/shared/data/api/types";
+import type { AttemptSnapshot, PaperSlot, ResumeState } from "@/shared/data/api/types";
 import { logAudit } from "@/shared/data/api/audit";
 import type { AutoGradeResult } from "@/shared/domain/exam/autoGrade";
 
@@ -16,14 +16,30 @@ export async function getAttemptExamId(attemptId: string): Promise<string | null
 }
 
 
-export async function startAttempt(opts: {
+type StartAttemptOpts = {
   examId: string;
   studentId: string;
   total: number;
   paper?: PaperSlot[];
   /** Candidate browser User-Agent — device telemetry for the proctor roster. */
   userAgent?: string;
-}): Promise<string | null> {
+};
+
+const startsInFlight = new Map<string, Promise<string | null>>();
+
+/** Open (or re-open) the student's single attempt. Concurrent calls share one
+ *  request, and an insert that loses the (exam_id, student_id) race reuses the
+ *  winner's row, so a reload or double start never creates a second attempt. */
+export function startAttempt(opts: StartAttemptOpts): Promise<string | null> {
+  const key = `${opts.examId}\u0000${opts.studentId}`;
+  const running = startsInFlight.get(key);
+  if (running) return running;
+  const p = startAttemptOnce(opts).finally(() => startsInFlight.delete(key));
+  startsInFlight.set(key, p);
+  return p;
+}
+
+async function startAttemptOnce(opts: StartAttemptOpts): Promise<string | null> {
   const db = getSupabase();
   if (!db) return null;
 
@@ -64,8 +80,53 @@ export async function startAttempt(opts: {
     })
     .select("id")
     .maybeSingle();
-  if (error) return null;
+  if (error) {
+    if ((error as { code?: string }).code !== "23505") return null;
+    const { data: winner } = await db
+      .from("attempts")
+      .select("id")
+      .eq("exam_id", opts.examId)
+      .eq("student_id", opts.studentId)
+      .maybeSingle();
+    return (winner?.id as string) ?? null;
+  }
   return (data?.id as string) ?? null;
+}
+
+/** Everything needed to resume an attempt after a reload or relaunch. */
+export async function loadAttemptResume(examId: string, studentId: string): Promise<AttemptSnapshot | null> {
+  const db = getSupabase();
+  if (!db || !examId || !studentId) return null;
+  const { data, error } = await db
+    .from("attempts")
+    .select("id, state, answers, auto_saved_at, resume_state")
+    .eq("exam_id", examId)
+    .eq("student_id", studentId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const row = data as { id: string; state: string | null; answers: unknown; auto_saved_at: string | null; resume_state: unknown };
+  const secondsLeft = row.state === "submitted" ? 0 : await fetchAttemptTimeLeft(examId);
+  const saved = row.auto_saved_at ? Date.parse(row.auto_saved_at) : NaN;
+  return {
+    attemptId: String(row.id),
+    state: row.state ?? "not_started",
+    answers: row.answers && typeof row.answers === "object" ? (row.answers as Record<string, unknown>) : {},
+    autoSavedAt: Number.isFinite(saved) ? saved : null,
+    resume: parseResumeState(row.resume_state),
+    secondsLeft,
+  };
+}
+
+function parseResumeState(raw: unknown): ResumeState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Partial<ResumeState>;
+  if (typeof r.index !== "number" || typeof r.savedAt !== "number") return null;
+  return {
+    index: r.index,
+    section: typeof r.section === "number" ? r.section : 0,
+    sectionSecondsLeft: typeof r.sectionSecondsLeft === "number" ? r.sectionSecondsLeft : null,
+    savedAt: r.savedAt,
+  };
 }
 
 /** Records the candidate's consent to recording/proctoring on an attempt. */
@@ -190,6 +251,10 @@ export async function saveAnswers(opts: {
   total?: number;
   /** Device session holding the attempt; the DB rejects writes from any other device. */
   sessionId?: string;
+  /** Where the student is, so a reload resumes on the same question and section. */
+  resume?: ResumeState;
+  /** When these answers were captured (ms); defaults to now. A queued copy keeps its own time. */
+  savedAt?: number;
 }): Promise<boolean> {
   return upsertAttemptPatch({
     examId: opts.examId,
@@ -199,8 +264,9 @@ export async function saveAnswers(opts: {
       answers: opts.answers,
       answered: opts.answered,
       minutes_used: opts.minutesUsed,
-      auto_saved_at: new Date().toISOString(),
+      auto_saved_at: new Date(opts.savedAt ?? Date.now()).toISOString(),
       ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
+      ...(opts.resume ? { resume_state: opts.resume } : {}),
     },
   });
 }

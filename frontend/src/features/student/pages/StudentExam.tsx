@@ -21,6 +21,7 @@ import {
   saveAnswers,
   submitAttempt,
   fetchAttemptTimeLeft,
+  loadAttemptResume,
   claimAttemptSession,
   deviceSessionId,
   saveViolation,
@@ -60,6 +61,8 @@ import useAutosave from "@/features/student/hooks/useAutosave";
 import useProctoring from "@/features/proctoring/hooks/useProctoring";
 import useKeyboardShortcuts from "@/features/student/hooks/useKeyboardShortcuts";
 import useOfflineSync from "@/features/student/hooks/useOfflineSync";
+import useConnectionLost from "@/features/student/hooks/useConnectionLost";
+import { clearPending, planResume, readPending, resumeSection, saveOrQueue, writePending, type ResumePlan } from "@/features/student/domain/resume";
 import useCurrentProfile from "@/features/auth/hooks/useCurrentProfile";
 import { invoke } from "@tauri-apps/api/core";
 import { startNativeDisplayStream } from "@/shared/platform/nativeScreenShare";
@@ -283,6 +286,13 @@ function StudentExamSession() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recorderOnScreenRef = useRef(false);
   const submitStartedRef = useRef(false);
+  // In-progress attempt found on open: restored answers are applied at once,
+  // position and clocks when the exam step begins.
+  const resumeRef = useRef<{ plan: Extract<ResumePlan, { kind: "resume" }>; fetchedAt: number } | null>(null);
+  const [resumeInfo, setResumeInfo] = useState<{ answered: number; minutesLeft: number | null; fromDevice: boolean } | null>(null);
+  // Mirrors useAutosave's consecutive failures (declared further down) for the clocks above it.
+  const [saveFailures, setSaveFailures] = useState(0);
+  const connectionLost = useConnectionLost(saveFailures);
   const recordedChunksRef = useRef<Blob[]>([]);
   // Crash-proof recording: every chunk the recorder emits is also uploaded to
   // R2 immediately (parts/exam_NNNNNNNN.webm). A browser crash mid-exam then
@@ -420,6 +430,7 @@ function StudentExamSession() {
     goLast,
     goLastVisited,
     setAnswer,
+    restoreAnswers,
     clearAnswer,
     toggleReview,
     isReviewed,
@@ -455,7 +466,12 @@ function StudentExamSession() {
     [examSettings, questions, durationMin],
   );
 
-  useOfflineSync(studentIdRef.current);
+  useOfflineSync(studentIdRef.current, {
+    activeExamId: step === "exam" ? EXAM_ID : null,
+    onSynced: (examId, wasSubmit) => {
+      if (examId === EXAM_ID && wasSubmit) setSubmitFailed(false);
+    },
+  });
 
   // Phone uploads land in question_submissions. Attach any new one to its
   // question even if the candidate has moved to another question meanwhile
@@ -753,9 +769,39 @@ function StudentExamSession() {
       setQuestions(exam.settings?.sections === true ? groupBySection(uiRows, (r) => r.section).flatMap((g) => g.items) : uiRows);
 
       if (db && studentIdRef.current && active) {
-        const { data: att } = await db.from("attempts").select("state").eq("exam_id", EXAM_ID).eq("student_id", studentIdRef.current).maybeSingle();
-        if (att?.state === "submitted") {
+        const sid = studentIdRef.current;
+        const snap = await loadAttemptResume(EXAM_ID, sid);
+        if (!active) return;
+        const plan = planResume(snap, readPending(EXAM_ID), sid);
+        if (plan.kind === "submitted") {
+          clearPending(EXAM_ID);
           setStep("submitted");
+        } else if (plan.kind === "submit") {
+          // Time ran out while the page was closed, or a final submit never
+          // landed: submit what we have (the server keeps only on-time answers).
+          submitStartedRef.current = true;
+          restoreAnswers(plan.answers);
+          const answered = Object.values(plan.answers).filter((v) => v !== null && v !== undefined && v !== "").length;
+          const result = await submitAttempt({ examId: EXAM_ID, studentId: sid, answers: plan.answers, answered, minutesUsed: exam.duration_minutes ?? 0, sessionId: deviceSession });
+          if (!active) return;
+          if (result.ok) clearPending(EXAM_ID);
+          else {
+            writePending(EXAM_ID, { answers: plan.answers, answered, minutesUsed: exam.duration_minutes ?? 0, sessionId: deviceSession, isSubmit: true, studentId: sid });
+            setSubmitFailed(true);
+          }
+          setSubmitGrade(result.grade);
+          setStep("submitted");
+        } else if (plan.kind === "resume") {
+          restoreAnswers(plan.answers);
+          resumeRef.current = { plan, fetchedAt: Date.now() };
+          // The first device claim would otherwise re-fill answers the merged
+          // device copy deliberately cleared.
+          claimRestoredRef.current = true;
+          setResumeInfo({
+            answered: Object.values(plan.answers).filter((v) => v !== null && v !== undefined && v !== "").length,
+            minutesLeft: plan.secondsLeft === null ? null : Math.max(1, Math.ceil(plan.secondsLeft / 60)),
+            fromDevice: plan.fromDevice,
+          });
         }
       }
     })();
@@ -838,8 +884,10 @@ function StudentExamSession() {
 
   const { secondsLeft, setSecondsLeft, timeString, tone: timerTone } = useExamTimer({
     durationMinutes: durationMin,
-    // A proctor pause freezes the countdown until the attempt is resumed.
-    active: step === "exam" && !proctorPaused,
+    // A proctor pause freezes the countdown until the attempt is resumed; a
+    // lost connection freezes it on this device until the server clock is
+    // reachable again (the sync below then corrects it).
+    active: step === "exam" && !proctorPaused && !connectionLost,
     onTimeUp: () => void doSubmit(),
   });
 
@@ -849,12 +897,16 @@ function StudentExamSession() {
     if (step !== "exam" || !supabaseConfigured || !attemptId) return;
     let alive = true;
     const sync = () => void fetchAttemptTimeLeft(EXAM_ID).then((left) => {
-      if (alive && left !== null) setSecondsLeft(left);
+      if (!alive || left === null) return;
+      setSecondsLeft(left);
+      // The local countdown may be frozen (connection lost); the server's
+      // deadline still applies.
+      if (left <= 0) void doSubmit();
     });
     sync();
     const id = window.setInterval(sync, 30_000);
     return () => { alive = false; window.clearInterval(id); };
-  }, [step, attemptId, EXAM_ID, setSecondsLeft, proctorPaused]);
+  }, [step, attemptId, EXAM_ID, setSecondsLeft, proctorPaused, connectionLost]);
 
   // ── Timed sections ────────────────────────────────────────────────────────
   // Each section has its own countdown; navigation is limited to the section
@@ -863,7 +915,7 @@ function StudentExamSession() {
   const [confirmFinishSection, setConfirmFinishSection] = useState(false);
   const sectionTimer = useSectionTimer({
     windows,
-    active: step === "exam" && !proctorPaused,
+    active: step === "exam" && !proctorPaused && !connectionLost,
     storageKey: EXAM_ID && STUDENT_ROLL ? `vignan.section.${EXAM_ID}.${STUDENT_ROLL}` : null,
     onExpire: (i) => {
       if (i >= windows.length - 1) {
@@ -1055,38 +1107,38 @@ function StudentExamSession() {
     if (!supabaseConfigured || !studentIdRef.current) return false;
 
     const minutesUsed = Math.round((durationMin * 60 - secondsLeft) / 60);
-    const success = await saveAnswers({
-      examId: EXAM_ID,
-      studentId: studentIdRef.current,
-      answers: answers as Record<string, unknown>,
-      answered: answeredCount,
-      minutesUsed,
-      total: questions.length,
-      sessionId: deviceSession,
-    });
+    const savedAt = Date.now();
+    const resume = {
+      index: current,
+      section: sectionTimer.enabled ? sectionTimer.index : 0,
+      sectionSecondsLeft: sectionTimer.enabled ? sectionTimer.secondsLeft : null,
+      savedAt,
+    };
+    const studentId = studentIdRef.current;
+    return saveOrQueue(
+      EXAM_ID,
+      {
+        answers: answers as Record<string, unknown>,
+        answered: answeredCount,
+        minutesUsed,
+        sessionId: deviceSession,
+        isSubmit: false,
+        savedAt,
+        studentId,
+        resume,
+      },
+      (e) => saveAnswers({ ...e, examId: EXAM_ID, studentId, total: questions.length }),
+    );
+  }, [answeredCount, answers, secondsLeft, current, sectionTimer.enabled, sectionTimer.index, sectionTimer.secondsLeft, durationMin, EXAM_ID, questions.length, deviceSession]);
 
-    if (!success) {
-      try {
-        localStorage.setItem(`pending_sync_${EXAM_ID}`, JSON.stringify({
-          answers,
-          answered: answeredCount,
-          minutesUsed,
-          sessionId: deviceSession,
-          isSubmit: false
-        }));
-      } catch {}
-      return false; // Tells autosave it failed so it shows "Offline - Saved locally" or similar if we modify it
-    }
-    
-    return true;
-  }, [answeredCount, answers, secondsLeft]);
-
-  const { status: autosaveStatus, lastSavedAt, saveNow } = useAutosave({
+  const autosavePayload = useMemo(() => ({ answers, current, section: sectionTimer.index }), [answers, current, sectionTimer.index]);
+  const { status: autosaveStatus, lastSavedAt, failures: autosaveFailures, saveNow } = useAutosave({
     enabled: step === "exam",
-    payload: answers,
+    payload: autosavePayload,
     onSave: persistAnswers,
     intervalMs: 10000,
   });
+  useEffect(() => { setSaveFailures(autosaveFailures); }, [autosaveFailures]);
 
   useEffect(() => {
     const onFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -1403,8 +1455,23 @@ function StudentExamSession() {
     }
     // Enter full-screen lock (best-effort; Tauri kiosk is already fullscreen).
     try { if (!isTauri()) void document.documentElement.requestFullscreen?.(); } catch { /* ignore */ }
-    // Start at the first question of the section the student picked.
-    if (startIndexRef.current > 0 && startIndexRef.current < questions.length) {
+    const resumed = resumeRef.current;
+    if (resumed) {
+      // Continue where the student stopped; the section picker does not apply.
+      const now = Date.now();
+      if (resumed.plan.secondsLeft !== null) {
+        setSecondsLeft(Math.max(0, Math.round(resumed.plan.secondsLeft - (now - resumed.fetchedAt) / 1000)));
+      }
+      const saved = resumed.plan.resume;
+      let index = saved?.index ?? 0;
+      if (saved && windows.length) {
+        const sec = resumeSection(windows, saved, (now - saved.savedAt) / 1000);
+        sectionTimer.restore(sec.index, sec.secondsLeft);
+        if (sec.index !== saved.section) index = windows[sec.index].start;
+      }
+      goTo(Math.max(0, Math.min(questions.length - 1, index)));
+    } else if (startIndexRef.current > 0 && startIndexRef.current < questions.length) {
+      // Start at the first question of the section the student picked.
       goTo(startIndexRef.current);
     }
     // Update the DB attempt with the generated paper and consent.
@@ -1481,15 +1548,16 @@ function StudentExamSession() {
         // The answers did NOT land in the DB — keep them queued for the
         // reconnect retry AND tell the candidate instead of a fake success.
         setSubmitFailed(true);
-        try {
-          localStorage.setItem(`pending_sync_${EXAM_ID}`, JSON.stringify({
-            answers,
-            answered: answeredCount,
-            minutesUsed,
-            sessionId: deviceSession,
-            isSubmit: true
-          }));
-        } catch {}
+        writePending(EXAM_ID, {
+          answers: answers as Record<string, unknown>,
+          answered: answeredCount,
+          minutesUsed,
+          sessionId: deviceSession,
+          isSubmit: true,
+          studentId: studentIdRef.current,
+        });
+      } else {
+        clearPending(EXAM_ID);
       }
     }
 
@@ -1768,6 +1836,7 @@ function StudentExamSession() {
         rules={negativeRule ? [negativeRule] : []}
         consentGiven={consentGiven}
         onConsentChange={setConsentGiven}
+        resuming={resumeInfo}
         onBack={() => setStep("register")}
         onStart={(idx) => {
           const target = Math.max(0, Math.min(idx, Math.max(0, sections.length - 1)));
@@ -1833,8 +1902,21 @@ function StudentExamSession() {
           </div>
         </div>
       )}
-      {(unreadAnnouncements.length > 0 || flagThresholdWarning || activeViolation || seatingHint) && (
+      {(unreadAnnouncements.length > 0 || flagThresholdWarning || activeViolation || seatingHint || connectionLost) && (
         <div id="exam-banner" style={{ display: "flex" }}>
+          {connectionLost && (
+            <div className="exam-alert hi" role="alert" aria-live="assertive">
+              <i>!</i>
+              <div>
+                <h3>Connection lost — your answers are saved on this device</h3>
+                <p>
+                  Keep working and keep this window open. The timer is paused here until the connection
+                  returns; it then resyncs with the exam server and your answers upload automatically.
+                  {lastSavedAt ? ` Last saved to the server at ${lastSavedAt}.` : ""}
+                </p>
+              </div>
+            </div>
+          )}
           {seatingHint && (
             <div className="exam-alert" role="status">
               <i>!</i>

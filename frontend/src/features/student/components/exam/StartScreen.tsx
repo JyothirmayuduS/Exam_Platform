@@ -23,6 +23,8 @@ type Props = {
   onConsentChange: (value: boolean) => void;
   onStart: (sectionIndex: number) => void;
   onBack: () => void;
+  /** Set when an attempt is already in progress; the saved position wins over the section picker. */
+  resuming?: { answered: number; minutesLeft: number | null; fromDevice: boolean } | null;
 };
 
 export default function StartScreen({
@@ -39,6 +41,7 @@ export default function StartScreen({
   onConsentChange,
   onStart,
   onBack,
+  resuming = null,
 }: Props) {
   const [selected, setSelected] = useState(0);
   const safe = sections.length > 0 ? sections : [{ name: "All Questions", count: questionCount }];
@@ -124,6 +127,18 @@ export default function StartScreen({
                 </div>
               )}
 
+              {resuming && (
+                <div role="status" className="mt-6 border border-forest/40 bg-forest/5 p-4">
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-forest">Resuming your exam</p>
+                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink">
+                    {resuming.answered} answer{resuming.answered === 1 ? "" : "s"} restored
+                    {resuming.fromDevice ? " (including ones saved on this device while offline)" : ""}.
+                    {resuming.minutesLeft !== null ? ` About ${resuming.minutesLeft} minute${resuming.minutesLeft === 1 ? "" : "s"} left.` : ""}{" "}
+                    You will continue from the question and section where you stopped.
+                  </p>
+                </div>
+              )}
+
               {/* Monitoring / recording consent */}
               <label className="mt-6 flex cursor-pointer items-start gap-3 border border-line bg-raised p-4">
                 <input
@@ -149,7 +164,7 @@ export default function StartScreen({
                   onClick={() => onStart(sel)}
                   className="border border-forest bg-forest px-10 py-3 text-[14px] font-medium text-paper transition hover:bg-forest-soft disabled:cursor-not-allowed disabled:border-line disabled:bg-line/40 disabled:text-soft"
                 >
-                  Start now
+                  {resuming ? "Resume exam" : "Start now"}
                 </button>
               </div>
               {!consentGiven && (

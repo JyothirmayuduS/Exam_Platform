@@ -211,3 +211,27 @@ export type ExaminerExamRow = {
   delegates: number;
   allocation: ExamAllocation;
 };
+
+/** Where a candidate was in their paper; stored on attempts.resume_state. */
+export type ResumeState = {
+  /** Question index in the student's paper. */
+  index: number;
+  /** Timed-section index (0 when sections are untimed). */
+  section: number;
+  /** Seconds left in that section when saved; null when sections are untimed. */
+  sectionSecondsLeft: number | null;
+  /** Client clock (ms) when this position was captured. */
+  savedAt: number;
+};
+
+/** Server view of an attempt, read when the exam page opens. */
+export type AttemptSnapshot = {
+  attemptId: string;
+  state: string;
+  answers: Record<string, unknown>;
+  /** Server copy's auto_saved_at (ms), null when never saved. */
+  autoSavedAt: number | null;
+  resume: ResumeState | null;
+  /** Server clock; null when unknown (offline or older database). */
+  secondsLeft: number | null;
+};
