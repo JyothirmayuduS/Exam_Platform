@@ -28,3 +28,7 @@ frontend/public/downloads/VignanExam*
 # Downloaded training images are re-pulled by backend/training/pull_export.py
 backend/training/datasets/*/images/
 venv/
+
+# Local AI-tool settings (not part of the app)
+.agents/
+.claude/
