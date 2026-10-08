@@ -543,7 +543,7 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, sec
                 <Check label="Require Photo ID verification" detail="Students capture their face and ID card before starting." checked={!!s.photoId} onChange={(v) => patch("photoId", v)} />
                 <Check
                   label="Take action after a number of proctoring flags"
-                  detail="Off: flags are only recorded. On: when a candidate crosses the flag limit below, warn them or auto-submit the exam."
+                  detail="Off: flags are only recorded. On: when a candidate crosses the flag limit below, warn them or auto-submit the exam. Only serious flags count — leaving the exam window or full screen, and confident phone, earbud or second-person detections. Gaze, audio and network flags stay in the report for review."
                   checked={!!s.violationLimitEnabled}
                   onChange={(v) => patch("violationLimitEnabled", v)}
                 />

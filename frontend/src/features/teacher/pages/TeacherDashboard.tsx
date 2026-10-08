@@ -12,6 +12,7 @@ import TeacherSubmissions from "@/features/teacher/pages/TeacherSubmissions";
 import TeacherEvaluation from "@/features/teacher/pages/TeacherEvaluation";
 import { listExamsForTeacher, listLiveAttempts, type ExamRecord } from "@/shared/data/examApi";
 import EvidenceBrowser from "@/features/teacher/pages/EvidenceBrowser";
+import AuditLog from "@/features/teacher/pages/AuditLog";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
 import { Overview } from "@/features/teacher/pages/TeacherOverview";
 import { ExamWorkspace, ExamSettings } from "@/features/teacher/pages/ExamWorkspace";
@@ -126,6 +127,7 @@ export default function TeacherDashboard() {
     {section === "evidence" && <EvidenceBrowser />}
     {section === "evaluate" && <TeacherEvaluation notify={notify} />}
     {section === "reports" && <Reports notify={notify} />}
+    {section === "audit" && <AuditLog />}
         {section === "settings" && <SettingsPanel notify={notify} />}
       </RoleLayout>
       

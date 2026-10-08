@@ -1,7 +1,7 @@
 // Domain module: audit — immutable record of privileged staff actions
-// (score changes, force submits, publishes, delegations). Students can never
-// write or read these rows; RLS allows staff only (see migration
-// 20260911000002_retention_and_audit_logs.sql).
+// (score changes, force submits, publishes, delegations, time changes) plus
+// server-side submissions. Append-only: staff insert their own rows, only
+// teachers read, nobody updates or deletes (20261008193754_security_lockdown.sql).
 
 import { getSupabase } from "@/shared/data/supabase";
 import { supabaseConfigured } from "@/shared/data/env";
@@ -12,7 +12,11 @@ export type AuditAction =
   | "exam.published"
   | "exam.email_sent"
   | "grading.delegated"
-  | "student.provisioned";
+  | "student.provisioned"
+  | "attempt.time_extended"
+  | "attempt.paused"
+  | "attempt.resumed"
+  | "enrollment.extra_minutes_changed";
 
 /** Record one staff action. Resolves the actor from the current session. */
 export async function logAudit(opts: {
@@ -48,23 +52,35 @@ export async function logAudit(opts: {
   }
 }
 
-/** Read the most recent audit entries (staff-only via RLS). */
-export async function listAuditLogs(limit = 100): Promise<
-  { id: number; actor_role: string; action: string; target_type: string; target_id: string | null; meta: Record<string, unknown>; created_at: string }[]
-> {
+export type AuditEntry = {
+  id: number;
+  actor_id: string | null;
+  actor_role: string;
+  action: string;
+  target_type: string;
+  target_id: string | null;
+  meta: Record<string, unknown>;
+  created_at: string;
+};
+
+/** Read the most recent audit entries (teachers only via RLS). */
+export async function listAuditLogs(limit = 100, action?: string): Promise<AuditEntry[]> {
   if (!supabaseConfigured) return [];
   const db = getSupabase();
   if (!db) return [];
-  const { data, error } = await db
+  let query = db
     .from("audit_logs")
-    .select("id, actor_role, action, target_type, target_id, meta, created_at")
+    .select("id, actor_id, actor_role, action, target_type, target_id, meta, created_at")
     .order("created_at", { ascending: false })
     .limit(limit);
+  if (action) query = query.like("action", `${action}%`);
+  const { data, error } = await query;
   if (error || !data) return [];
   return (data as unknown[]).map((r) => {
     const raw = r as Record<string, unknown>;
     return {
       id: Number(raw.id),
+      actor_id: raw.actor_id ? String(raw.actor_id) : null,
       actor_role: String(raw.actor_role),
       action: String(raw.action),
       target_type: String(raw.target_type),

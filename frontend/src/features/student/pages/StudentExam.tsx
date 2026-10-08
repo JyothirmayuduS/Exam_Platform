@@ -20,6 +20,7 @@ import {
   startAttempt,
   saveAnswers,
   submitAttempt,
+  fetchAttemptTimeLeft,
   claimAttemptSession,
   deviceSessionId,
   saveViolation,
@@ -54,7 +55,7 @@ import useExamTimer from "@/features/student/hooks/useExamTimer";
 import useSectionTimer from "@/features/student/hooks/useSectionTimer";
 import { markUploadHandled, shouldApplyUpload, uploadAnswer } from "@/features/student/services/uploadedAnswers";
 import { getSupabase } from "@/shared/data/supabase";
-import { autoGradeAttempt, describeNegative, groupBySection, releaseTiming, type AutoGradeResult, type ReleaseSettings, questionKind, KIND_LABEL, sectionWindows, type NegativeSettings, type QuestionKind } from "@/shared/domain/exam";
+import { describeNegative, groupBySection, releaseTiming, type AutoGradeResult, type ReleaseSettings, questionKind, KIND_LABEL, sectionWindows, type NegativeSettings, type QuestionKind } from "@/shared/domain/exam";
 import useAutosave from "@/features/student/hooks/useAutosave";
 import useProctoring from "@/features/proctoring/hooks/useProctoring";
 import useKeyboardShortcuts from "@/features/student/hooks/useKeyboardShortcuts";
@@ -188,7 +189,6 @@ function StudentExamSession() {
   // The student's paper snapshot (DB question ids in order) — persisted with
   // the attempt row so reloads and grading see exactly what this student saw.
   const paperRef = useRef<PaperSlot[]>([]);
-  const poolRef = useRef<DBQuestion[]>([]);
   const [submitGrade, setSubmitGrade] = useState<AutoGradeResult | null>(null);
   // Index of the first question of the section the student picked on the
   // "Ready to start?" screen (defaults to the very first question).
@@ -747,7 +747,6 @@ function StudentExamSession() {
         return;
       }
       paperRef.current = paper;
-      poolRef.current = rows;
       const uiRows = rows.map(toUIQuestion);
       // Sections must be contiguous; papers built before per-type sections
       // are regrouped here (answers are keyed by id, so order is free).
@@ -844,6 +843,19 @@ function StudentExamSession() {
     onTimeUp: () => void doSubmit(),
   });
 
+  // The server owns the clock (start, extensions, accommodation, pauses), so a
+  // reload or kiosk relaunch never restarts the countdown.
+  useEffect(() => {
+    if (step !== "exam" || !supabaseConfigured || !attemptId) return;
+    let alive = true;
+    const sync = () => void fetchAttemptTimeLeft(EXAM_ID).then((left) => {
+      if (alive && left !== null) setSecondsLeft(left);
+    });
+    sync();
+    const id = window.setInterval(sync, 30_000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [step, attemptId, EXAM_ID, setSecondsLeft, proctorPaused]);
+
   // ── Timed sections ────────────────────────────────────────────────────────
   // Each section has its own countdown; navigation is limited to the section
   // in progress and finished sections cannot be reopened.
@@ -885,19 +897,22 @@ function StudentExamSession() {
     if (step !== "exam" || flagThresholdFiredRef.current) return;
     if (!examSettings.violationLimitEnabled) return;
     const limit = Math.max(1, Number(examSettings.violationLimit ?? 3) || 3);
-    if (violations.length < limit) return;
+    // Only reliable or serious flags count (see flagLimit.ts); the rest stay
+    // in the report for the reviewer.
+    const strikes = violations.filter((v) => v.counts).length;
+    if (strikes < limit) return;
     const action = examSettings.violationAction === "warn" ? "warn" : "submit";
     flagThresholdFiredRef.current = true;
     if (action === "warn") {
-      flag(`Flag limit reached (${violations.length}/${limit}) — candidate warned`);
+      flag(`Flag limit reached (${strikes}/${limit}) — candidate warned`);
       setFlagThresholdWarning(
-        `You have raised ${violations.length} proctoring flags (limit ${limit}). Any further misconduct can auto-submit your exam.`,
+        `You have raised ${strikes} serious proctoring flags (limit ${limit}). Any further misconduct can auto-submit your exam.`,
       );
     } else {
-      flag(`Flag limit reached (${violations.length}/${limit}) — exam auto-submitted`);
+      flag(`Flag limit reached (${strikes}/${limit}) — exam auto-submitted`);
       void doSubmit();
     }
-  }, [step, examSettings, violations.length, flag]);
+  }, [step, examSettings, violations, flag]);
 
   // ── Watermark line tiled across the exam screen ───────────────────────────
   // Test Options accepts placeholders ({registration number}, {name}, …) that
@@ -1029,7 +1044,7 @@ function StudentExamSession() {
     if (step !== "exam") return;
     const onVisibility = () => {
       if (document.hidden) {
-        flag("Tab switched / window minimised");
+        flag("Tab switched / window minimised", undefined, { counts: true });
       }
     };
     document.addEventListener("visibilitychange", onVisibility);
@@ -1447,23 +1462,22 @@ function StudentExamSession() {
     const snapshotsStored = screenshotHandleRef.current?.stop() ?? Promise.resolve(false);
     screenshotHandleRef.current = null;
 
-    const grade = autoGradeAttempt(poolRef.current, paperRef.current, answers as Record<string, unknown>, examSettings as NegativeSettings);
-    setSubmitGrade(grade);
-
     if (supabaseConfigured && studentIdRef.current) {
       const minutesUsed = Math.round((durationMin * 60 - secondsLeft) / 60);
-      const success = await submitAttempt({
+      // Graded server-side against the answer key; the grade comes back only
+      // when this exam releases results on submit.
+      const result = await submitAttempt({
         examId: EXAM_ID,
         studentId: studentIdRef.current,
         answers: answers as Record<string, unknown>,
         answered: answeredCount,
         minutesUsed,
         total: questions.length,
-        score: grade.score,
         sessionId: deviceSession,
       });
+      setSubmitGrade(result.grade);
 
-      if (!success) {
+      if (!result.ok) {
         // The answers did NOT land in the DB — keep them queued for the
         // reconnect retry AND tell the candidate instead of a fake success.
         setSubmitFailed(true);
@@ -1472,7 +1486,6 @@ function StudentExamSession() {
             answers,
             answered: answeredCount,
             minutesUsed,
-            score: grade.score,
             sessionId: deviceSession,
             isSubmit: true
           }));

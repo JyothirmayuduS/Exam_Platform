@@ -112,15 +112,12 @@ export async function setAttemptPaused(
     .from("attempts")
     .update({ state: paused ? "paused" : "in_progress" })
     .eq("id", attemptId);
+  if (!error) void logAudit({ action: paused ? "attempt.paused" : "attempt.resumed", targetType: "attempt", targetId: attemptId });
   return !error;
 }
 
-/** Grant extra minutes to a candidate (Extend +5m). The student's live timer
- *  picks up the delta via its realtime subscription — no countdown reset. */
-
-
-/** Grant extra minutes to a candidate (Extend +5m). The student's live timer
- *  picks up the delta via its realtime subscription — no countdown reset. */
+/** Grant extra minutes to a candidate (Extend +5m). The server deadline moves
+ *  at once; the student's countdown re-syncs from it within 30 seconds. */
 export async function extendAttemptTime(attemptId: string, minutes: number): Promise<boolean> {
   const db = getSupabase();
   if (!db || !isRealUuid(attemptId)) return false;
@@ -134,6 +131,7 @@ export async function extendAttemptTime(attemptId: string, minutes: number): Pro
     .from("attempts")
     .update({ extra_minutes: cur + Math.max(1, Math.round(minutes)) })
     .eq("id", attemptId);
+  if (!error) void logAudit({ action: "attempt.time_extended", targetType: "attempt", targetId: attemptId, meta: { minutes: Math.max(1, Math.round(minutes)), total_extra: cur + Math.max(1, Math.round(minutes)) } });
   return !error;
 }
 

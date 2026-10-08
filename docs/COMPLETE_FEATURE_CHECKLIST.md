@@ -1,5 +1,34 @@
 # Exam Platform - Complete Feature Checklist & Missing Features
 
+> ## Security hardening (October 9, 2026)
+> - **Server-side grading:** the `submit-attempt` edge function grades with the
+>   shared domain code (`_shared/exam`, synced by `scripts/edgeGrading.mjs`,
+>   checked in CI). Clients never send a score.
+> - **Answer key hidden:** `questions.answer` is not readable by signed-in
+>   users; students load papers via `student_exam_questions` (key only in
+>   practice mode or after release), staff via `staff_question_answers`.
+> - **Server deadline:** `attempt_deadline` (duration + extra time +
+>   accommodations + proctor pauses). Late autosaves are rejected; late submits
+>   keep the last on-time answers.
+> - **Attempt writes locked:** the `attempts_a_guard_write` trigger blocks
+>   score/state/start-time tampering; students cannot delete attempts.
+> - **Roles:** proctors monitor (pause, warn, flag) but cannot edit exams,
+>   questions, marks or delete violations; `/teacher/*` is teacher-only.
+>   Staff cannot insert themselves or change their own role.
+> - **Ownership:** only the exam owner edits an exam, its pool and enrolment.
+> - **Open policies closed:** mobile upload sessions, violation events,
+>   storage, legacy tables, answer-sheet submissions.
+> - **Auto-submit:** only system events and confident phone/earbud/
+>   multiple-face flags count toward the flag limit.
+> - **Accommodations:** per-student extra minutes (Candidates tab).
+> - **Audit log:** Teacher → Audit log, filterable, CSV export.
+> - **Production:** builds without Supabase config refuse to start (no demo
+>   fallback); CI on Node 22 fails on high-severity runtime vulnerabilities.
+>
+> **Still open (needs action outside code):** code-signing certificates,
+> enable leaked-password protection in Supabase Auth, rotate shared API keys,
+> full-cohort load test, backup/restore drill, DPDP consent/legal review.
+
 > ## ⚠️ STATUS UPDATE (September 5, 2026)
 > This document is the original Sept 1 roadmap. The sections below marked ❌
 > **no longer reflect reality** — the vast majority of Phases 2.2-5 were built

@@ -73,10 +73,11 @@ export default function App() {
       
       {/* Teacher Routes — staff consoles, never reachable from the kiosk */}
       <Route path="/teacher/proctoring" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><TeacherProctoring /></ProtectedRoute>} />
+      <Route path="/teacher/evidence" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="staff"><TeacherDashboard /></ProtectedRoute>} />
       <Route path="/teacher/*" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><TeacherDashboard /></ProtectedRoute>} />
-      <Route path="/proctor" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
-      <Route path="/proctor/flags" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
-      <Route path="/proctor/recordings" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><ProctorGrid /></ProtectedRoute>} />
+      <Route path="/proctor" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="staff"><ProctorGrid /></ProtectedRoute>} />
+      <Route path="/proctor/flags" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="staff"><ProctorGrid /></ProtectedRoute>} />
+      <Route path="/proctor/recordings" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="staff"><ProctorGrid /></ProtectedRoute>} />
       
       {/* 404 Catch All */}
       <Route path="*" element={inKiosk ? studentOnly : <ErrorPage />} />

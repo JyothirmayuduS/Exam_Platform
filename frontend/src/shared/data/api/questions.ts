@@ -7,15 +7,35 @@ import type { ExamRecord, PaperSlot, DBQuestion, ExamBundle, Student } from "@/s
 import { normalizeOptions, normalizeExamRecord } from "@/shared/data/api/helpers";
 import { buildPaper, questionsForPaper } from "@/shared/domain/exam/paperBuilder";
 
+/** Readable question columns. `answer` is not granted to API roles: staff read
+ *  it through `staff_question_answers`, students through `student_exam_questions`. */
+export const QUESTION_COLUMNS = "id, exam_id, title, type, unit, difficulty, marks, options, subjective_mode, created_at";
+
+/** Answer keys for the given questions (teachers only; empty for everyone else). */
+export async function fetchAnswerKeys(ids: string[]): Promise<Map<string, string | null>> {
+  const db = getSupabase();
+  const out = new Map<string, string | null>();
+  if (!db || ids.length === 0) return out;
+  const { data } = await db.rpc("staff_question_answers", { p_ids: ids });
+  for (const r of (data ?? []) as { id: string; answer: string | null }[]) out.set(String(r.id), r.answer ?? null);
+  return out;
+}
+
+async function withAnswerKeys<T extends { id: string }>(rows: T[]): Promise<(T & { answer: string | null })[]> {
+  const keys = await fetchAnswerKeys(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, answer: keys.get(r.id) ?? null }));
+}
+
 /** All questions across the teacher's exams (for the question-bank page). */
 export async function listAllQuestions(): Promise<(DBQuestion & { exam_name: string | null })[]> {
   const db = getSupabase();
   if (!db) return [];
-  const { data, error } = await db
+  const { data: rows, error } = await db
     .from("questions")
-    .select("*, exam:exams(name)")
+    .select(`${QUESTION_COLUMNS}, exam:exams(name)`)
     .order("created_at", { ascending: false });
-  if (error || !data) return [];
+  if (error || !rows) return [];
+  const data = await withAnswerKeys((rows as unknown as { id: string }[]).map((r) => ({ ...r, id: String(r.id) })));
   return (data as unknown[]).map((raw) => {
     const r = raw as Record<string, unknown>;
     const examRel = Array.isArray(r.exam) ? (r.exam as unknown[])[0] : r.exam;
@@ -49,17 +69,18 @@ export async function saveQuestion(question: Omit<DBQuestion, "id"> & { id?: str
   if (!db) return { ok: false, error: "Supabase not connected" };
   
   if (question.id) {
-    const { data, error } = await db.from("questions").update(question).eq("id", question.id).select().single();
+    const { data, error } = await db.from("questions").update(question).eq("id", question.id).select(QUESTION_COLUMNS).single();
     if (error) return { ok: false, error: error.message };
-    return { ok: true, data: data as DBQuestion };
+    return { ok: true, data: { ...(data as unknown as DBQuestion), answer: question.answer ?? null } };
   } else {
     // Generate a quick ID
     const newId = `Q-${Math.floor(1000 + Math.random() * 9000)}`;
-    const { data, error } = await db.from("questions").insert({ ...question, id: newId }).select().single();
+    const { data, error } = await db.from("questions").insert({ ...question, id: newId }).select(QUESTION_COLUMNS).single();
     if (error) return { ok: false, error: error.message };
+    const row = data as unknown as DBQuestion;
     // Mirror ownership into the M:N pool join so the pool reads stay consistent.
-    if (question.exam_id && data?.id) void linkQuestionsToExam(String(question.exam_id), [String(data.id)]);
-    return { ok: true, data: data as DBQuestion };
+    if (question.exam_id && row?.id) void linkQuestionsToExam(String(question.exam_id), [String(row.id)]);
+    return { ok: true, data: { ...row, answer: question.answer ?? null } };
   }
 }
 
@@ -98,9 +119,20 @@ export async function listQuestionsForExam(examId: string, opts: { withAnswers?:
   if (ids.length === 0) return [];
   const { data, error } = await db
     .from("questions")
-    .select(`id, exam_id, title, type, unit, difficulty, marks, options, subjective_mode, created_at${opts.withAnswers ? ", answer" : ""}`)
+    .select(QUESTION_COLUMNS)
     .in("id", ids)
     .order("id", { ascending: true });
+  if (error || !data) return [];
+  const rows = (data as unknown as DBQuestion[]).map((row) => ({ ...row, options: normalizeOptions(row.options), answer: null }));
+  return opts.withAnswers ? withAnswerKeys(rows) : rows;
+}
+
+/** A student's view of an exam pool: enrolled, published exams only. The
+ *  answer key is filled in only for practice exams or once it is released. */
+export async function listStudentExamQuestions(examId: string): Promise<DBQuestion[]> {
+  const db = getSupabase();
+  if (!db) return [];
+  const { data, error } = await db.rpc("student_exam_questions", { p_exam: examId });
   if (error || !data) return [];
   return (data as DBQuestion[]).map((row) => ({ ...row, options: normalizeOptions(row.options) }));
 }
@@ -179,7 +211,7 @@ export async function loadPaperForStudent(
 ): Promise<{ exam: ExamRecord | null; questions: DBQuestion[]; paper: PaperSlot[]; attemptId: string | null }> {
   const db = getSupabase();
   if (!db) return { exam: null, questions: [], paper: [], attemptId: null };
-  const { exam, questions: pool } = await loadExamBundle(examId);
+  const { exam, questions: pool } = await loadStudentExamBundle(examId);
   if (!exam) return { exam: null, questions: [], paper: [], attemptId: null };
 
   // Prefer the persisted snapshot (survives mid-exam setting edits); build a
@@ -227,16 +259,20 @@ export async function loadExamForStudent(examId: string): Promise<{
   exam: ExamRecord | null;
   questionCount: number;
 }> {
+  const { exam, questions } = await loadStudentExamBundle(examId);
+  return { exam, questionCount: questions.length };
+}
+
+/** Student-side exam + pool (see listStudentExamQuestions). */
+export async function loadStudentExamBundle(examId: string): Promise<ExamBundle> {
   const db = getSupabase();
-  if (!db) return { exam: null, questionCount: 0 };
+  if (!db) return { exam: null, questions: [] };
   const [examRes, questions] = await Promise.all([
     db.from("exams").select("*").eq("id", examId).maybeSingle(),
-    listQuestionsForExam(examId),
+    listStudentExamQuestions(examId),
   ]);
-  return {
-    exam: examRes.data ? normalizeExamRecord(examRes.data as ExamRecord) : null,
-    questionCount: questions.length,
-  };
+  const exam = examRes.data ? normalizeExamRecord(examRes.data as ExamRecord) : null;
+  return { exam, questions };
 }
 
 /** Options come back as jsonb (array) — guard against string/null shapes. */

@@ -18,7 +18,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '22'
         cache: 'npm'
         cache-dependency-path: frontend/package-lock.json
         
@@ -26,13 +26,18 @@ jobs:
       run: npm ci
       
     - name: Security Audit (OWASP)
-      run: npm audit --audit-level=high || true # Warn on vulnerabilities but don't fail yet
+      run: npm audit --omit=dev --audit-level=high
       
     - name: Run Unit & Integration Tests (Vitest)
       run: npx vitest run
       
+    - name: Check edge grading copy is in sync
+      run: node scripts/edgeGrading.mjs --check
+
     - name: Build Application
       run: npm run build
+      env:
+        VITE_ALLOW_DEMO: '1'
       
     - name: Run Performance & Accessibility Tests (Lighthouse CI)
       run: |

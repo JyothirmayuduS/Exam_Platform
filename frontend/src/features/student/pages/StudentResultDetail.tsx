@@ -4,6 +4,7 @@ import RoleLayout from "@/shared/components/RoleLayout";
 import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/navigation";
 import { useAuth } from "@/features/auth/auth";
 import { getSupabase } from "@/shared/data/supabase";
+import { listStudentExamQuestions } from "@/shared/data/examApi";
 import { useQuery } from "@tanstack/react-query";
 import AppealForm from "@/features/student/components/exam/AppealForm";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
@@ -73,30 +74,17 @@ export default function StudentResultDetail() {
         return { withheld: true as const, name: exam?.name || "Exam", note: visibility.note ?? "Results are not released yet." };
       }
 
-      const { data: questions } = await db
-        .from("questions")
-        .select("*")
-        .eq("exam_id", resultId)
-        .order("id", { ascending: true });
+      // The answer key comes back only when it has been released.
+      const questions = await listStudentExamQuestions(resultId);
 
-      // Compute real class average and percentile from all submitted attempts
-      const { data: allAttempts } = await db
-        .from("attempts")
-        .select("score")
-        .eq("exam_id", resultId)
-        .eq("state", "submitted");
-
-      const validScores = (allAttempts ?? [])
-        .map((a: any) => a.score)
-        .filter((s: any): s is number => typeof s === "number");
-
+      // Class statistics are computed server-side; students only see their own attempt row.
+      const { data: statsRows } = await db.rpc("student_exam_stats", { p_exam: resultId });
+      const stats = (Array.isArray(statsRows) ? statsRows[0] : statsRows) as
+        | { class_avg: number | null; scored: number; below_me: number }
+        | null;
       const myScore = attempt.score ?? 0;
-      const classAvg = validScores.length
-        ? Math.round(validScores.reduce((a: number, b: number) => a + b, 0) / validScores.length)
-        : 0;
-      const percentile = validScores.length
-        ? Math.round((validScores.filter((s: number) => s < myScore).length / validScores.length) * 100)
-        : 0;
+      const classAvg = stats?.class_avg != null ? Math.round(Number(stats.class_avg)) : 0;
+      const percentile = stats?.scored ? Math.round((stats.below_me / stats.scored) * 100) : 0;
 
       const { data: gradingNotes } = await db
         .from("grading_comments")
@@ -139,9 +127,12 @@ export default function StudentResultDetail() {
             : origCorrect;
         const studentDisplayIdx = type === "mcq" && typeof studentAns === "number" ? studentAns : -1;
         const isCorrect = verdict === "correct";
-        const awarded = verdict
-          ? scoreObjective(kind, q.marks || 1, verdict, exam?.settings as NegativeSettings | null)
-          : (attempt.score === null ? "..." : 0);
+        // Per-question marks need the answer key, which stays server-side until released.
+        const awarded = !visibility.answerKey
+          ? "—"
+          : verdict
+            ? scoreObjective(kind, q.marks || 1, verdict, exam?.settings as NegativeSettings | null)
+            : (attempt.score === null ? "..." : 0);
 
         const cat = q.category || "General";
         if (!categoryMap[cat]) categoryMap[cat] = { correct: 0, total: 0 };
@@ -170,7 +161,7 @@ export default function StudentResultDetail() {
         };
       });
 
-      const categoryBreakdown = Object.entries(categoryMap).map(([category, { correct, total }]) => ({
+      const categoryBreakdown = !visibility.answerKey ? [] : Object.entries(categoryMap).map(([category, { correct, total }]) => ({
         category,
         score: total > 0 ? Math.round((correct / total) * 100) : 0,
       }));
@@ -186,7 +177,7 @@ export default function StudentResultDetail() {
         outOf: totalMarks,
         percentile,
         classAvg,
-        validScoresCount: validScores.length,
+        validScoresCount: stats?.scored ?? 0,
         passMark: Math.round(totalMarks * 0.4),
         timeSpent: minutesUsed >= 60
           ? `${Math.floor(minutesUsed / 60)}h ${minutesUsed % 60}m`
@@ -280,7 +271,7 @@ export default function StudentResultDetail() {
           {EXAM_DETAIL.questions.map((q: any, i: number) => {
             const isCorrect = q.marksAwarded === q.maxMarks;
             const isPartial = q.marksAwarded > 0 && q.marksAwarded < q.maxMarks;
-            const borderCol = isCorrect ? 'border-success' : isPartial ? 'border-amber' : 'border-alert';
+            const borderCol = !showKey ? 'border-line' : isCorrect ? 'border-success' : isPartial ? 'border-amber' : 'border-alert';
             
             return (
               <div key={q.id} className={`border-l-4 ${borderCol} bg-paper-raised border-t border-r border-b border-y-line border-r-line p-5 relative`}>

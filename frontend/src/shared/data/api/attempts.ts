@@ -5,6 +5,7 @@
 import { getSupabase } from "@/shared/data/supabase";
 import type { PaperSlot } from "@/shared/data/api/types";
 import { logAudit } from "@/shared/data/api/audit";
+import type { AutoGradeResult } from "@/shared/domain/exam/autoGrade";
 
 /** Resolve the exam a real attempt belongs to (for evaluation links). */
 export async function getAttemptExamId(attemptId: string): Promise<string | null> {
@@ -37,9 +38,10 @@ export async function startAttempt(opts: {
     if (existing.state === "submitted") {
       return existing.id;
     }
+    // started_at is owned by the server (set once on insert) so a relaunch
+    // never restarts the clock.
     const patch: Record<string, unknown> = {
       state: "in_progress",
-      started_at: new Date().toISOString(),
       total: opts.total,
       user_agent: opts.userAgent ?? null,
     };
@@ -203,31 +205,74 @@ export async function saveAnswers(opts: {
   });
 }
 
-/** Final submit — marks the attempt submitted and records the answers. */
+export type SubmitResult = {
+  ok: boolean;
+  /** Answers arrived after the deadline; the last autosave was graded instead. */
+  late: boolean;
+  /** Server grade, present only when the exam releases results on submit. */
+  grade: AutoGradeResult | null;
+  /** Another device holds this attempt. */
+  busy?: boolean;
+};
+
+/** Final submit through the `submit-attempt` Edge Function, which checks the
+ *  deadline and grades against the answer key the browser never sees. */
 export async function submitAttempt(opts: {
   examId: string;
   studentId: string;
   answers: Record<string, unknown>;
   answered: number;
   minutesUsed: number;
-  score?: number | null;
   total?: number;
   sessionId?: string;
-}): Promise<boolean> {
-  return upsertAttemptPatch({
-    examId: opts.examId,
-    studentId: opts.studentId,
-    total: opts.total,
-    patch: {
-      ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
-      state: "submitted",
+}): Promise<SubmitResult> {
+  const db = getSupabase();
+  if (!db || !opts.examId || !opts.studentId) return { ok: false, late: false, grade: null };
+  const { data, error } = await db.functions.invoke("submit-attempt", {
+    body: {
+      examId: opts.examId,
       answers: opts.answers,
       answered: opts.answered,
-      minutes_used: opts.minutesUsed,
-      score: opts.score ?? null,
-      submitted_at: new Date().toISOString(),
+      minutesUsed: opts.minutesUsed,
+      sessionId: opts.sessionId,
     },
   });
+  if (error) {
+    const status = (error as { context?: { status?: number } }).context?.status;
+    if (status === undefined || status >= 500) {
+      // Grading service unreachable: submit directly so the student is never
+      // stuck. The attempt guard trigger enforces the deadline and leaves the
+      // score null; staff re-grade from the evaluation page.
+      const { data: rows, error: dbErr } = await db
+        .from("attempts")
+        .update({
+          answers: opts.answers,
+          answered: opts.answered,
+          minutes_used: opts.minutesUsed,
+          state: "submitted",
+          auto_saved_at: new Date().toISOString(),
+        })
+        .eq("exam_id", opts.examId)
+        .eq("student_id", opts.studentId)
+        .neq("state", "submitted")
+        .select("id");
+      if (!dbErr && rows && rows.length > 0) return { ok: true, late: false, grade: null };
+    }
+    return { ok: false, late: false, grade: null, busy: status === 409 };
+  }
+  const res = (data ?? {}) as { ok?: boolean; late?: boolean; grade?: AutoGradeResult | null };
+  return { ok: res.ok === true, late: res.late === true, grade: res.grade ?? null };
+}
+
+/** Seconds left on the signed-in student's attempt by the server clock
+ *  (start + duration + extensions + accommodation + paused time). */
+export async function fetchAttemptTimeLeft(examId: string): Promise<number | null> {
+  const db = getSupabase();
+  if (!db || !examId) return null;
+  const { data, error } = await db.rpc("attempt_time_left", { p_exam: examId });
+  if (error || data === null || data === undefined) return null;
+  const n = Number(data);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** Register the LiveKit proctor session for an attempt (best-effort). */

@@ -4,6 +4,7 @@
 
 import { getSupabase } from "@/shared/data/supabase";
 import type { Student, StudentRosterRecord } from "@/shared/data/api/types";
+import { logAudit } from "@/shared/data/api/audit";
 
 /** Resolve a student row id from their roll number (needed for attempt rows). */
 /** Full student profile — requires an authenticated student session.
@@ -59,6 +60,43 @@ export async function getExamRoster(examId: string): Promise<StudentRosterRecord
     .filter(Boolean) as StudentRosterRecord[];
 }
 
+
+export type Accommodation = { studentId: string; roll: string; name: string; extraMinutes: number };
+
+/** Enrolled students with their accommodation minutes for one exam. */
+export async function listExamAccommodations(examId: string): Promise<Accommodation[]> {
+  const db = getSupabase();
+  if (!db) return [];
+  const { data, error } = await db
+    .from("enrollments")
+    .select("student_id, extra_minutes, student:students(roll, full_name)")
+    .eq("exam_id", examId);
+  if (error || !data) return [];
+  return (data as unknown as { student_id: string; extra_minutes: number | null; student: { roll?: string; full_name?: string } | { roll?: string; full_name?: string }[] | null }[])
+    .map((r) => {
+      const s = Array.isArray(r.student) ? r.student[0] : r.student;
+      return { studentId: String(r.student_id), roll: String(s?.roll ?? ""), name: String(s?.full_name ?? ""), extraMinutes: Number(r.extra_minutes ?? 0) };
+    })
+    .sort((a, b) => a.roll.localeCompare(b.roll));
+}
+
+/** Per-student extra time (e.g. a scribe or medical accommodation). The
+ *  server adds it to that student's deadline; proctor extensions stack on top. */
+export async function setExtraMinutes(examId: string, studentId: string, minutes: number): Promise<{ error?: string }> {
+  const db = getSupabase();
+  if (!db) return { error: "No DB connection" };
+  const extra = Math.max(0, Math.min(600, Math.round(minutes)));
+  const { data, error } = await db
+    .from("enrollments")
+    .update({ extra_minutes: extra })
+    .eq("exam_id", examId)
+    .eq("student_id", studentId)
+    .select("student_id");
+  if (error) return { error: error.message };
+  if (!data?.length) return { error: "Only the teacher who owns this exam can change accommodations." };
+  void logAudit({ action: "enrollment.extra_minutes_changed", targetType: "enrollment", targetId: `${examId}:${studentId}`, meta: { exam_id: examId, student_id: studentId, extra_minutes: extra } });
+  return {};
+}
 
 export async function enrollStudent(examId: string, student: { roll: string; name: string; email: string; branch: string; section: string; phone?: string }): Promise<{ error?: string }> {
   const db = getSupabase();

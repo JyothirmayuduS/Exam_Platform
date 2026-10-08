@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
-import { loadExamBundle, type DBQuestion } from "@/shared/data/examApi";
+import { loadStudentExamBundle, type DBQuestion } from "@/shared/data/examApi";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
 import { STUDENT_NAV, STUDENT_TONE } from "@/features/student/navigation";
 import SubjectiveQRBlock from "@/features/student/components/exam/SubjectiveQRBlock";
@@ -42,7 +42,7 @@ export default function PracticeModeExam() {
   useEffect(() => {
     let active = true;
     if (!examId) return;
-    void loadExamBundle(examId).then(({ exam, questions: rows }) => {
+    void loadStudentExamBundle(examId).then(({ exam, questions: rows }) => {
       if (!active) return;
       if (exam?.name) setTitle(`${exam.name} · Practice Mode`);
       if (rows.length > 0) {

@@ -10,5 +10,6 @@ export const getTeacherNav = (liveAttemptsCount: number, submittedAttemptsCount:
   { label: "Proctoring", to: "/teacher/proctoring", badge: String(needsAttentionCount) },
   { label: "Reports", to: "/teacher/reports" },
   { label: "Evidence", to: "/teacher/evidence" },
+  { label: "Audit log", to: "/teacher/audit" },
   { label: "Settings", to: "/teacher/settings" },
 ];

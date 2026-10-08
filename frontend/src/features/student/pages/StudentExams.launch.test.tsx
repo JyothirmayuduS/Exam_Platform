@@ -43,7 +43,7 @@ vi.mock("@/shared/data/supabase", () => {
   };
   return { getSupabase: () => db };
 });
-vi.mock("@/shared/data/env", () => ({ supabaseConfigured: true, env: {} }));
+vi.mock("@/shared/data/env", () => ({ supabaseConfigured: true, env: { supabaseUrl: "http://localhost:54321", supabaseAnonKey: "test-anon-key" } }));
 vi.mock("@/shared/data/examApi", () => ({
   listEnrolledExamsForAuthUser: async () => [
     { id: "exam-1", name: "DBMS Exam", batch: "CSE", duration_minutes: 60, total_marks: 100, status: "published", scheduled_at: null },
@@ -61,7 +61,7 @@ describe("browser Enter exam launch", () => {
 
   async function showMyExams() {
     const view = render(<MemoryRouter initialEntries={["/student/exams"]}><StudentExams /></MemoryRouter>);
-    return { ...view, enter: await screen.findByRole("button", { name: "Enter exam /" }) };
+    return { ...view, enter: await screen.findByRole("button", { name: "Enter exam" }) };
   }
 
   it("launches the kiosk synchronously WITH the signed-in session handoff", async () => {
@@ -82,7 +82,7 @@ describe("browser Enter exam launch", () => {
     // The OS never picked up the deep link — onUnconfirmed fires.
     act(() => launch.mock.calls[0][2]());
     expect(screen.getByText("Vignan Exam Browser didn't open")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try again /" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
     // Regression guard: the old modal linked to /student/exam?examId=… in a
     // normal browser, which bounced through ProtectedRoute into the login page.
     expect(screen.queryByText("Install Lockdown Browser /")).not.toBeInTheDocument();
@@ -98,7 +98,7 @@ describe("browser Enter exam launch", () => {
     const { enter } = await showMyExams();
     fireEvent.click(enter);
     act(() => launch.mock.calls[0][2]());
-    fireEvent.click(screen.getByRole("button", { name: "Try again /" }));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(launch).toHaveBeenCalledTimes(2);
     expect(launch).toHaveBeenLastCalledWith(
       "exam-1",

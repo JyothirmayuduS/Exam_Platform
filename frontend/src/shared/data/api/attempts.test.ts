@@ -77,15 +77,29 @@ describe("attempt answer upload (self-healing)", () => {
     expect(inserted.total).toBe(opts.total);
   });
 
-  it("submits by creating the row when startAttempt never created it", async () => {
-    const chain = mockChain({ maybeSingle: { data: null, error: null } });
-    const db = { from: vi.fn(() => chain) };
-    vi.mocked(getSupabase).mockReturnValue(db as never);
+  it("submits through the submit-attempt function and returns the server grade", async () => {
+    const grade = { score: 4, objectiveScore: 4, objectiveMax: 5, max: 5, correct: 4, wrong: 1, unanswered: 0, manual: 0 };
+    const invoke = vi.fn(() => Promise.resolve({ data: { ok: true, late: false, grade }, error: null }));
+    vi.mocked(getSupabase).mockReturnValue({ functions: { invoke }, from: vi.fn() } as never);
 
-    const ok = await submitAttempt(opts);
+    const res = await submitAttempt(opts);
 
-    expect(ok).toBe(true);
-    expect(chain.insert).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ ok: true, late: false, grade });
+    expect(invoke).toHaveBeenCalledWith("submit-attempt", expect.objectContaining({
+      body: expect.objectContaining({ examId: opts.examId, answers: opts.answers }),
+    }));
+    const body = (invoke.mock.calls[0] as unknown[])[1] as { body: Record<string, unknown> };
+    expect(body.body).not.toHaveProperty("score");
+  });
+
+  it("reports a failed submit and flags another active device", async () => {
+    const invoke = vi.fn(() => Promise.resolve({ data: null, error: { message: "busy", context: { status: 409 } } }));
+    vi.mocked(getSupabase).mockReturnValue({ functions: { invoke } } as never);
+
+    const res = await submitAttempt(opts);
+
+    expect(res.ok).toBe(false);
+    expect(res.busy).toBe(true);
   });
 
   it("returns false when the row is missing and the insert genuinely fails", async () => {
@@ -113,7 +127,7 @@ describe("attempt answer upload (self-healing)", () => {
     const db = { from: vi.fn(() => chain) };
     vi.mocked(getSupabase).mockReturnValue(db as never);
 
-    const ok = await submitAttempt(opts);
+    const ok = await saveAnswers(opts);
 
     expect(ok).toBe(true);
     expect(chain.insert).toHaveBeenCalledTimes(1);

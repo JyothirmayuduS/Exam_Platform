@@ -4,45 +4,6 @@ import { useParams, useSearchParams } from "react-router-dom";
 import ImageCropper from "@/shared/components/ImageCropper";
 import { getSupabase } from "@/shared/data/supabase";
 
-/**
- * Self-heal a dead upload session from the PHONE itself.
- *
- * The QR link is only as good as the `mobile_upload_sessions` row the exam
- * client created — if that upsert failed (RLS hiccup, tab closed early, race
- * against attempt creation) every scan returns "Invalid or expired token" and
- * the student is stuck mid-exam. The table's RLS deliberately allows anon
- * inserts (policy "ep mobile upload anon"), so the phone can recreate the
- * missing row for the token it is holding and retry. This is capability-token
- * auth: whoever holds the one-time token from the exam's own QR may upload.
- */
-async function repairUploadSession(
-  db: NonNullable<ReturnType<typeof getSupabase>>,
-  opts: { token: string; studentId: string; questionId: string; examId: string },
-): Promise<boolean> {
-  try {
-    const { error } = await db
-      .from("mobile_upload_sessions")
-      .upsert(
-        {
-          token_hash: opts.token,
-          attempt_id: `pending_${opts.studentId}`,
-          question_id: String(opts.questionId),
-          student_id: opts.studentId,
-          status: "WAITING",
-          expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-        },
-        { onConflict: "token_hash" },
-      );
-    if (error) {
-      console.error("[MobileUpload] session repair failed:", error);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error("[MobileUpload] session repair error:", err);
-    return false;
-  }
-}
 import { invokeMobileUploadWithRetry, type InvokeError } from "@/features/mobile/services/mobileUploadInvoke";
 import {
   compressImage,
@@ -169,27 +130,6 @@ export default function MobileUpload() {
           return f;
         })();
         setLastError({ message, raw: attempt.error.body });
-
-        // ── Self-heal a dead session, then retry once ──────────────────────
-        // A definitive 403 "invalid or expired token" means the session row
-        // the QR points at doesn't exist (or expired). Recreate it from the
-        // identity carried on the QR URL and give the upload one more shot.
-        if (status === 403 && /invalid or expired token/i.test(message) && studentId && token) {
-          const repaired = await repairUploadSession(db, {
-            token,
-            studentId,
-            questionId: qId,
-            examId,
-          });
-          if (repaired) {
-            const retry = await invokeMobileUploadWithRetry(db, formData, 2, undefined, 800);
-            if (retry.ok) {
-              setUploadedUrl(pages[0].url);
-              setStep("done");
-              return;
-            }
-          }
-        }
 
         // ── Resilient fallback ─────────────────────────────────────────
         // Server misconfiguration (500) or a network/transport failure means the

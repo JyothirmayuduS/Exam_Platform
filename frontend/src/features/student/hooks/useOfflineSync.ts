@@ -16,18 +16,18 @@ export default function useOfflineSync(studentId: string | null) {
             const raw = localStorage.getItem(key);
             if (raw) {
               const data = JSON.parse(raw);
+              let ok: boolean;
               if (data.isSubmit) {
-                await submitAttempt({
+                ok = (await submitAttempt({
                   examId,
                   studentId,
                   answers: data.answers,
                   answered: data.answered,
                   minutesUsed: data.minutesUsed,
-                  score: data.score,
                   sessionId: data.sessionId,
-                });
+                })).ok;
               } else {
-                await saveAnswers({
+                ok = await saveAnswers({
                   examId,
                   studentId,
                   answers: data.answers,
@@ -36,8 +36,7 @@ export default function useOfflineSync(studentId: string | null) {
                   sessionId: data.sessionId,
                 });
               }
-              // Clear the pending sync flag
-              localStorage.removeItem(key);
+              if (ok) localStorage.removeItem(key);
             }
           } catch (e) {
             console.error("Failed to sync offline answers", e);

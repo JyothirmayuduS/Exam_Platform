@@ -8,6 +8,7 @@ import ErrorPage from './shared/pages/ErrorPage.tsx'
 import * as Sentry from "@sentry/react";
 import LogRocket from 'logrocket';
 import { AuthProvider } from './features/auth/auth'
+import { supabaseConfigured } from './shared/data/env'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { examPathFromDeepLink, getLaunchUrl, hasSessionHandoff, hydrateSessionFromDeepLink, LAUNCHED_FROM_LINK_KEY, onVignanDeepLink, RESUME_PATH_KEY } from './shared/platform/lockdownBridge'
 
@@ -108,7 +109,24 @@ function applyDeeplink(url: string, restoreSession = true) {
 
 const queryClient = new QueryClient();
 
+// A production build without a backend would silently serve demo data to real
+// candidates; refuse to start instead.
+function MissingBackend() {
+  return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "system-ui, sans-serif" }}>
+      <div style={{ maxWidth: 480 }}>
+        <h1 style={{ fontSize: 22, marginBottom: 8 }}>Exam service is not configured</h1>
+        <p style={{ color: "#555", lineHeight: 1.5 }}>This build has no exam server connection (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY). Contact your exam administrator.</p>
+      </div>
+    </div>
+  );
+}
+
 function mount() {
+  if (import.meta.env.PROD && !supabaseConfigured && import.meta.env.VITE_ALLOW_DEMO !== "1") {
+    createRoot(document.getElementById('root')!).render(<MissingBackend />);
+    return;
+  }
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

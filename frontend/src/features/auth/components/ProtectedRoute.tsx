@@ -3,9 +3,11 @@ import { useAuth } from "@/features/auth/auth";
 import type { AuthRole } from "@/features/auth/auth";
 import { isTauri } from "@/shared/platform/platform";
 
+export type RouteRole = Exclude<AuthRole, null> | "staff";
+
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  allowedRole?: AuthRole;
+  allowedRole?: RouteRole;
 }
 
 export default function ProtectedRoute({ children, allowedRole }: ProtectedRouteProps) {
@@ -53,18 +55,23 @@ export default function ProtectedRoute({ children, allowedRole }: ProtectedRoute
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // If a role is required and user's role doesn't match
-  if (allowedRole && role !== allowedRole) {
-    // Proctors can access teacher routes conceptually, but let's be strict if needed.
-    // For now, if allowedRole is "teacher", both teacher and proctor should be allowed,
-    // or maybe they are distinct. The user asked for proctor and teacher as distinct.
-    if (allowedRole === "teacher" && role !== "teacher" && role !== "proctor") {
-      return <Navigate to="/student" replace />;
-    }
-    if (allowedRole === "student" && role !== "student") {
-      return <Navigate to="/teacher" replace />;
-    }
+  if (allowedRole && !roleAllowed(allowedRole, role)) {
+    return <Navigate to={homeFor(role, allowedRole)} replace />;
   }
 
   return <>{children}</>;
+}
+
+/** "staff" = teacher or proctor (live supervision, evidence). Authoring,
+ *  grading and results stay teacher-only; the database enforces the same split. */
+export function roleAllowed(allowed: RouteRole, role: AuthRole): boolean {
+  if (allowed === "staff") return role === "teacher" || role === "proctor";
+  return role === allowed;
+}
+
+function homeFor(role: AuthRole, allowed: RouteRole): string {
+  if (role === "proctor") return "/proctor";
+  if (role === "teacher") return "/teacher";
+  if (role === "student") return "/student";
+  return allowed === "student" ? "/teacher" : "/student";
 }

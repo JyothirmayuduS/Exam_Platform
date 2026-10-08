@@ -3,7 +3,7 @@ import {
   FiArrowLeft, FiCheck, FiCheckCircle, FiCheckSquare, FiDownload, FiEdit3, FiHash,
   FiMinus, FiPlus, FiToggleLeft, FiUpload, FiX, FiFileText, FiAlertCircle,
 } from "react-icons/fi";
-import { saveQuestion, type DBQuestion } from "@/shared/data/examApi";
+import { fetchAnswerKeys, QUESTION_COLUMNS, saveQuestion, type DBQuestion } from "@/shared/data/examApi";
 import { Button } from "@/shared/components/ui";
 
 type Props = { notify: (message: string) => void; navigate: (path: string) => void };
@@ -82,9 +82,11 @@ export default function QuestionEditor({ notify, navigate }: Props) {
     void import("@/shared/data/supabase").then(async (m) => {
       const db = m.getSupabase();
       if (!db) return;
-      const { data } = await db.from("questions").select("*").eq("id", editId).maybeSingle();
+      const { data } = await db.from("questions").select(QUESTION_COLUMNS).eq("id", editId).maybeSingle();
       if (!active || !data) return;
-      const q = data as unknown as DBQuestion;
+      const keys = await fetchAnswerKeys([editId]);
+      if (!active) return;
+      const q = { ...(data as unknown as DBQuestion), answer: keys.get(editId) ?? null };
       setType(q.type || "MCQ");
       setTitle(q.title || "");
       setUnit(q.unit && q.unit !== "Custom / Other" ? q.unit : "");
