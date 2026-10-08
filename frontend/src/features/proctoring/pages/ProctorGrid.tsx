@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import RoleLayout from "@/shared/components/RoleLayout";
 import { supabaseConfigured } from "@/shared/data/env";
-import { listLiveAttempts, subscribeToAttempts, saveViolation, setAttemptPaused, forceSubmitAttempt, sendProctorMessage, extendAttemptTime, listAssignedExamsForAuthUser, listExams, type LiveAttempt, type ViolationEvent } from "@/shared/data/examApi";
+import { listLiveAttempts, subscribeToAttempts, saveViolation, setAttemptPaused, forceSubmitAttempt, sendProctorMessage, listAssignedExamsForAuthUser, listExams, type LiveAttempt, type ViolationEvent } from "@/shared/data/examApi";
 import { startProctorViewing, identityLabel, type RemoteFeed, type ViewerState } from "@/features/proctoring/services/proctorViewer";
 import { FiDownload, FiPlay, FiMic, FiMicOff, FiMonitor, FiMaximize, FiVolume2, FiVolumeX, FiFolder } from "react-icons/fi";
 import { startVoiceBroadcast, voiceRoom } from "@/features/proctoring/services/proctorVoice";
@@ -16,6 +16,8 @@ import {
   type ReportRow,
 } from "@/shared/services/sessionReport";
 import JobBanner from "@/shared/components/JobBanner";
+import { ExtraTimeBadge, LiveExtraTimeControl } from "@/features/proctoring/components/LiveExtraTime";
+import useOwnsExam from "@/features/proctoring/hooks/useOwnsExam";
 import { usePromptDialog } from "@/shared/components/PromptDialog";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 
@@ -40,6 +42,8 @@ type Tile = {
   authId?: string | null;
   /** Newest first. */
   violations: ViolationEvent[];
+  extraMinutes: number;
+  accommodationMinutes: number;
 };
 
 const NAV = [
@@ -76,7 +80,7 @@ function attemptToTile(a: LiveAttempt): Tile {
     time = diffMin === 0 ? "just now" : `${diffMin}m ago`;
   }
 
-  return { id: a.id, name, roll, initials: initialsOf(name), severity, reason, time, status, progress: pct, studentId: a.student?.id, authId: a.student?.auth_id ?? null, violations };
+  return { id: a.id, name, roll, initials: initialsOf(name), severity, reason, time, status, progress: pct, studentId: a.student?.id, authId: a.student?.auth_id ?? null, violations, extraMinutes: a.extra_minutes ?? 0, accommodationMinutes: a.accommodation_minutes ?? 0 };
 }
 
 type ViewMode = "split" | "camera" | "screen";
@@ -378,12 +382,11 @@ export default function ProctorGrid() {
     logViolation("proctor_manual_flag", `Flagged ${selected?.name}'s activity for suspicious behavior`, "high");
 
 
-  const extendTime = () => {
-    if (!selected || !selected.studentId) return;
-    const realId = selected.studentId.startsWith("enrolled-") ? null : selected.id;
-    if (realId) void extendAttemptTime(realId, 5);
-    logViolation("proctor_extend_time", `Extended ${selected.name}'s time by 5 minutes`, "info");
-    pushLog(`Extended ${selected.name}'s time by 5 minutes`);
+  const ownsCurrentExam = useOwnsExam(examId);
+  const onTimeAdded = (total: number) => {
+    if (!selected) return;
+    const id = selected.id;
+    setTiles((list) => list.map((t) => (t.id === id ? { ...t, extraMinutes: total } : t)));
   };
 
   const takeScreenshot = async () => {
@@ -605,7 +608,9 @@ export default function ProctorGrid() {
                 });
                 if (desc) logViolation("proctor_manual_log", desc, "warning");
               }}
-              onExtend={extendTime}
+              canAddTime={ownsCurrentExam}
+              onTimeAdded={onTimeAdded}
+              onTimeMessage={pushLog}
               onScreenshot={() => void takeScreenshot()}
               speaking={selected ? speakingTo === selected.roll : false}
               voiceBusy={voiceBusy}
@@ -702,6 +707,7 @@ function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; fee
                 <p className="truncate text-[12px] font-medium">{tile.name}</p>
               </div>
               <p className="truncate font-mono text-[9px] text-soft">{tile.roll} · {tile.status}{tile.status === "Writing" ? ` ${tile.progress}%` : ""}</p>
+              <ExtraTimeBadge extraMinutes={tile.extraMinutes} accommodationMinutes={tile.accommodationMinutes} className="block truncate" />
             </div>
             <span
               className="shrink-0 border px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider"
@@ -717,10 +723,11 @@ function MonitorTile({ tile, feed, view, selected, onSelect }: { tile: Tile; fee
   );
 }
 
-function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalate, onForceSubmit, onFlag, onLogViolation, onExtend, onScreenshot, speaking, voiceBusy, onSpeak, log }: {
+function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalate, onForceSubmit, onFlag, onLogViolation, canAddTime, onTimeAdded, onTimeMessage, onScreenshot, speaking, voiceBusy, onSpeak, log }: {
   selected: Tile | undefined; feed: RemoteFeed | null; note: string; setNote: (v: string) => void;
   onSend: () => void; onPause: () => void; onEscalate: () => void; onForceSubmit: () => void;
-  onFlag: () => void; onLogViolation: () => void; onExtend: () => void; onScreenshot: () => void;
+  onFlag: () => void; onLogViolation: () => void; onScreenshot: () => void;
+  canAddTime: boolean; onTimeAdded: (totalExtra: number) => void; onTimeMessage: (text: string) => void;
   speaking: boolean; voiceBusy: boolean; onSpeak: () => void;
   log: { time: string; text: string }[];
 }) {
@@ -818,12 +825,23 @@ function DetailPanel({ selected, feed, note, setNote, onSend, onPause, onEscalat
           </button>
         </div>
 
+        <div className="mt-4">
+          <LiveExtraTimeControl
+            attemptId={selected.id.startsWith("enrolled-") ? null : selected.id}
+            live={selected.status === "Writing" || selected.status === "Paused"}
+            canAdd={canAddTime}
+            extraMinutes={selected.extraMinutes}
+            accommodationMinutes={selected.accommodationMinutes}
+            onAdded={onTimeAdded}
+            onMessage={(text) => onTimeMessage(`${selected.name}: ${text}`)}
+          />
+        </div>
+
         {/* Record-keeping actions */}
         <div className="mt-4 grid grid-cols-2 gap-2">
           <button onClick={onFlag} className="border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-ink hover:bg-raised transition-colors">Flag activity</button>
           <button onClick={onLogViolation} className="border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-ink hover:bg-raised transition-colors">Log violation</button>
-          <button onClick={onExtend} className="border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-ink hover:bg-raised transition-colors">Extend +5 min</button>
-          <button onClick={onScreenshot} className="border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-ink hover:bg-raised transition-colors">Screenshot</button>
+          <button onClick={onScreenshot} className="col-span-2 border border-line py-2.5 font-mono text-[11px] uppercase tracking-wider text-ink hover:border-ink hover:bg-raised transition-colors">Screenshot</button>
         </div>
 
         {/* Critical actions — visually quarantined so they're never hit by

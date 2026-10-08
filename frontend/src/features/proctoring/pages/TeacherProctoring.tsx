@@ -16,6 +16,8 @@ import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCur
 import { getTeacherNav } from "@/features/teacher/navigation";
 import { FiVideo, FiMonitor, FiSmartphone, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight, FiVolume2, FiVolumeX } from "react-icons/fi";
 import ProctoringAssessmentSelect from "@/features/proctoring/components/ProctoringAssessmentSelect";
+import { ExtraTimeBadge, LiveExtraTimeControl } from "@/features/proctoring/components/LiveExtraTime";
+import useOwnsExam from "@/features/proctoring/hooks/useOwnsExam";
 import { Button } from "@/shared/components/ui";
 import type { ProctorAssignment } from "@/shared/data/examApi";
 
@@ -35,6 +37,8 @@ type Student = {
   // their placeholder id looks like `enrolled-<uuid>` and can't hit the DB).
   realAttemptId: string | null;
   violations: ViolationEvent[];
+  extraMinutes: number;
+  accommodationMinutes: number;
 };
 
 function attemptToStudent(a: LiveAttempt): Student {
@@ -63,6 +67,8 @@ function attemptToStudent(a: LiveAttempt): Student {
     attemptId: a.id,
     realAttemptId,
     violations: [...(a.violations ?? [])],
+    extraMinutes: a.extra_minutes ?? 0,
+    accommodationMinutes: a.accommodation_minutes ?? 0,
   };
 }
 
@@ -84,6 +90,7 @@ export default function TeacherProctoring() {
     setStage("monitor");
   };
   const selectedExam = examList.find((e) => e.id === selectedExamId) ?? null;
+  const ownsSelectedExam = useOwnsExam(selectedExamId);
 
   const [promptDialog, ask] = usePromptDialog();
   const [announceStatus, setAnnounceStatus] = useState<string | null>(null);
@@ -743,6 +750,20 @@ export default function TeacherProctoring() {
                 </div>
               </div>
 
+              <LiveExtraTimeControl
+                attemptId={selected.realAttemptId}
+                live={selected.status === "Writing" || selected.status === "Paused"}
+                canAdd={ownsSelectedExam}
+                extraMinutes={selected.extraMinutes}
+                accommodationMinutes={selected.accommodationMinutes}
+                onAdded={(total) => {
+                  const roll = selected.roll;
+                  setSelected((cur) => (cur && cur.roll === roll ? { ...cur, extraMinutes: total } : cur));
+                  setStudents((list) => list.map((s) => (s.roll === roll ? { ...s, extraMinutes: total } : s)));
+                }}
+                onMessage={(text, tone) => flash(text, tone)}
+              />
+
               <div className="flex border border-line font-mono text-[10px] uppercase tracking-wider">
                 <button
                   onClick={() => { setScreenMode(false); setPhoneMode(false); }}
@@ -1024,6 +1045,7 @@ function VideoWall({ visible, selected, onSelect, feedFor, mobileFeedFor, source
                     ? (showPhone ? "Desk feed active" : showScreen ? "Screen active" : "Camera active")
                     : "No feed"}
                 </p>
+                <ExtraTimeBadge extraMinutes={student.extraMinutes} accommodationMinutes={student.accommodationMinutes} className="mt-0.5 block truncate" />
               </div>
             </button>
           );
@@ -1167,6 +1189,7 @@ function ActivityView({ visible, selected, onSelect }: { visible: Student[]; sel
                 {student.name} <span className="ml-2 font-mono text-[10px] text-ink-soft">{student.roll}</span>
               </p>
               <p className="mt-1 truncate text-[11px] text-ink-soft">Last event: {student.violation || "Status updated recently"}</p>
+              <ExtraTimeBadge extraMinutes={student.extraMinutes} accommodationMinutes={student.accommodationMinutes} className="mt-0.5 block" />
             </div>
             <span className={`inline-flex shrink-0 items-center gap-1 font-mono text-[10px] uppercase ${student.violation ? "text-alert" : "text-success"}`}>
               {student.violation ? <>Review <FiChevronRight /></> : "Clear"}

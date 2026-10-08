@@ -18,7 +18,7 @@ export async function listLiveAttempts(
   if (!db) return [];
   let query = db
     .from("attempts")
-    .select("id,exam_id,state,answered,total,minutes_used,score,answers,paper,started_at,submitted_at,auto_saved_at,consent_at,user_agent,student:students(id,roll,full_name,email,auth_id)")
+    .select("id,exam_id,state,answered,total,minutes_used,score,answers,paper,started_at,submitted_at,auto_saved_at,consent_at,user_agent,extra_minutes,student:students(id,roll,full_name,email,auth_id)")
     .order("auto_saved_at", { ascending: false });
   if (examId) query = query.eq("exam_id", examId);
   const { data, error } = await query;
@@ -45,6 +45,8 @@ export async function listLiveAttempts(
           auto_saved_at: (r.auto_saved_at as string) ?? null,
           consent_at: (r.consent_at as string | null) ?? null,
           user_agent: (r.user_agent as string | null) ?? null,
+          extra_minutes: Number(r.extra_minutes ?? 0),
+          accommodation_minutes: 0,
           student: student
             ? {
                 id: String((student as Record<string, unknown>).id),
@@ -69,10 +71,18 @@ export async function listLiveAttempts(
     if (!examId) return attempts; // all-exams mode: enrolled-but-idle rows are not synthesized per exam
     const { data: enrolledData } = await db
       .from("enrollments")
-      .select("student_id, student:students(id, roll, full_name, auth_id)")
+      .select("student_id, extra_minutes, student:students(id, roll, full_name, auth_id)")
       .eq("exam_id", examId);
 
     if (enrolledData) {
+      const accommodation = new Map<string, number>();
+      for (const row of enrolledData) {
+        const r = row as Record<string, unknown>;
+        accommodation.set(String(r.student_id), Number(r.extra_minutes ?? 0));
+      }
+      for (const a of attempts) {
+        if (a.student?.id) a.accommodation_minutes = accommodation.get(a.student.id) ?? 0;
+      }
       for (const row of enrolledData) {
         const s = (row as Record<string, unknown>).student;
         const st = Array.isArray(s) ? s[0] : s;
@@ -93,6 +103,8 @@ export async function listLiveAttempts(
             auto_saved_at: null,
             consent_at: null,
             user_agent: null,
+            extra_minutes: 0,
+            accommodation_minutes: accommodation.get(String((st as Record<string, unknown>).id)) ?? 0,
             student: {
               id: String((st as Record<string, unknown>).id),
               roll: String((st as Record<string, unknown>).roll),

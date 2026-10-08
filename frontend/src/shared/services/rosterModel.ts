@@ -45,6 +45,10 @@ export type Attempt = {
   /** Per-student paper snapshot (ordered DB question ids + shuffled options). */
   paper?: unknown;
   score?: number | null;
+  /** Minutes added during the exam. */
+  extraMinutes?: number;
+  /** Accommodation minutes from the enrollment. */
+  accommodationMinutes?: number;
 };
 
 export const needsAttention = (a: Attempt) => a.flags.length > 0 || a.network === "Offline";

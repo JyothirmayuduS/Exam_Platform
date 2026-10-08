@@ -116,23 +116,44 @@ export async function setAttemptPaused(
   return !error;
 }
 
-/** Grant extra minutes to a candidate (Extend +5m). The server deadline moves
- *  at once; the student's countdown re-syncs from it within 30 seconds. */
-export async function extendAttemptTime(attemptId: string, minutes: number): Promise<boolean> {
+export const MAX_LIVE_EXTRA_MINUTES = 120;
+
+export type ExtendTimeResult =
+  | { ok: true; extraMinutes: number; secondsLeft: number | null }
+  | { ok: false; reason: "forbidden" | "not_live" | "invalid" | "unavailable"; message: string };
+
+/** Add minutes to a live attempt. Only the teacher who owns the exam may do
+ *  this; the database checks ownership, moves the deadline and writes the
+ *  audit row (who, how many, when) in one transaction. The student's
+ *  countdown picks the change up over realtime. */
+export async function extendAttemptTime(attemptId: string, minutes: number): Promise<ExtendTimeResult> {
   const db = getSupabase();
-  if (!db || !isRealUuid(attemptId)) return false;
-  const { data: att } = await db
-    .from("attempts")
-    .select("extra_minutes")
-    .eq("id", attemptId)
-    .maybeSingle();
-  const cur = Number((att as { extra_minutes?: number } | null)?.extra_minutes ?? 0);
-  const { error } = await db
-    .from("attempts")
-    .update({ extra_minutes: cur + Math.max(1, Math.round(minutes)) })
-    .eq("id", attemptId);
-  if (!error) void logAudit({ action: "attempt.time_extended", targetType: "attempt", targetId: attemptId, meta: { minutes: Math.max(1, Math.round(minutes)), total_extra: cur + Math.max(1, Math.round(minutes)) } });
-  return !error;
+  if (!db || !isRealUuid(attemptId)) return { ok: false, reason: "unavailable", message: "This candidate has no live attempt." };
+  const m = Math.round(minutes);
+  if (!Number.isFinite(m) || m < 1 || m > MAX_LIVE_EXTRA_MINUTES) {
+    return { ok: false, reason: "invalid", message: `Enter between 1 and ${MAX_LIVE_EXTRA_MINUTES} minutes.` };
+  }
+  const { data, error } = await db.rpc("add_attempt_extra_minutes", { p_attempt: attemptId, p_minutes: m });
+  if (error) {
+    if (error.code === "42501") return { ok: false, reason: "forbidden", message: "Only the teacher who owns this exam can add time." };
+    if (error.code === "P0001") return { ok: false, reason: "not_live", message: "This attempt is no longer in progress." };
+    if (error.code === "22023") return { ok: false, reason: "invalid", message: `Enter between 1 and ${MAX_LIVE_EXTRA_MINUTES} minutes.` };
+    return { ok: false, reason: "unavailable", message: "Could not add time — try again." };
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as { extra_minutes?: number; seconds_left?: number | null } | null;
+  return {
+    ok: true,
+    extraMinutes: Number(row?.extra_minutes ?? 0),
+    secondsLeft: typeof row?.seconds_left === "number" ? row.seconds_left : null,
+  };
+}
+
+/** True when the signed-in user is the teacher who owns this exam. */
+export async function ownsExam(examId: string): Promise<boolean> {
+  const db = getSupabase();
+  if (!db || !examId) return false;
+  const { data, error } = await db.rpc("owns_exam", { p_exam: examId });
+  return !error && data === true;
 }
 
 // ── Proctor chat & broadcast messages ────────────────────────────────────────

@@ -276,6 +276,9 @@ function StudentExamSession() {
   }
   // True while the invigilator has paused this candidate (attempt.state = "paused").
   const [proctorPaused, setProctorPaused] = useState(false);
+  // Minutes the owning teacher added during the exam. A change re-reads the
+  // deadline from the server, so the countdown moves without a reload.
+  const [liveExtraMinutes, setLiveExtraMinutes] = useState<number | null>(null);
   const [announcements, setAnnouncements] = useState<ProctorMessage[]>([]);
   const seenAnnouncementsKey = `vignan.announcementsSeen.${EXAM_ID}`;
   const [seenAnnouncements, setSeenAnnouncements] = useState<string[]>(() => {
@@ -906,7 +909,7 @@ function StudentExamSession() {
     sync();
     const id = window.setInterval(sync, 30_000);
     return () => { alive = false; window.clearInterval(id); };
-  }, [step, attemptId, EXAM_ID, setSecondsLeft, proctorPaused, connectionLost]);
+  }, [step, attemptId, EXAM_ID, setSecondsLeft, proctorPaused, connectionLost, liveExtraMinutes]);
 
   // ── Timed sections ────────────────────────────────────────────────────────
   // Each section has its own countdown; navigation is limited to the section
@@ -1031,11 +1034,14 @@ function StudentExamSession() {
             table: "attempts",
             filter: `student_id=eq.${studentIdRef.current}`,
           },
-          (payload: { new: { state?: string } | null }) => {
+          (payload: { new: { state?: string; exam_id?: string; extra_minutes?: number | null } | null }) => {
             // Pause / force-submit are already logged once by the proctor
             // console; logging them here too repeated them on every autosave
             // UPDATE while paused.
             const state = payload.new?.state;
+            if (payload.new?.exam_id === EXAM_ID && typeof payload.new.extra_minutes === "number") {
+              setLiveExtraMinutes(payload.new.extra_minutes);
+            }
             setProctorPaused(state === "paused");
             // Force submit: the invigilator ended this attempt remotely.
             // Guard so a realtime echo / double event can't submit twice —
@@ -1065,10 +1071,11 @@ function StudentExamSession() {
         if (!db || !studentIdRef.current) return;
         const { data: att } = await db
           .from("attempts")
-          .select("state")
+          .select("state, extra_minutes")
           .eq("exam_id", EXAM_ID)
           .eq("student_id", studentIdRef.current)
           .maybeSingle();
+        if (typeof att?.extra_minutes === "number") setLiveExtraMinutes(att.extra_minutes);
         if (att?.state === "submitted" && !forceSubmitFiredRef.current) {
           forceSubmitFiredRef.current = true;
           void doSubmit();

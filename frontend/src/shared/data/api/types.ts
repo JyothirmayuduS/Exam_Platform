@@ -107,6 +107,10 @@ export type LiveAttempt = {
   auto_saved_at: string | null;
   consent_at: string | null;
   user_agent: string | null;
+  /** Minutes added to this attempt during the exam. */
+  extra_minutes: number;
+  /** Accommodation minutes set on the enrollment (Candidates tab). */
+  accommodation_minutes: number;
   student: { id: string; roll: string; full_name: string; email: string | null; auth_id?: string | null } | null;
   violations: ViolationEvent[];
 };

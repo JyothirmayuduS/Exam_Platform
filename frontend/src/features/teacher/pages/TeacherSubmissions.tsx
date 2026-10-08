@@ -9,6 +9,8 @@ import { FiUpload, FiSend, FiEye, FiClock, FiMessageSquare, FiAlertTriangle, FiC
 import { Button } from "@/shared/components/ui";
 import { usePromptDialog } from "@/shared/components/PromptDialog";
 import { getSupabase } from "@/shared/data/supabase";
+import { ExtraTimeBadge, LiveExtraTimeControl } from "@/features/proctoring/components/LiveExtraTime";
+import useOwnsExam from "@/features/proctoring/hooks/useOwnsExam";
 
 type StatusTab = "All" | AttemptState | "Needs attention";
 const TABS: StatusTab[] = ["All", "Submitted", "In progress", "Not started", "Needs attention"];
@@ -39,6 +41,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
   const [promptDialog, ask] = usePromptDialog();
 
   const { data: attempts = [], isLoading } = useLiveAttempts(examId ?? "", exam?.name ?? "");
+  const ownsExam = useOwnsExam(examId);
 
   // One tick per second only while a scheduled window is open, so the strip
   // countdown is real (derived from the exam schedule), never fabricated.
@@ -108,8 +111,14 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
   const extendAll = async () => {
     const open = await openAttempts();
     if (!open.length) { notify("No in-progress candidates to extend"); return; }
-    for (const r of open) await extendAttemptTime(r.id, 5);
-    notify(`Extended ${open.length} candidate(s) by 5 minutes`);
+    let ok = 0;
+    let lastError = "";
+    for (const r of open) {
+      const res = await extendAttemptTime(r.id, 5);
+      if (res.ok) ok += 1;
+      else lastError = res.message;
+    }
+    notify(ok === open.length ? `Extended ${ok} candidate(s) by 5 minutes` : `Extended ${ok} of ${open.length} candidate(s) by 5 minutes${lastError ? ` — ${lastError}` : ""}`);
   };
   const remind = async (studentEmail?: string | null) => {
     if (!examId) { notify("Select an exam first"); return; }
@@ -146,10 +155,6 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
       visible.map((a) => [a.name, a.roll, a.exam, a.state, a.answered, a.total, a.minutesUsed, a.flags.length, a.email ?? ""]),
     );
     notify(`Roster CSV exported · ${visible.length} rows`);
-  };
-  const grantExtraTime = async (a: Attempt) => {
-    const ok = await extendAttemptTime(a.id, 5);
-    notify(ok ? `Granted +5 minutes to ${a.name}` : `Could not extend ${a.name} — attempt unavailable`);
   };
   const messageCandidate = async (a: Attempt) => {
     if (!examId) { notify("Select an exam first"); return; }
@@ -205,7 +210,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
               <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Time left in window</p>
               <p className="tabular font-mono text-[15px] text-alert">{hms(remainingSec ?? 0)}</p>
             </div>
-            <Button variant="secondary" size="sm" icon={<FiClock />} onClick={() => void extendAll()}>+5 min for all</Button>
+            {ownsExam && <Button variant="secondary" size="sm" icon={<FiClock />} onClick={() => void extendAll()}>+5 min for all</Button>}
             <Button variant="danger" size="sm" icon={<FiAlertTriangle />} onClick={() => void forceSubmitAll()}>Force submit remaining</Button>
           </div>
         )}
@@ -263,7 +268,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
                     <div className="flex items-center gap-2"><div className="h-1.5 w-24 bg-line"><div className={`h-full ${a.state === "Submitted" ? "bg-success" : "bg-forest"}`} style={{ width: `${donePct(a)}%` }} /></div><span className="tabular font-mono text-[10px] text-ink-soft">{a.answered}/{a.total}</span></div>
                     <p className="mt-1 font-mono text-[10px] text-ink-soft">Autosaved {a.autoSaveAt || "never"}</p>
                   </td>
-                  <td className="px-5 py-4"><p className="tabular text-[12px]">{a.minutesUsed ? `${a.minutesUsed} min` : "—"}</p><p className="mt-0.5 font-mono text-[10px] text-ink-soft">Started {a.startedAt}</p></td>
+                  <td className="px-5 py-4"><p className="tabular text-[12px]">{a.minutesUsed ? `${a.minutesUsed} min` : "—"}</p><p className="mt-0.5 font-mono text-[10px] text-ink-soft">Started {a.startedAt}</p><ExtraTimeBadge extraMinutes={a.extraMinutes ?? 0} accommodationMinutes={a.accommodationMinutes ?? 0} className="mt-0.5 block" /></td>
                   <td className="px-5 py-4"><p className={`font-mono text-[10px] uppercase tracking-wider ${netTone(a.network)}`}>{a.network}</p><p className="mt-0.5 text-[11px] text-ink-soft">{a.device}</p></td>
                   <td className="px-5 py-4">{a.flags.length ? <span className="border border-alert/30 bg-alert/5 px-2 py-1 font-mono text-[10px] text-alert">{a.flags.length} flag{a.flags.length > 1 ? "s" : ""}</span> : <span className="font-mono text-[10px] text-success">Clean</span>}</td>
                   <td className="px-5 py-4"><p className={`font-mono text-[10px] uppercase tracking-wider ${stateTone(a.state)}`}>{a.state === "In progress" && "● "}{a.state}</p><p className="mt-0.5 text-[11px] text-ink-soft">{a.state === "Submitted" ? a.submittedAgo : a.lastActivity}</p></td>
@@ -307,7 +312,14 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
                 ? <Button size="lg" iconRight={<FiChevronRight />} onClick={() => openEvaluation(selected)}>Open in evaluation</Button>
                 : <Button size="lg" disabled>Evaluation opens after submit</Button>}
               {selected.state !== "Not started" && <Button size="lg" variant="secondary" icon={<FiEye />} onClick={() => watchLive(selected)}>Watch proctoring feed</Button>}
-              {selected.state === "In progress" && <Button size="lg" variant="secondary" icon={<FiClock />} onClick={() => void grantExtraTime(selected)}>Grant +5 minutes</Button>}
+              {selected.state !== "Not started" && <LiveExtraTimeControl
+                attemptId={selected.id}
+                live={selected.state === "In progress" || selected.state === "Paused"}
+                canAdd={ownsExam}
+                extraMinutes={selected.extraMinutes ?? 0}
+                accommodationMinutes={selected.accommodationMinutes ?? 0}
+                onMessage={(text) => notify(`${selected.name}: ${text}`)}
+              />}
               <Button size="lg" variant="secondary" icon={<FiMessageSquare />} onClick={() => void messageCandidate(selected)}>Message candidate</Button>
             </div>
           </section>}

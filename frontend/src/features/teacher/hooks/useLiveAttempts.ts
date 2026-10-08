@@ -128,6 +128,8 @@ function toUIAttempt(row: LiveAttempt, examName: string): Attempt {
     answers: row.answers ?? {},
     paper: row.paper ?? [],
     score: row.score,
+    extraMinutes: row.extra_minutes ?? 0,
+    accommodationMinutes: row.accommodation_minutes ?? 0,
   };
 }
 
