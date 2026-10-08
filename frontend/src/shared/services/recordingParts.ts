@@ -25,6 +25,23 @@ export type PartUploader = {
 };
 
 export const PART_RETRY_MS = 10_000;
+export const PART_SECONDS = 10;
+
+/** Every family that has ever written pieces (camera_ is legacy ProctorCamera). */
+export const PIECE_FAMILIES = [
+  { family: "exam", label: "camera", title: "Camera + microphone" },
+  { family: "screen", label: "screen", title: "Screen" },
+  { family: "camera", label: "camera-legacy", title: "Camera (older kiosk)" },
+] as const;
+
+/** Pieces of one recorder family, in recording order. */
+export function sortedParts<T extends { kind: string; key: string }>(arts: T[], family: string): T[] {
+  const re = new RegExp(`/parts/${family}_(\\d+)\\.webm$`);
+  const seq = (k: string) => Number(k.match(re)?.[1] ?? 0);
+  return arts
+    .filter((a) => a.kind === "recordings" && re.test(a.key))
+    .sort((a, b) => seq(a.key) - seq(b.key));
+}
 
 export function partName(family: RecordingFamily, seq: number): string {
   return `${family}_${String(seq).padStart(13, "0")}.webm`;

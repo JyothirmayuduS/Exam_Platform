@@ -6,9 +6,9 @@
 //   <ExamName>_evidence.zip
 //   ├── 21VGN0314 - John Doe/
 //   │   ├── recording/
-//   │   │   ├── recording_1756….webm   (finished full video, preferred)
-//   │   │   └── parts/…                (crash-safe segments, only when no
-//   │   │                                finished video exists)
+//   │   │   ├── camera_full_exam.webm  (full exam, joined from its pieces)
+//   │   │   └── screen_full_exam.webm
+//   │   │       (older exams: the finished recording_….webm instead)
 //   │   ├── ss/
 //   │   │   ├── snap_….jpg             (per-second screenshots)
 //   │   │   └── violations/….jpg       (flagged frames)
@@ -20,6 +20,7 @@
 
 import { zip, type AsyncZippable } from "fflate";
 import { listStudentArtifacts, getArtifactObjectUrl, getArtifactUrls } from "@/shared/services/examStorage";
+import { PIECE_FAMILIES, sortedParts } from "@/shared/services/recordingParts";
 
 export type ZipStudent = {
   roll: string;
@@ -94,24 +95,29 @@ export async function downloadExamEvidenceZip(opts: {
     }
     if (!artifacts || artifacts.length === 0) continue;
 
-    // Finished recordings are preferred; crash-safe /parts/ segments are only
-    // included when no finished video exists (they are the same content).
+    // Each recording is exported as ONE full video: its pieces are joined in
+    // order. Finished files from older kiosks are used when no pieces exist.
     const finished = artifacts.filter(
       (a) => a.kind === "recordings" && !a.key.includes("/parts/"),
     );
-    const parts = artifacts.filter(
-      (a) => a.kind === "recordings" && a.key.includes("/parts/"),
-    );
+    const joined = PIECE_FAMILIES
+      .map((f) => ({ path: `${withName}/recording/${f.label}_full_exam.webm`, pieces: sortedParts(artifacts, f.family) }))
+      .filter((j) => j.pieces.length > 0);
     const screenshots = artifacts.filter((a) => a.kind === "screenshots");
     const violations = artifacts.filter((a) => a.kind === "violations");
     const report = artifacts.find((a) => a.kind === "report");
 
-    const recordingItems = finished.length > 0 ? finished : parts;
-    const recordingSubdir = finished.length > 0 ? "recording" : "recording/parts";
-
     const targets: { path: string; key: string }[] = [];
-    for (const r of recordingItems) {
-      targets.push({ path: `${withName}/${recordingSubdir}/${safeSegment(r.name, "recording.webm")}`, key: r.key });
+    // Joined videos: piece i of a recording downloads into pieceBytes[path][i].
+    const pieceBytes = new Map<string, (Uint8Array | null)[]>();
+    for (const j of joined) {
+      pieceBytes.set(j.path, j.pieces.map(() => null));
+      j.pieces.forEach((piece, i) => targets.push({ path: `${j.path}#${i}`, key: piece.key }));
+    }
+    if (joined.length === 0) {
+      for (const r of finished) {
+        targets.push({ path: `${withName}/recording/${safeSegment(r.name, "recording.webm")}`, key: r.key });
+      }
     }
     for (const sc of screenshots) {
       targets.push({ path: `${withName}/ss/${safeSegment(sc.name, "snapshot.jpg")}`, key: sc.key });
@@ -142,20 +148,37 @@ export async function downloadExamEvidenceZip(opts: {
             errors.push(`${s.roll}: HTTP ${res.status} for ${t.key}`);
             continue;
           }
-          // JPEG/WebM/PDF are already compressed; storing skips a slow deflate.
-          files[t.path] = [new Uint8Array(await res.arrayBuffer()), { level: 0 }];
-          fileCount += 1;
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          const hash = t.path.lastIndexOf("#");
+          const slots = hash > 0 ? pieceBytes.get(t.path.slice(0, hash)) : undefined;
+          if (slots) {
+            slots[Number(t.path.slice(hash + 1))] = bytes;
+          } else {
+            // JPEG/WebM/PDF are already compressed; storing skips a slow deflate.
+            files[t.path] = [bytes, { level: 0 }];
+            fileCount += 1;
+          }
         } catch {
           errors.push(`${s.roll}: failed to download ${t.key}`);
         } finally {
           done += 1;
           if (done % 10 === 0 || done === targets.length) {
-            onProgress?.(`${s.name || s.roll}: downloaded ${done} of ${targets.length} files`);
+            onProgress?.(`${s.name || s.roll}: downloading evidence ${Math.round((done / targets.length) * 100)}%`);
           }
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(12, targets.length) }, worker));
+    for (const [path, slots] of pieceBytes) {
+      const got = slots.filter((b): b is Uint8Array => b !== null);
+      if (got.length === 0) continue;
+      if (got.length < slots.length) errors.push(`${s.roll}: ${slots.length - got.length} part(s) of ${path.split("/").pop()} could not be downloaded`);
+      const full = new Uint8Array(got.reduce((n, b) => n + b.length, 0));
+      let at = 0;
+      for (const b of got) { full.set(b, at); at += b.length; }
+      files[path] = [full, { level: 0 }];
+      fileCount += 1;
+    }
   }
 
   if (fileCount === 0) {

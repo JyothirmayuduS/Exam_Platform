@@ -13,15 +13,17 @@
 // Two playback modes:
 //   • "parts" — the normal case. The exam is stored ONLY as 10 s pieces
 //     uploaded live (parts/exam_* for the camera, parts/screen_* for the
-//     screen); no merged copy exists. Pieces are joined in order into ONE
-//     continuous timeline whose duration grows as each piece loads. Red
-//     violation markers keep working across the piece boundaries.
+//     screen); no merged copy exists. Pieces are joined in order and shown
+//     as ONE full-length video — reviewers never see individual pieces. The
+//     seek bar spans the whole exam from the start; red violation markers
+//     work across the piece boundaries.
 //   • "file"  — a finished recording_….webm from older kiosk versions.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FiDownload } from "react-icons/fi";
-import { listStudentArtifacts, getArtifactObjectUrl } from "@/shared/services/examStorage";
+import { listStudentArtifacts, getArtifactObjectUrl, getArtifactUrls } from "@/shared/services/examStorage";
 import type { ViolationEvent } from "@/shared/data/examApi";
+import { sortedParts } from "@/shared/services/recordingParts";
 
 function clock(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec) || sec < 0) return "00:00";
@@ -37,14 +39,6 @@ function clock(sec: number | null | undefined): string {
 type PartItem = { key: string; url: string };
 export type PartSource = "camera" | "screen";
 
-/** Pieces of one recorder family, in recording order. */
-export function sortedParts<T extends { kind: string; key: string }>(arts: T[], family: "exam" | "screen"): T[] {
-  const re = new RegExp(`/parts/${family}_(\\d+)\\.webm$`);
-  const seq = (k: string) => Number(k.match(re)?.[1] ?? 0);
-  return arts
-    .filter((a) => a.kind === "recordings" && re.test(a.key))
-    .sort((a, b) => seq(a.key) - seq(b.key));
-}
 
 type LoadingArtifacts = {
   /** Finished full video URL (normal submitted exam). */
@@ -137,10 +131,10 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
         // ALSO used as the PRIMARY source when the merged file looks unstable
         // (mergedIsUnstable) — playback then rides the clean 10 s segments.
         const signParts = async (list: typeof parts): Promise<PartItem[]> => {
-          const capped = list.slice(0, 720);
-          const urls = await Promise.all(capped.map((a) => getArtifactObjectUrl(a.key)));
-          return capped
-            .map((a, i) => ({ key: a.key, url: urls[i] ?? "" }))
+          if (list.length === 0) return [];
+          const signed = await getArtifactUrls(list.map((a) => a.key));
+          return list
+            .map((a) => ({ key: a.key, url: signed.get(a.key) ?? "" }))
             .filter((p): p is PartItem => Boolean(p.url));
         };
         const usePieces = (parts.length > 0 || screenParts.length > 0) && (!recUrl || mergedIsUnstable);
@@ -221,7 +215,7 @@ function webmTypeFromHeader(buf: ArrayBuffer): string | undefined {
 function sbWait(sb: SourceBuffer, op: () => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const done = () => { cleanup(); resolve(); };
-    const fail = () => { cleanup(); reject(new Error("Segment could not be decoded")); };
+    const fail = () => { cleanup(); reject(new Error("Part of the video could not be decoded")); };
     const cleanup = () => {
       sb.removeEventListener("updateend", done);
       sb.removeEventListener("error", fail);
@@ -253,10 +247,25 @@ function useStitchedParts(
     if (!parts || parts.length === 0) return;
     let cancelled = false;
     const objectUrls: string[] = [];
-    const fetchPart = async (i: number) => {
-      const res = await fetch(parts[i].url);
-      if (!res.ok) throw new Error(`Segment ${i + 1} download failed (HTTP ${res.status})`);
-      return res.arrayBuffer();
+    // Keep a few pieces downloading ahead so long exams load quickly.
+    const inflight = new Map<number, Promise<ArrayBuffer>>();
+    const download = (i: number) => {
+      let p = inflight.get(i);
+      if (!p) {
+        p = fetch(parts[i].url).then((res) => {
+          if (!res.ok) throw new Error(`Video download failed (HTTP ${res.status})`);
+          return res.arrayBuffer();
+        });
+        p.catch(() => undefined);
+        inflight.set(i, p);
+      }
+      return p;
+    };
+    const fetchPart = (i: number) => {
+      for (let j = i + 1; j < Math.min(parts.length, i + 5); j++) void download(j);
+      const p = download(i);
+      inflight.delete(i);
+      return p;
     };
 
     const asBlob = async (first: ArrayBuffer) => {
@@ -431,10 +440,7 @@ export default function RecordingReviewer({
     return { left: `${pct}%` };
   };
 
-  const partCountLabel =
-    activeParts.length > 0
-      ? ` · ${activeParts.length} segment${activeParts.length === 1 ? "" : "s"}`
-      : "";
+  const preparedPct = activeParts.length > 0 ? Math.round((stitched.loaded / activeParts.length) * 100) : 0;
 
   // Download the joined pieces as one local file. Never uploaded back: the
   // pieces are the single stored copy of the recording.
@@ -449,9 +455,9 @@ export default function RecordingReviewer({
     try {
       const chunks: Blob[] = [];
       for (let i = 0; i < activeParts.length; i++) {
-        setMergeMsg(`Downloading segment ${i + 1} of ${activeParts.length}…`);
+        setMergeMsg(`Preparing full video… ${Math.round((i / activeParts.length) * 100)}%`);
         const res = await fetch(activeParts[i].url);
-        if (!res.ok) throw new Error(`Segment ${i + 1} download failed (HTTP ${res.status})`);
+        if (!res.ok) throw new Error(`Video download failed (HTTP ${res.status})`);
         chunks.push(await res.blob());
       }
       const merged = new Blob(chunks, { type: "video/webm" });
@@ -479,7 +485,7 @@ export default function RecordingReviewer({
         )}
         {artifacts.rebuilt && (
           <span className="absolute left-3 top-3 z-10 border border-amber/40 bg-ink/70 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber">
-            {activeSource === "screen" ? "Screen" : "Camera"} · joined from {activeParts.length} segment{activeParts.length === 1 ? "" : "s"}
+            Full exam recording · {activeSource === "screen" ? "Screen" : "Camera"}
           </span>
         )}
         {artifacts.status !== "loading" && videoSrc && (
@@ -537,13 +543,13 @@ export default function RecordingReviewer({
         {artifacts.status === "ready" && !videoSrc && !loadError && (
           <p className={`px-6 text-center font-mono text-[10px] uppercase tracking-widest ${stitched.error ? "text-alert" : "text-paper/60"}`}>
             {partMode
-              ? stitched.error ?? `Joining recording segments… ${stitched.loaded} of ${activeParts.length}`
+              ? stitched.error ?? `Preparing full video… ${preparedPct}%`
               : "No playable recording found"}
           </p>
         )}
         {partMode && videoSrc && !stitched.done && !stitched.error && (
           <span className="absolute bottom-14 left-3 z-10 bg-ink/70 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-paper/80">
-            Loading segment {stitched.loaded} of {activeParts.length}
+            Loading full video · {preparedPct}%
           </span>
         )}
         {artifacts.status === "empty" && (
@@ -567,7 +573,7 @@ export default function RecordingReviewer({
           <div className="absolute inset-0 flex items-center justify-center bg-ink/85 px-6 text-center">
             <p className="font-mono text-[10px] uppercase tracking-widest text-alert">
               {partMode
-                ? "Recording segments could not be decoded. Use Download full video below to save them."
+                ? "The full video could not be played here. Use Download full video below to watch it."
                 : "Recording could not be played — it may still be uploading."}
             </p>
           </div>
@@ -614,7 +620,7 @@ export default function RecordingReviewer({
         </div>
         <div className="flex items-center justify-between font-mono text-[9px] uppercase tracking-wider text-ink-soft">
           <span>{markers.length > 0 ? `${markers.length} violation marker(s) in red` : "No violations on this timeline"}</span>
-          <span>{clock(current)} {visibleDuration ? `/ ${clock(visibleDuration)}` : ""}{partCountLabel}</span>
+          <span>{clock(current)} {visibleDuration ? `/ ${clock(visibleDuration)}` : ""}</span>
         </div>
       </div>
 
@@ -635,7 +641,7 @@ export default function RecordingReviewer({
             </div>
           ) : (
             <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
-              {activeSource === "screen" ? "Screen recording" : "Camera recording"}
+              {activeSource === "screen" ? "Full screen recording" : "Full camera recording"}
             </p>
           )}
           <button
@@ -644,7 +650,7 @@ export default function RecordingReviewer({
             className="inline-flex items-center gap-1.5 border border-ink px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-ink transition-colors hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <FiDownload aria-hidden />
-            {saving ? "Joining…" : `Download full video (${activeParts.length} seg)`}
+            {saving ? "Preparing…" : "Download full video"}
           </button>
         </div>
       )}
@@ -652,7 +658,7 @@ export default function RecordingReviewer({
         <p className="font-mono text-[10px] text-ink-soft">{mergeMsg}</p>
       )}
       {saveError && (
-        <p className="font-mono text-[10px] text-alert">Could not download full video — {saveError}. The segments above still play as one merged preview.</p>
+        <p className="font-mono text-[10px] text-alert">Could not download full video — {saveError}. The video above still plays.</p>
       )}
 
       {/* Violation log with jump buttons */}

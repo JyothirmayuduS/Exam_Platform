@@ -1,6 +1,6 @@
 // Tests for the per-student evidence ZIP export: every candidate gets a
-// folder containing recording/ (finished webm preferred, crash-safe parts as
-// fallback) and ss/ (screenshots + violations), plus the report PDF at the
+// folder containing recording/ (one full video per recording, joined from
+// its pieces; finished webm for older exams) and ss/ (screenshots + violations), plus the report PDF at the
 // student root — all packed into ONE downloadable zip.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { unzipSync } from "fflate";
@@ -100,34 +100,37 @@ describe("downloadExamEvidenceZip", () => {
     expect(Array.from(unzipped["21VGN0315 - Jane Roe/ss/snap_2.jpg"])).toEqual(SNAPSHOT_BYTES);
   });
 
-  it("falls back to crash-safe parts under recording/parts/ when no finished video exists", async () => {
+  it("exports each recording as ONE full video joined from its pieces, in order", async () => {
+    const piece = (family: string, seq: number) => ({
+      key: `Test-3/21VGN0314/recordings/parts/${family}_${String(seq).padStart(13, "0")}.webm`,
+      kind: "recordings" as const, name: `${family}_${seq}.webm`, size: 1, lastModified: null,
+    });
+    // Listed out of order; seq 9 < 10 < 100 must sort numerically.
     vi.mocked(listStudentArtifacts).mockResolvedValueOnce([
-      { key: "Test-3/21VGN0314/recordings/parts/seg_00000001.webm", kind: "recordings", name: "seg_00000001.webm", size: 10, lastModified: null },
-      { key: "Test-3/21VGN0314/recordings/parts/seg_00000002.webm", kind: "recordings", name: "seg_00000002.webm", size: 10, lastModified: null },
+      piece("exam", 100), piece("exam", 9), piece("screen", 5), piece("exam", 10), piece("screen", 6),
     ]);
-    vi.mocked(getArtifactObjectUrl).mockResolvedValue("https://r2.example/object");
-    const fetchMock = vi.mocked(fetch);
-    fetchMock
-      .mockResolvedValueOnce(mockResponse([1]) as unknown as Response)
-      .mockResolvedValueOnce(mockResponse([2]) as unknown as Response);
-
-    const clickSpy = vi
-      .spyOn(HTMLAnchorElement.prototype, "click")
-      .mockImplementation(() => {});
+    vi.mocked(getArtifactObjectUrl).mockImplementation(async (key: string) => `https://r2.example/${key}`);
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const seq = Number(String(url).match(/_(\d+)\.webm$/)?.[1]);
+      return mockResponse([seq]) as unknown as Response;
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
 
     const res = await downloadExamEvidenceZip({
       examId: "EXAM-2026-0001",
       students: [{ roll: "21VGN0314", name: "John Doe" }],
     });
 
+    expect(res.errors).toEqual([]);
     expect(res.fileCount).toBe(2);
-    expect(clickSpy).toHaveBeenCalledTimes(1);
     const zipBlob = vi.mocked(URL.createObjectURL).mock.calls[0]?.[0] as Blob;
     const unzipped = unzipSync(new Uint8Array(await zipBlob.arrayBuffer()));
     expect(Object.keys(unzipped).sort()).toEqual([
-      "21VGN0314 - John Doe/recording/parts/seg_00000001.webm",
-      "21VGN0314 - John Doe/recording/parts/seg_00000002.webm",
+      "21VGN0314 - John Doe/recording/camera_full_exam.webm",
+      "21VGN0314 - John Doe/recording/screen_full_exam.webm",
     ]);
+    expect(Array.from(unzipped["21VGN0314 - John Doe/recording/camera_full_exam.webm"])).toEqual([9, 10, 100]);
+    expect(Array.from(unzipped["21VGN0314 - John Doe/recording/screen_full_exam.webm"])).toEqual([5, 6]);
   });
 
   it("does not trigger a download when nothing is stored, and reports fetch failures", async () => {

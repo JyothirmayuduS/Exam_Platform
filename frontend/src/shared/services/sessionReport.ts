@@ -13,6 +13,7 @@
 
 import { jsPDF } from "jspdf";
 import { listStudentArtifacts, getArtifactBlob, getArtifactUrls } from "@/shared/services/examStorage";
+import { PART_SECONDS, PIECE_FAMILIES, sortedParts } from "@/shared/services/recordingParts";
 
 export type ReportRow = {
   name: string;
@@ -407,7 +408,26 @@ async function drawAudioInventory(doc: jsPDF, row: ReportRow, examId: string): P
   } catch {
     return;
   }
-  const clips = (artifacts ?? []).filter((a) => a.kind === "recordings" || a.kind === "monitor");
+  const all = artifacts ?? [];
+  // A recording stored as pieces is listed once, as the full video it plays as.
+  type Row = { title: string; detail: string };
+  const rows: Row[] = [];
+  for (const f of PIECE_FAMILIES) {
+    const pieces = sortedParts(all, f.family);
+    if (pieces.length === 0) continue;
+    const bytes = pieces.reduce((n, p) => n + (p.size ?? 0), 0);
+    const last = pieces[pieces.length - 1].lastModified;
+    rows.push({
+      title: `${f.title} recording — full exam`,
+      detail: `≈ ${Math.max(1, Math.round((pieces.length * PART_SECONDS) / 60))} min · ${(bytes / 1024 / 1024).toFixed(1)} MB${last ? ` · finished ${new Date(last).toLocaleString()}` : ""}`,
+    });
+  }
+  for (const a of all) {
+    if (!(a.kind === "monitor" || (a.kind === "recordings" && !a.key.includes("/parts/")))) continue;
+    const when = a.lastModified ? new Date(a.lastModified).toLocaleString() : "time unknown";
+    const kb = a.size ? `${Math.max(1, Math.round(a.size / 1024))} KB` : "size unknown";
+    rows.push({ title: a.kind === "monitor" ? "Monitor audio" : "Exam recording (camera + microphone)", detail: `${a.name} · ${kb} · ${when}` });
+  }
   const W = doc.internal.pageSize.getWidth();
   const M = 32;
   doc.addPage();
@@ -422,23 +442,21 @@ async function drawAudioInventory(doc: jsPDF, row: ReportRow, examId: string): P
   let y = 84;
   doc.setTextColor(30, 30, 30);
   doc.setFontSize(10);
-  if (clips.length === 0) {
+  if (rows.length === 0) {
     doc.setTextColor(155, 28, 28);
     doc.text("No recording or monitor audio was stored for this candidate.", M, y);
     return;
   }
-  for (const clip of clips) {
+  for (const row of rows) {
     if (y > 520) { doc.addPage(); y = 60; }
-    const when = clip.lastModified ? new Date(clip.lastModified).toLocaleString() : "time unknown";
-    const kb = clip.size ? `${Math.max(1, Math.round(clip.size / 1024))} KB` : "size unknown";
     doc.setFont("helvetica", "bold");
     doc.setTextColor(30, 30, 30);
-    doc.text(clip.kind === "monitor" ? "Monitor audio" : "Exam recording (camera + microphone)", M, y);
+    doc.text(row.title, M, y);
     y += 14;
     doc.setFont("courier", "normal");
     doc.setFontSize(8);
     doc.setTextColor(80, 80, 80);
-    const lines = doc.splitTextToSize(`${clip.name} · ${kb} · ${when}`, W - M * 2) as string[];
+    const lines = doc.splitTextToSize(row.detail, W - M * 2) as string[];
     for (const line of lines) {
       doc.text(line, M, y);
       y += 11;
