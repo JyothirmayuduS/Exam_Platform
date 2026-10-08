@@ -198,7 +198,7 @@ export default function CreateTestModal({
               }}
               className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest"
             >
-              <option value="" disabled>{batches.length ? "Select a program" : "Loading programs…"}</option>
+              <option value="" disabled>Select a program</option>
               {batches.map((b) => <option key={b.name} value={b.name}>{b.name} · {b.students} student{b.students === 1 ? "" : "s"}</option>)}
               <option value={NEW_BATCH}>+ New program…</option>
             </select>
