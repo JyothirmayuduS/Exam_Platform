@@ -23,8 +23,8 @@ Anything other than good turns on low-bandwidth mode:
 - Live camera: 150 kbps, 10 fps, half width and height (normally 450 kbps, 15 fps).
 - Live screen share: 300 kbps, 2 fps (normally 800 kbps, 5 fps).
 - Webcam snapshots: every 30 s (normally every 20 s).
-- Recording parts stay on the device and upload when the link recovers. The
-  submit-time upload still runs.
+- Recording pieces stay on the device and upload when the link recovers.
+  Submit still drains them.
 
 Grading, the server deadline, answer saving and violation flags are untouched.
 Every violation still captures its own frame immediately, whatever the
@@ -44,8 +44,10 @@ snapshot interval. The question paper stays text-only.
 Measured with `node frontend/scripts/measure-proctor-storage.mjs 45 120`. The
 script runs Chromium's real JPEG encoder and MediaRecorder (VP9 + Opus) on a
 640×480 webcam-like scene with microphone audio, and on a 1366×768 text exam
-page. It then scales bytes per second to 120 minutes. Each recording is stored
-twice: the live parts, plus the merged file at submit.
+page. It then scales bytes per second to 120 minutes. Figures are per copy.
+Recordings used to be stored twice (the live parts plus a merged file at
+submit), which doubled the recording rows. They are now stored once, as 10 s
+pieces only (see `frontend/src/shared/services/recordingParts.ts`).
 
 | | Before | After |
 | --- | --- | --- |

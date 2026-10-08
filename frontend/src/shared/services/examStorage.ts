@@ -337,8 +337,7 @@ async function storeArtifact(path: string, blob: Blob, _contentType: string): Pr
 }
 
 /**
- * storeArtifact with retries for the big, irreplaceable blob (the merged
- * recording). A flaky edge-function invocation or presigned-PUT handshake can
+ * storeArtifact with retries for irreplaceable evidence. A flaky edge-function invocation or presigned-PUT handshake can
  * fail once and then succeed on the next attempt — a recording is too
  * important to give up after a single try.
  */
@@ -364,40 +363,6 @@ export async function uploadArtifactBlob(
   contentType: string,
 ): Promise<StoredArtifact | null> {
   return storeArtifact(key, blob, contentType);
-}
-
-/**
- * Crash-proof recording part. The recorder emits a chunk every few seconds;
- * each chunk is uploaded HERE immediately so a browser crash mid-exam loses at
- * most the tail of the session. Chunks come from ONE continuous recorder, so
- * concatenating them in order yields the full playable video (see
- * RecordingReview's parts-rebuild fallback).
- *
- * Parts use the `exam_` prefix: ProctorCamera's independent recorder also
- * writes `parts/` fragments (`camera_*` / `screen_*`), and the two families
- * MUST never be interleaved into one timeline — that produced a review video
- * that jumped between recorders and stopped at ~198 s on a 3-minute exam.
- */
-export async function uploadRecordingPart(opts: {
-  examId: string;
-  examName?: string | null;
-  roll: string;
-  blob: Blob;
-  seq: number;
-}): Promise<string | null> {
-  const name = `exam_${String(opts.seq).padStart(8, "0")}.webm`;
-  try {
-    return await r2PutBlob({
-      examId: storageFolderSegment(opts.examId, opts.examName),
-      ownerSegment: opts.roll,
-      kind: "recordings",
-      name: `parts/${name}`,
-      blob: opts.blob,
-    });
-  } catch (err) {
-    console.warn("[examStorage] recording part upload failed:", err);
-    return null;
-  }
 }
 
 /** Store a flagged frame as a violation snapshot (used by the proctor console). */
@@ -565,34 +530,26 @@ export function startScreenshotCapture(opts: {
 }
 
 /**
- * Upload everything recorded during the exam (recording + violation snapshots +
- * a PDF report) to Cloudflare R2.
+ * Upload the submit-time evidence (violation snapshots + a PDF report) to
+ * Cloudflare R2. The recording is NOT uploaded here: its 10 s pieces
+ * (recordings/parts/exam_*.webm) are the only stored copy and are flushed by
+ * the recorder's part uploader (shared/services/recordingParts.ts).
  */
 export async function uploadExamRecords(opts: {
   examId: string;
   examName?: string | null;
   roll: string;
   studentName: string;
-  videoBlob: Blob;
   violationSnapshots?: ViolationSnap[];
   durationSec?: number;
   startedAt?: string | null;
   violations?: ReportRow["violations"];
-}): Promise<{ recordingKey: string | null; pdfKey: string | null; snapshotKeys: string[] }> {
-  const { examId, examName, roll, studentName, videoBlob, violationSnapshots = [], durationSec } = opts;
+}): Promise<{ pdfKey: string | null; snapshotKeys: string[] }> {
+  const { examId, examName, roll, studentName, violationSnapshots = [], durationSec } = opts;
   const folder = storageFolderSegment(examId, examName);
-  const uploaded = { recordingKey: null as string | null, pdfKey: null as string | null, snapshotKeys: [] as string[] };
+  const uploaded = { pdfKey: null as string | null, snapshotKeys: [] as string[] };
 
-  // 1. Recording → Cloudflare R2 (retried — teacher reviews this first).
-  const recFilename = `recording_${Date.now()}.webm`;
-  const rec = await storeArtifactWithRetry(
-    buildR2Path(folder, roll, "recordings", recFilename),
-    videoBlob,
-    "video/webm",
-  );
-  uploaded.recordingKey = rec?.key ?? null;
-
-  // 2. Violation snapshots (frames captured at the flagged moments). Same key
+  // 1. Violation snapshots (frames captured at the flagged moments). Same key
   //    as the flag-time upload, so a re-upload overwrites rather than adding a
   //    copy stamped with the submit time.
   for (const snap of violationSnapshots) {
@@ -605,7 +562,7 @@ export async function uploadExamRecords(opts: {
     if (stored) uploaded.snapshotKeys.push(stored.key);
   }
 
-  // 3. PDF report (generated locally with jsPDF).
+  // 2. PDF report (generated locally with jsPDF).
   try {
     const pdfBlob = await generateProctorReport({
       examId: folder,
@@ -614,7 +571,7 @@ export async function uploadExamRecords(opts: {
       studentName,
       violationSnapshots,
       durationSec,
-      recordingKey: uploaded.recordingKey,
+      recordingKey: buildR2Path(folder, roll, "recordings", "parts/"),
       startedAt: opts.startedAt,
       violations: opts.violations,
     });

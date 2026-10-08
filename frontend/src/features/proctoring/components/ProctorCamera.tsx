@@ -279,7 +279,6 @@ export default function ProctorCamera({
             examName,
             roll: studentId,
             kind: "screen",
-            liveParts: true,
           });
           screenRecordRef.current.setLowBandwidth(lowBandwidthRef.current);
           // A MediaRecorder left running on an ENDED display track writes black

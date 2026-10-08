@@ -65,12 +65,13 @@ import useConnectionLost from "@/features/student/hooks/useConnectionLost";
 import useConnectionState from "@/features/student/hooks/useConnectionState";
 import ConnectionBadge from "@/shared/components/ConnectionBadge";
 import { RECORDING_BITRATE } from "@/shared/services/lowBandwidth";
+import { startPartUploads, type PartUploader } from "@/shared/services/recordingParts";
 import type { LinkQuality } from "@/features/proctoring/services/proctor";
 import { clearPending, planResume, readPending, resumeSection, saveOrQueue, writePending, type ResumePlan } from "@/features/student/domain/resume";
 import useCurrentProfile from "@/features/auth/hooks/useCurrentProfile";
 import { invoke } from "@tauri-apps/api/core";
 import { startNativeDisplayStream } from "@/shared/platform/nativeScreenShare";
-import { uploadExamRecords, uploadRecordingPart, startScreenshotCapture, type ScreenshotHandle, type ViolationSnap } from "@/shared/services/examStorage";
+import { uploadExamRecords, storageFolderSegment, startScreenshotCapture, type ScreenshotHandle, type ViolationSnap } from "@/shared/services/examStorage";
 import { startServerProctorWatchdog, type ServerProctorHandle } from "@/features/proctoring/services/serverProctor";
 import {
   DownloadGateScreen,
@@ -307,58 +308,26 @@ function StudentExamSession() {
   const lowBandwidth = connectionState !== "good";
   const lowBandwidthRef = useRef(lowBandwidth);
   lowBandwidthRef.current = lowBandwidth;
-  const recordedChunksRef = useRef<Blob[]>([]);
-  // Crash-proof recording: every chunk the recorder emits is also uploaded to
-  // R2 immediately (parts/exam_NNNNNNNN.webm). A browser crash mid-exam then
-  // loses at most the in-flight tail — the reviewer rebuilds the video from
-  // the uploaded parts.
-  //
-  // IMPORTANT: the sequence number is assigned at ENQUEUE time, not after the
-  // upload, so a failed upload can never silently renumber the parts and
-  // corrupt the rebuild order. Each part gets up to 3 attempts before being
-  // dropped, and uploads run strictly one-at-a-time to keep order stable.
-  const partsSeqRef = useRef(0);
-  const partsQueueRef = useRef<Array<{ seq: number; blob: Blob }>>([]);
-  const partsBusyRef = useRef(false);
-  async function drainRecordingParts(timeoutMs = 0) {
-    if (partsBusyRef.current) return;
-    partsBusyRef.current = true;
-    const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
-    try {
-      while (partsQueueRef.current.length > 0) {
-        if (deadline > 0 && Date.now() > deadline) break;
-        // Weak link: keep the parts (they are also in recordedChunksRef) and
-        // upload once it recovers. The submit drain passes a deadline and runs anyway.
-        if (deadline === 0 && lowBandwidthRef.current) break;
-        const item = partsQueueRef.current[0];
-        let attempts = 0;
-        let ok = false;
-        while (!ok && attempts < 3) {
-          attempts += 1;
-          try {
-            ok = (await uploadRecordingPart({
-              examId: EXAM_ID,
-              examName: examNameRef.current,
-              roll: STUDENT_ROLL,
-              blob: item.blob,
-              seq: item.seq,
-            })) !== null;
-          } catch { /* retry */ }
-          if (!ok && deadline > 0 && Date.now() > deadline) break;
-        }
-        // Only dequeue after success or after exhausting retries — never reorder.
-        partsQueueRef.current.shift();
-      }
-    } finally {
-      partsBusyRef.current = false;
-      if (partsQueueRef.current.length > 0 && !lowBandwidthRef.current) void drainRecordingParts();
+  // Recording pieces are the only stored copy of the exam video: every 10 s
+  // chunk goes to the device's disk outbox and uploads to R2 as
+  // parts/exam_<seq>.webm (see shared/services/recordingParts.ts). Nothing
+  // accumulates in memory and no merged file is uploaded at submit — review
+  // stitches the pieces. A failed piece stays on disk and retries; on a weak
+  // link uploads pause until it recovers.
+  const partUploaderRef = useRef<PartUploader | null>(null);
+  const partUploader = (): PartUploader | null => {
+    if (!supabaseConfigured || !EXAM_ID || !STUDENT_ROLL) return null;
+    if (!partUploaderRef.current) {
+      partUploaderRef.current = startPartUploads({
+        folder: storageFolderSegment(EXAM_ID, examNameRef.current),
+        owner: STUDENT_ROLL,
+        family: "exam",
+      });
+      partUploaderRef.current.setPaused(lowBandwidthRef.current);
     }
-  }
-  const queueRecordingPart = (blob: Blob) => {
-    if (!supabaseConfigured || !EXAM_ID || !STUDENT_ROLL) return;
-    partsQueueRef.current.push({ seq: (partsSeqRef.current += 1), blob });
-    void drainRecordingParts();
+    return partUploaderRef.current;
   };
+  useEffect(() => () => partUploaderRef.current?.stop(), []);
 
   /**
    * Start (or restart) the exam MediaRecorder on the given stream. Called once
@@ -371,7 +340,7 @@ function StudentExamSession() {
   function startExamRecorder(stream: MediaStream) {
     try {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-        // stop() flushes the final chunk (last real frames) into the list
+        // stop() emits the final chunk (last real frames) as a piece
         // before the new recorder starts.
         mediaRecorderRef.current.stop();
       }
@@ -386,12 +355,9 @@ function StudentExamSession() {
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: bitrate } : { videoBitsPerSecond: bitrate });
       mr.ondataavailable = (e) => {
         if (e.data.size <= 0) return;
-        // 1) Local accumulation / merged full video at submit (unchanged).
-        recordedChunksRef.current.push(e.data);
-        // 2) Live upload of this chunk / crash-proof parts in R2.
-        queueRecordingPart(e.data);
+        partUploader()?.enqueue(e.data);
       };
-      mr.start(10_000); // 10 s chunk cadence (final video is identical)
+      mr.start(10_000);
       mediaRecorderRef.current = mr;
     } catch (e) {
       console.warn("Failed to start MediaRecorder", e);
@@ -633,7 +599,7 @@ function StudentExamSession() {
 
   useEffect(() => {
     screenshotHandleRef.current?.setLowBandwidth(lowBandwidth);
-    if (!lowBandwidth && partsQueueRef.current.length > 0) void drainRecordingParts();
+    partUploaderRef.current?.setPaused(lowBandwidth);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lowBandwidth]);
 
@@ -1592,9 +1558,10 @@ function StudentExamSession() {
       }
     }
 
-    // Upload all exam artifacts: recording + violation snapshots + PDF — all to
-    // private storage. The successful status enables Tauri auto-exit only
-    // after the queued frames, merged video and complete PDF have landed.
+    // Finish the exam evidence: the remaining recording pieces, violation
+    // snapshots and the PDF — all private storage. The pieces ARE the
+    // recording; no merged copy is uploaded. The successful status enables
+    // Tauri auto-exit only after every piece, frame and the PDF have landed.
     void (async () => {
       try {
         // 1. Give the recorder a moment to emit its final chunk. The full video
@@ -1602,21 +1569,21 @@ function StudentExamSession() {
         //    snapshot outbox can take minutes on a slow network (it keeps
         //    retrying in the background and survives a restart).
         await new Promise((r) => setTimeout(r, 400));
-        void drainRecordingParts(20_000);
+        const parts = partUploader();
+        const partsFlush = parts ? parts.flush() : Promise.resolve(true);
+        const partsSettled = Promise.race([
+          partsFlush,
+          new Promise<boolean>((r) => setTimeout(() => r(false), 20_000)),
+        ]);
         const snapshotsSettled = Promise.race([
           snapshotsStored,
           new Promise<boolean>((r) => setTimeout(() => r(false), 15_000)),
         ]);
-        // 2. Merge the local chunks into one full video and upload it. This is
-        //    the file the teacher's review prefers — parts are the crash fallback.
-        const type = recordedChunksRef.current[0]?.type || "video/webm";
-        const videoBlob = new Blob(recordedChunksRef.current, { type });
         const result = await uploadExamRecords({
           examId: EXAM_ID,
           examName: examNameRef.current,
           roll: STUDENT_ROLL,
           studentName: studentName,
-          videoBlob,
           violationSnapshots: violationSnapshotsRef.current,
           durationSec: Math.max(0, Math.round(durationMin * 60 - secondsLeft)),
           startedAt: examStartedAtRef.current ? new Date(examStartedAtRef.current).toISOString() : null,
@@ -1627,16 +1594,23 @@ function StudentExamSession() {
             : undefined,
         });
         console.log("[StudentExam] artifacts stored:", result);
-        const allSnapshotsStored = await snapshotsSettled;
+        const [allSnapshotsStored, allPartsStored] = await Promise.all([snapshotsSettled, partsSettled]);
         // Tell the submitted screen what actually landed so the student (and
         // invigilator) can see storage worked instead of silently losing a
-        // recording. Parts uploaded live during the exam are the crash fallback.
-        if (result.recordingKey && result.pdfKey && allSnapshotsStored) {
-          console.info("[StudentExam] recording stored:", result.recordingKey);
+        // recording.
+        if (result.pdfKey && allSnapshotsStored && allPartsStored) {
           setArtifactStatus({ state: "stored", detail: "Exam recording secured." });
         } else {
           console.warn("[StudentExam] exam evidence is incomplete or pending upload");
           setArtifactStatus({ state: "partial", detail: "Some exam evidence is missing or still pending upload. Please inform your invigilator before closing the app." });
+          // Pieces left on the device keep retrying; upgrade once they land.
+          if (result.pdfKey && allSnapshotsStored && parts) {
+            void partsFlush.then(async (done) => {
+              if (done || await parts.flush()) {
+                setArtifactStatus({ state: "stored", detail: "Exam recording secured." });
+              }
+            });
+          }
         }
       } catch (err) {
         console.error("Failed to upload recording:", err);

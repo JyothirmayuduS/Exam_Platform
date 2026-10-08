@@ -38,14 +38,19 @@ export function createSnapshotOutbox(opts: {
   upload: (key: string, blob: Blob) => Promise<boolean>;
   onError?: (message: string) => void;
   store?: SnapshotStore;
+  /** Shown when an upload fails (default: camera snapshots wording). */
+  pendingMessage?: string;
 }) {
   const fallback = new Map<string, Blob>();
   const pending = new Set<string>();
   const active = new Map<string, Promise<void>>();
   const writes = new Set<Promise<void>>();
   let failed = false;
+  // Paused (weak link): items stay on disk; flush() still drains them.
+  let paused = false;
+  let flushing = 0;
   let store: SnapshotStore | undefined;
-  const reportError = () => opts.onError?.("Some camera snapshots are pending upload. Keep the app open and check your connection.");
+  const reportError = () => opts.onError?.(opts.pendingMessage ?? "Some camera snapshots are pending upload. Keep the app open and check your connection.");
   try { store = opts.store ?? browserSnapshotStore(); } catch { /* unavailable browser storage */ }
   const ready = (async () => {
     if (!store) return;
@@ -54,7 +59,7 @@ export function createSnapshotOutbox(opts: {
   })();
 
   const pump = () => {
-    if (failed) return;
+    if (failed || (paused && flushing === 0)) return;
     for (const key of pending) {
       if (active.size >= 3) break;
       if (active.has(key)) continue;
@@ -94,13 +99,24 @@ export function createSnapshotOutbox(opts: {
       void write.finally(() => writes.delete(write));
     },
     retry() { failed = false; void ready.then(pump); },
+    setPaused(on: boolean) {
+      paused = on;
+      if (!on) void ready.then(pump);
+    },
+    /** Items waiting on disk (or in memory when disk is unavailable). */
+    pendingCount: () => pending.size,
     async flush(): Promise<boolean> {
-      await ready;
-      await Promise.all([...writes]);
-      failed = false;
-      pump();
-      while (active.size) await Promise.all([...active.values()]);
-      return pending.size === 0;
+      flushing += 1;
+      try {
+        await ready;
+        await Promise.all([...writes]);
+        failed = false;
+        pump();
+        while (active.size) await Promise.all([...active.values()]);
+        return pending.size === 0;
+      } finally {
+        flushing -= 1;
+      }
     },
   };
 }
