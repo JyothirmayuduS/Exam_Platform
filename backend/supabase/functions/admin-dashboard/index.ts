@@ -1,7 +1,8 @@
 // Admin console data and actions. Request and rules: _shared/admin/handler.ts.
 // Deploy WITH JWT verification. Optional secrets:
 //   SITE_URL                    public site checked by the health panel
-//   SUPABASE_MANAGEMENT_TOKEN   lets the console read the project's backup list
+//   MANAGEMENT_API_TOKEN        personal access token (sbp_…) so the console can read the backup list
+//                               (secret names may not start with SUPABASE_)
 //   LOCKDOWN_RELEASE_REPO       GitHub repo whose lockdown-v* releases are the exam browser
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
@@ -128,7 +129,7 @@ const probes: AdminProbes = {
   },
 
   async backups(): Promise<Backups> {
-    const token = env("SUPABASE_MANAGEMENT_TOKEN");
+    const token = env("MANAGEMENT_API_TOKEN");
     if (!token) return { available: false, reason: "not_connected" };
     const ref = new URL(SUPABASE_URL).hostname.split(".")[0];
     const r = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/backups`, { headers: { authorization: `Bearer ${token}` } });

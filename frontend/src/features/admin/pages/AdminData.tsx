@@ -90,8 +90,10 @@ export default function AdminData({ data }: { data: AdminOverview }) {
           {!backups ? <Empty>…</Empty> : !backups.available ? (
             <NotTracked>
               {backups.reason === "not_connected"
-                ? "The console isn't connected to the Supabase management API, so it can't read the backup list. Add a SUPABASE_MANAGEMENT_TOKEN secret to the admin-dashboard function to show it here."
-                : `The backup list couldn't be read (${backups.reason}).`}
+                ? "The console isn't connected to the Supabase management API, so it can't read the backup list. Add a MANAGEMENT_API_TOKEN secret (a Supabase personal access token, starting with sbp_) to show it here."
+                : backups.reason === "http_401" || backups.reason === "http_403"
+                  ? "Supabase refused the MANAGEMENT_API_TOKEN. It must be a personal access token (starting with sbp_) from an account that can manage this project, not a project API key."
+                  : `The backup list couldn't be read (${backups.reason}).`}
             </NotTracked>
           ) : backups.latest ? (
             <p className="text-[13px]">{when(backups.latest.at)} ({ago(backups.latest.at)}) · <span className="font-mono text-[11px] uppercase">{backups.latest.status}</span> · {backups.count} backup(s) kept{backups.pitr ? " · point-in-time recovery on" : ""}</p>
