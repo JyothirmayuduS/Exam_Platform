@@ -4,7 +4,7 @@
 // student root — all packed into ONE downloadable zip.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { unzipSync } from "fflate";
-import { listStudentArtifacts, getArtifactObjectUrl, getArtifactUrls } from "@/shared/services/examStorage";
+import { listStudentArtifacts, getArtifactObjectUrl, signArtifactBatch } from "@/shared/services/examStorage";
 import { downloadExamEvidenceZip } from "@/shared/services/zipExport";
 import { createBlobSink } from "@/shared/services/zipStream";
 
@@ -12,6 +12,7 @@ vi.mock("@/shared/services/examStorage", () => ({
   listStudentArtifacts: vi.fn(),
   getArtifactObjectUrl: vi.fn(),
   getArtifactUrls: vi.fn(async () => new Map()),
+  signArtifactBatch: vi.fn(),
 }));
 
 function mockResponse(bytes: number[]): { ok: boolean; arrayBuffer: () => Promise<ArrayBuffer> } {
@@ -24,6 +25,15 @@ const SNAPSHOT_BYTES = [10, 20, 30];
 describe("downloadExamEvidenceZip", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Batch signing, answered here by the single-key mock each test sets up.
+    vi.mocked(signArtifactBatch).mockImplementation(async (keys: string[]) => {
+      const out = new Map<string, string>();
+      for (const k of keys) {
+        const u = await vi.mocked(getArtifactObjectUrl)(k);
+        if (u) out.set(k, u);
+      }
+      return out;
+    });
     vi.useFakeTimers();
     vi.stubGlobal("URL", {
       createObjectURL: vi.fn(() => "blob:mock"),
@@ -164,7 +174,7 @@ describe("downloadExamEvidenceZip", () => {
     const key = (i: number) => `Test-3/21VGN0314/recordings/parts/exam_${start + (i + 1) * 10_000}_${start}.webm`;
     vi.mocked(listStudentArtifacts).mockResolvedValueOnce([0, 1, 2].map((i) => (
       { key: key(i), kind: "recordings" as const, name: key(i).split("/").pop()!, size: 1, lastModified: null })));
-    vi.mocked(getArtifactUrls).mockImplementation(async (keys: string[]) => new Map(keys.map((k) => [k, `https://r2.example/${k}`])));
+    vi.mocked(getArtifactObjectUrl).mockImplementation(async (k: string) => `https://r2.example/${k}`);
     vi.mocked(fetch).mockImplementation(async (url) => (String(url).endsWith(key(1))
       ? { ok: false, status: 404 } as unknown as Response
       : mockResponse([5]) as unknown as Response));
@@ -195,7 +205,7 @@ describe("downloadExamEvidenceZip", () => {
       }),
       { key: `Class/${roll}/report/report.pdf`, kind: "report" as const, name: "report.pdf", size: 3, lastModified: null },
     ]);
-    vi.mocked(getArtifactUrls).mockImplementation(async (keys: string[]) => new Map(keys.map((k) => [k, `https://r2.example/${k}`])));
+    vi.mocked(getArtifactObjectUrl).mockImplementation(async (k: string) => `https://r2.example/${k}`);
 
     // Bytes downloaded but not yet written out of the page: what the tab holds.
     let downloaded = 0;

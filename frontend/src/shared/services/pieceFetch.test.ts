@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { createPieceFetcher, describeMissing, joinPieces, LINK_TTL_SEC } from "@/shared/services/pieceFetch";
+import { createPieceFetcher, describeMissing, joinPieces, LINK_TTL_SEC, signKeys } from "@/shared/services/pieceFetch";
+import { getArtifactObjectUrl, signArtifactBatch } from "@/shared/services/examStorage";
 import { pieceTimeline, partName } from "@/shared/services/recordingParts";
 
 vi.mock("@/shared/services/examStorage", () => ({
+  signArtifactBatch: vi.fn(),
   getArtifactUrls: vi.fn(async () => new Map()),
   getArtifactObjectUrl: vi.fn(async () => null),
 }));
@@ -91,5 +93,45 @@ describe("failed pieces", () => {
     });
     const result = await joinPieces({ timeline, fetcher, write: async () => {} });
     expect(result.missing.map((m) => [m.key, m.reason])).toEqual([[timeline.pieces[0].key, "could not be signed"]]);
+  });
+});
+
+describe("signing batches", () => {
+  it("retries a failed batch as a batch with backoff, never one call per key", async () => {
+    vi.useFakeTimers();
+    try {
+      const keys = Array.from({ length: 40 }, (_, i) => `E/R/recordings/parts/exam_${i}.webm`);
+      let calls = 0;
+      vi.mocked(signArtifactBatch).mockImplementation(async (batch: string[]) => {
+        calls += 1;
+        if (calls < 3) throw new Error("store-artifact 503");
+        return new Map(batch.map((k) => [k, `https://r2.example/${k}`]));
+      });
+      const signed = signKeys(keys, 3600, { backoffMs: 1000 });
+      await vi.advanceTimersByTimeAsync(999);
+      expect(calls).toBe(1);
+      await vi.advanceTimersByTimeAsync(1 + 2000);
+      const result = await signed;
+      expect(result.size).toBe(40);
+      expect(vi.mocked(signArtifactBatch).mock.calls.every(([batch]) => batch.length === 40)).toBe(true);
+      expect(getArtifactObjectUrl).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports pieces as unsigned when every attempt of the batch fails, still without per-key calls", async () => {
+    vi.mocked(signArtifactBatch).mockReset().mockRejectedValue(new Error("store-artifact down"));
+    const timeline = pieceTimeline([0, 1, 2].map((i) => ({ key: `E/R/recordings/parts/${partName("exam", 1_700_000_010_000 + i * 10_000, 1_700_000_000_000)}` })));
+    const fetcher = createPieceFetcher({
+      keys: timeline.pieces.map((p) => p.key),
+      sign: (k, ttl) => signKeys(k, ttl, { backoffMs: 0 }),
+      fetchImpl: async () => ok(new Uint8Array([1])),
+      backoffMs: 0,
+    });
+    const result = await joinPieces({ timeline, fetcher, write: async () => {} });
+    expect(result.missing.map((m) => m.reason)).toEqual(["could not be signed", "could not be signed", "could not be signed"]);
+    expect(getArtifactObjectUrl).not.toHaveBeenCalled();
+    expect(vi.mocked(signArtifactBatch).mock.calls.every(([batch]) => batch.length >= 1)).toBe(true);
   });
 });

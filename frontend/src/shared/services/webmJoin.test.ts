@@ -128,4 +128,35 @@ describe("joining recorder sessions", () => {
     }
     expect(Array.from(cat(...a2))).toEqual(Array.from(cat(...a1)));
   });
+
+  it("continues mid-session at the piece's real time when seeking", () => {
+    const timeline = pieceTimeline(arts);
+    const head = header(VIDEO, AUDIO);
+    const parsed = parseSessionHeader(pieces.get(timeline.pieces[2].key.split("/").pop()!)!);
+    if (!parsed || parsed === "bad") throw new Error("no header");
+    const p = timeline.pieces[3];
+    const joiner = new WebmJoiner();
+    joiner.push(pieces.get(timeline.pieces[0].key.split("/").pop()!)!, timeline.pieces[0].offsetMs);
+    joiner.resync(parsed.header, p.sessionMs, { resetClock: true });
+    const out = joiner.push(pieces.get(p.key.split("/").pop()!)!, p.offsetMs);
+    const cl = out.findIndex((_, i) => out[i] === 0x1f && out[i + 1] === 0x43 && out[i + 2] === 0xb6 && out[i + 3] === 0x75);
+    const file = read(cat(head, out.subarray(cl)));
+    expect(file.clusters).toEqual([p.start * 1000]);
+  });
+
+  it("continues mid-way through an older counter-named recording at the piece's real time", () => {
+    const old = new Map<string, Uint8Array>(
+      [0, 1, 2, 3].map((i) => [`exam_0000000${i + 1}.webm`, i === 0 ? cat(header(VIDEO, AUDIO), cluster(0, VIDEO, AUDIO, 1, true)) : cluster(i * 10_000, VIDEO, AUDIO, i + 1, true)]),
+    );
+    const timeline = pieceTimeline([...old.keys()].map((name) => ({ key: `E/R/recordings/parts/${name}` })));
+    const parsed = parseSessionHeader(old.get("exam_00000001.webm")!);
+    if (!parsed || parsed === "bad") throw new Error("no header");
+    const p = timeline.pieces[2];
+    const joiner = new WebmJoiner();
+    joiner.push(old.get("exam_00000001.webm")!, 0);
+    joiner.resync(parsed.header, p.sessionMs, { resetClock: true });
+    const out = joiner.push(old.get(p.key.split("/").pop()!)!, p.offsetMs);
+    const cl = out.findIndex((_, i) => out[i] === 0x1f && out[i + 1] === 0x43 && out[i + 2] === 0xb6 && out[i + 3] === 0x75);
+    expect(read(cat(header(VIDEO, AUDIO), out.subarray(cl))).clusters).toEqual([20_000]);
+  });
 });

@@ -14,6 +14,23 @@ import { recordInto, startPartUploads, type PartUploader } from "@/shared/servic
 
 export const RECORDING_CHUNK_MS = 10_000;
 
+/**
+ * A keyframe at least this often, so a seek, or the piece after a missing
+ * one, shows a picture straight away instead of waiting for the next one.
+ * Chromium (Windows WebView2, Chrome) honours it; engines without the option
+ * ignore it and keep their own interval.
+ */
+export const RECORDING_KEYFRAME_MS = 3_000;
+
+/** MediaRecorder options shared by the camera and screen recorders. */
+export function recorderOptions(mimeType: string, videoBitsPerSecond: number): MediaRecorderOptions {
+  return {
+    ...(mimeType ? { mimeType } : {}),
+    videoBitsPerSecond,
+    videoKeyFrameIntervalDuration: RECORDING_KEYFRAME_MS,
+  } as MediaRecorderOptions;
+}
+
 export type RecorderHandle = {
   stop: () => void;
   /** Weak link: keep pieces on the device and upload them once it recovers. */
@@ -48,10 +65,7 @@ export function startVideoRecording(opts: {
       "video/webm",
     ].find((t) => MediaRecorder.isTypeSupported(t)) || "video/webm";
 
-  const recorder = new MediaRecorder(stream, {
-    mimeType,
-    videoBitsPerSecond: RECORDING_BITRATE[kind],
-  });
+  const recorder = new MediaRecorder(stream, recorderOptions(mimeType, RECORDING_BITRATE[kind]));
   const recording = recordInto(recorder, parts, RECORDING_CHUNK_MS);
 
   return {

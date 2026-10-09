@@ -226,10 +226,10 @@ async function boot() {
   }
   mount();
   // Recording pieces an earlier sitting left on this device (a crash, a
-  // closed app) upload now; each uploader stops once its pieces have landed.
+  // closed app) upload once the student they belong to is signed in.
   if (supabaseConfigured) {
-    void import('./shared/services/recordingParts')
-      .then((m) => m.resumeLeftoverPieces())
+    void import('./shared/services/leftoverWatch')
+      .then((m) => m.watchLeftoverPieces())
       .catch(() => {});
   }
 }

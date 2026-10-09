@@ -5,14 +5,18 @@ import { r2PutBlob } from "@/shared/services/r2Function";
 import type { SnapshotStore } from "@/shared/services/snapshotOutbox";
 
 vi.mock("@/shared/data/env", () => ({ supabaseConfigured: true }));
-vi.mock("@/shared/services/r2Function", () => ({
-  r2List: vi.fn(),
-  r2FetchData: vi.fn(),
-  r2PresignGet: vi.fn(),
-  r2ListFolders: vi.fn(),
-  r2PutBlob: vi.fn(async (o: { examId: string; ownerSegment: string; kind: string; name: string }) =>
-    `${o.examId}/${o.ownerSegment}/${o.kind}/${o.name}`),
-}));
+vi.mock("@/shared/services/r2Function", () => {
+  const r2PutBlob = vi.fn(async (o: { examId: string; ownerSegment: string; kind: string; name: string }) =>
+    `${o.examId}/${o.ownerSegment}/${o.kind}/${o.name}`);
+  return {
+    r2List: vi.fn(),
+    r2FetchData: vi.fn(),
+    r2PresignGet: vi.fn(),
+    r2ListFolders: vi.fn(),
+    r2PutBlob,
+    r2PutBlobResult: vi.fn(async (o: Parameters<typeof r2PutBlob>[0]) => ({ key: await r2PutBlob(o) })),
+  };
+});
 vi.mock("@/shared/data/api/exams", () => ({ listExams: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/shared/data/api/students", () => ({ getStudentIdByRoll: vi.fn().mockResolvedValue(null) }));
 

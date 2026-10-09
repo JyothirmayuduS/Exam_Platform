@@ -3,7 +3,7 @@ import type { AutoGradeResult } from "@/shared/domain/exam";
 import { ExamFeedback, InstantReport } from "@/features/student/components/exam/PostExamPanels";
 import { FiDownload } from "react-icons/fi";
 import Seal from "@/shared/components/Seal";
-import { openStudentSide } from "@/shared/platform/lockdownBridge";
+import { leaveLockdown, openStudentSide } from "@/shared/platform/lockdownBridge";
 import { detectOS, isTauri } from "@/shared/platform/platform";
 
 export type CheckResult = { label: string; ok: boolean; detail: string };
@@ -220,7 +220,7 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
   );
 }
 
-export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId, uploadState, uploadDetail, recordingPiecesLeft = 0, submitFailed, report, feedbackStudentId }: {
+export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId, uploadState, uploadDetail, recordingPiecesLeft = 0, closeWarning = null, submitFailed, report, feedbackStudentId }: {
   answeredCount: number;
   totalQuestions: number;
   studentName: string;
@@ -233,6 +233,11 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
   uploadDetail?: string;
   /** Recording pieces still on this device; the window stays open until 0. */
   recordingPiecesLeft?: number;
+  /**
+   * Set once the student may close although pieces are still on this device
+   * (they waited long enough); shown next to the enabled Close button.
+   */
+  closeWarning?: string | null;
   /** True when the final answer-submit DB write failed (answers saved locally). */
   submitFailed?: boolean;
   /** Auto-graded result, present only when the exam releases results on submit. */
@@ -242,7 +247,10 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
 }) {
   const [feedbackDone, setFeedbackDone] = useState(!feedbackStudentId);
   const holdOpen = !!report || !feedbackDone || recordingPiecesLeft > 0;
-  const piecesNote = recordingPiecesLeft > 0
+  const mayClose = recordingPiecesLeft === 0 || !!closeWarning;
+  const piecesNote = closeWarning
+    ? closeWarning
+    : recordingPiecesLeft > 0
     ? `Uploading your exam recording (${recordingPiecesLeft} piece${recordingPiecesLeft === 1 ? "" : "s"} left). Keep this window open and stay connected; it closes by itself when the upload finishes.`
     : null;
   // Real attempt id from the DB (short-displayed). Falls back to the exam id
@@ -257,9 +265,10 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
 
   const closeExamWindow = () => {
     const w = window as unknown as { __TAURI_INTERNALS__?: { invoke?: (cmd: string) => Promise<unknown> } };
-    // Inside the Vignan lockdown desktop app, ask Rust to exit the app itself.
+    // Inside the Vignan lockdown desktop app: the exam is submitted, so
+    // release the lockdown first, then ask Rust to exit the app itself.
     if (w.__TAURI_INTERNALS__?.invoke) {
-      void openStudentSide("/student/exams").finally(() => {
+      void leaveLockdown().then(() => openStudentSide("/student/exams")).finally(() => {
         void w.__TAURI_INTERNALS__!.invoke!("exit_app").catch(() => {
           try { window.close(); } catch { /* ignore */ }
           backToDashboard();
@@ -325,6 +334,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
             <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Status</p>
             <p className="mt-1">Your exam has been submitted successfully.{holdOpen ? "" : " This window will close shortly."}</p>
             {piecesNote && <p className="mt-2 text-amber">{piecesNote}</p>}
+            {uploadState === "partial" && uploadDetail && <p className="mt-2 text-amber">{uploadDetail}</p>}
           </div>
         )}
 
@@ -365,7 +375,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
             {piecesNote ?? (report ? "You may now close this window. Your full report is also in Results on your dashboard." : "You may now close this window. Your results will appear in Results on your dashboard once your teacher releases them.")}
           </p>
 
-          {recordingPiecesLeft === 0 && <a 
+          {mayClose && <a 
             href="/student/results" 
             className="block w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper transition-colors hover:bg-ink/90"
           >
@@ -374,7 +384,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
           
           <button 
             onClick={closeExamWindow} 
-            disabled={recordingPiecesLeft > 0}
+            disabled={!mayClose}
             className="block w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50"
           >
             Close Exam Window

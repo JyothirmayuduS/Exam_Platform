@@ -71,6 +71,7 @@ export function startPiecePlayer(opts: {
   let gen = 0;
   let cursor = 0;
   let session: number | null = null;
+  let seekFrom: number | null = null;
   let destroyed = false;
   let wake: (() => void) | null = null;
 
@@ -174,13 +175,24 @@ export function startPiecePlayer(opts: {
         cache.delete(i);
         if (g !== gen || destroyed) return;
         markMissing(i, err instanceof PieceError ? err.reason : "could not be downloaded");
-        joiner.skipToCluster();
+        if (seekFrom === i) seekFrom = i + 1;
+        else joiner.skipToCluster();
         continue;
       }
       cache.delete(i);
       if (g !== gen || destroyed) return;
       const p = pieces[i];
       const header = startsWithWebmHeader(data);
+      if (seekFrom === i) {
+        seekFrom = null;
+        if (header) joiner.reset();
+        else {
+          const h = await headerFor(i);
+          if (g !== gen || destroyed) return;
+          joiner.resync(h, p.sessionMs, { resetClock: true });
+        }
+        session = p.session;
+      }
       if (header) {
         const parsed = parseSessionHeader(data);
         if (parsed && parsed !== "bad") headers.set(p.session, parsed.header);
@@ -190,9 +202,9 @@ export function startPiecePlayer(opts: {
         if (p.head && !sb) { fail("not webm", true); return; }
         const h = await headerFor(i);
         if (g !== gen || destroyed) return;
-        if (h) joiner.resync(h, p.offsetMs);
+        if (h) joiner.resync(h, p.sessionMs);
       }
-      if (!header && p.session !== session && joiner.header) joiner.resync(headers.get(p.session) ?? null, p.offsetMs);
+      if (!header && p.session !== session && joiner.header) joiner.resync(headers.get(p.session) ?? null, p.sessionMs);
       session = p.session;
       let out: Uint8Array;
       try {
@@ -235,7 +247,6 @@ export function startPiecePlayer(opts: {
     let k = pieces.findIndex((p) => p.end > t);
     if (k < 0) k = n - 1;
     const from = k > 0 && pieces[k - 1].session === pieces[k].session ? k - 1 : k;
-    const header = pieces[from].head ? null : await headerFor(from);
     await sbIdle();
     if (g !== gen || destroyed) return;
     if (sb) {
@@ -245,9 +256,7 @@ export function startPiecePlayer(opts: {
       }
     }
     if (g !== gen || destroyed) return;
-    if (pieces[from].head) joiner.reset();
-    else joiner.resync(header, pieces[from].offsetMs, { resetClock: true });
-    session = pieces[from].session;
+    seekFrom = from;
     go(g, from);
   };
 

@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { startPartUploads } from "@/shared/services/recordingParts";
 import type { SnapshotStore } from "@/shared/services/snapshotOutbox";
-import { SECURED_DETAIL, secureExamEvidence } from "@/shared/services/submitEvidence";
+import { SECURED_DETAIL, secureExamEvidence, waitingPiecesWarning, WAIT_LIMIT_MS } from "@/shared/services/submitEvidence";
+import { PART_RETRY_MS } from "@/shared/services/recordingParts";
+import { REFUSAL_LIMIT } from "@/shared/services/snapshotOutbox";
 
 function disk(): SnapshotStore & { data: Map<string, Blob> } {
   const data = new Map<string, Blob>();
@@ -70,6 +72,47 @@ describe("securing exam evidence after submit", () => {
     expect(result.state).toBe("partial");
     expect(result.detail).toContain("violation snapshots");
     expect(result.detail).toContain("session report");
+    camera.stop();
+  });
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("a permanently refused piece does not hold up the screen and is reported as not uploaded", async () => {
+    vi.useFakeTimers();
+    const camera = startPartUploads({
+      folder: "Exam", owner: "S4", family: "exam", store: disk(),
+      upload: async (o) => (o.name.includes("_0000000000002") ? { refused: 403, reason: "forbidden" } : o.name),
+      now: (() => { let t = 0; return () => ++t; })(),
+    });
+    camera.enqueue(new Blob(["one"]));
+    camera.enqueue(new Blob(["two (refused)"]));
+    camera.enqueue(new Blob(["three"]));
+    let landed = false;
+    const outcome = secureExamEvidence({
+      camera, screen: null, uploadRecords: records, violationSnapshotCount: 2, snapshots: Promise.resolve(true),
+      onPiecesLanded: () => { landed = true; },
+    });
+    await vi.advanceTimersByTimeAsync(PART_RETRY_MS * (REFUSAL_LIMIT + 1));
+    const result = await outcome;
+    expect(landed).toBe(true);
+    expect(result.state).toBe("partial");
+    expect(result.detail).toContain("1 recording piece was refused by storage and not uploaded (kept on this PC)");
+    camera.stop();
+  });
+
+  it("lets the student close after the wait limit while pieces are still pending", async () => {
+    vi.useFakeTimers();
+    const camera = startPartUploads({ folder: "Exam", owner: "S5", family: "exam", store: disk(), upload: async () => null });
+    camera.enqueue(new Blob(["stuck on a dead link"]));
+    const onWaitLimit = vi.fn();
+    void secureExamEvidence({
+      camera, screen: null, uploadRecords: records, violationSnapshotCount: 2, snapshots: Promise.resolve(true), onWaitLimit,
+    });
+    await vi.advanceTimersByTimeAsync(WAIT_LIMIT_MS - 1000);
+    expect(onWaitLimit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(onWaitLimit).toHaveBeenCalledWith(1);
+    expect(waitingPiecesWarning(1)).toContain("will upload the next time you open the exam app on this PC");
     camera.stop();
   });
 });

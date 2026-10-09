@@ -6,6 +6,7 @@ import { getSupabase } from "@/shared/data/supabase";
 import type { ViolationSeverity, ViolationSource } from "@/shared/data/api/types";
 import { severityForType, sourceForType, isRealUuid } from "@/shared/data/api/helpers";
 import { logAudit } from "@/shared/data/api/audit";
+import { examOffsetSeconds } from "@/shared/services/examClock";
 
 /**
  * Record one proctoring flag or proctor action in violation_events.
@@ -49,12 +50,12 @@ export async function saveViolation(
   }
 
   // Offset = seconds since the attempt started (needed for the red seek-bar
-  // markers). Best-effort: when the attempt row is missing, offset is null and
-  // the marker is positioned by created_at instead.
-  let offsetSeconds: number | null = null;
+  // markers). On the student's device it is measured by the same clock as the
+  // recording (examClock); elsewhere from the attempt's server start time.
   let realAttemptId: string | null = isRealUuid(attemptId ?? "") ? attemptId : null;
+  let offsetSeconds: number | null = realAttemptId ? examOffsetSeconds(realAttemptId, detectedAt) : null;
   try {
-    if (realAttemptId) {
+    if (realAttemptId && offsetSeconds == null) {
       const { data: att } = await db
         .from("attempts")
         .select("started_at")

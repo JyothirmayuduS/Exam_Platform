@@ -19,8 +19,12 @@
 // One uploader owns a piece prefix (exam/owner/family) at a time. Starting a
 // new one (recorder restart, app restart) retires the old one: it finishes its
 // in-flight uploads, then the new one takes over everything left.
-import { createSnapshotOutbox, defaultSnapshotStore, type SnapshotOutbox, type SnapshotStore } from "@/shared/services/snapshotOutbox";
-import { r2PutBlob } from "@/shared/services/r2Function";
+//
+// A piece storage refuses for good (a 4xx such as a bad name or a forbidden
+// folder) is retried REFUSAL_LIMIT times, then kept on disk and reported
+// instead of holding up the submitted screen forever.
+import { createSnapshotOutbox, defaultSnapshotStore, type SnapshotOutbox, type SnapshotStore, type UploadResult } from "@/shared/services/snapshotOutbox";
+import { r2PutBlobResult } from "@/shared/services/r2Function";
 
 export type RecordingFamily = "exam" | "screen";
 
@@ -46,6 +50,8 @@ export type PartUploader = {
    */
   drain: () => Promise<void>;
   pendingCount: () => number;
+  /** Pieces storage refused for good: kept on disk, not retried, reported. */
+  refusedPieces: () => { key: string; reason: string }[];
   /** Pieces recorders handed to this prefix since the page loaded. */
   producedCount: () => number;
   /** Release: the uploader shuts down by itself once nothing is left to send. */
@@ -87,8 +93,14 @@ export type TimedPiece<T> = {
   /** Seconds on the exam timeline. */
   start: number;
   end: number;
-  /** Timeline ms of time 0 of the recorder session this piece belongs to. */
+  /** Timeline ms where a WebM header found in this piece starts. */
   offsetMs: number;
+  /**
+   * Timeline ms of time 0 of this piece's recorder session. Clusters inside a
+   * session count from that point, so continuing mid-session (a seek) adds
+   * this, never the piece's own start.
+   */
+  sessionMs: number;
   /** Session id: the recorder start time, or an inferred stand-in. */
   session: number;
   /** First known piece of its session (carries the WebM header). */
@@ -122,7 +134,7 @@ export function pieceTimeline<T extends { key: string }>(sorted: T[]): PieceTime
   if (!wall) {
     parsed.forEach(({ p }, i) => out.push({
       piece: p, key: p.key, start: i * PART_SECONDS, end: (i + 1) * PART_SECONDS,
-      offsetMs: i * PART_SECONDS * 1000, session: 0, head: i === 0,
+      offsetMs: i * PART_SECONDS * 1000, sessionMs: 0, session: 0, head: i === 0,
     }));
     return { pieces: out, durationSec: parsed.length * PART_SECONDS, originMs: null };
   }
@@ -148,6 +160,7 @@ export function pieceTimeline<T extends { key: string }>(sorted: T[]): PieceTime
       // Unnamed pieces may still start a session (recorder failover); place
       // such a header where the piece starts.
       offsetMs: named != null ? sessionOffset : startMs,
+      sessionMs: sessionOffset,
       session, head: isHead,
     });
     prevEnd = endMs;
@@ -156,13 +169,35 @@ export function pieceTimeline<T extends { key: string }>(sorted: T[]): PieceTime
   return { pieces: out, durationSec: prevEnd / 1000, originMs };
 }
 
-type UploadFn = (opts: { examId: string; ownerSegment: string; kind: "recordings"; name: string; blob: Blob }) => Promise<string | null>;
+export type PieceRefusal = { refused: number; reason: string; final?: boolean };
+
+type UploadFn = (opts: { examId: string; ownerSegment: string; kind: "recordings"; name: string; blob: Blob }) => Promise<string | null | PieceRefusal>;
+
+/** Statuses that mean "this exact request will never succeed". 401 (expired sign-in), 408 and 429 are worth retrying. */
+export function isPermanentRefusal(status: number | null): boolean {
+  return status != null && status >= 400 && status < 500 && status !== 401 && status !== 408 && status !== 429;
+}
+
+/** Same rules as store-artifact's safeName, so a bad name never leaves the device. */
+const SAFE_NAME = /^[A-Za-z0-9._/-]+$/;
+function badName(name: string): string | null {
+  if (!name || name.length > 128 || !SAFE_NAME.test(name) || name.includes("..") || name.includes("//")) return "invalid piece name";
+  return null;
+}
+
+const defaultUpload: UploadFn = async (o) => {
+  const res = await r2PutBlobResult(o);
+  if (res.key !== null) return res.key;
+  return isPermanentRefusal(res.status) ? { refused: res.status!, reason: res.error } : null;
+};
 
 type Uploader = PartUploader & {
   retire: () => Promise<Map<string, Blob>>;
   enqueueAt: (blob: Blob, session?: number) => void;
   /** Shut down if released and nothing is left. */
   check: () => void;
+  /** Stop now; pieces stay on disk for a later uploader. */
+  halt: () => void;
 };
 
 type Entry = {
@@ -186,10 +221,13 @@ export function startPartUploads(opts: {
   store?: SnapshotStore;
   upload?: UploadFn;
   now?: () => number;
+  /** Refusal statuses that stop this uploader at once, pieces left on disk. */
+  haltOn?: number[];
+  onHalt?: (status: number) => void;
 }): PartUploader {
   const base = `${opts.folder}/${opts.owner}/recordings/`;
   const prefix = `${base}parts/${opts.family}_`;
-  const put = opts.upload ?? r2PutBlob;
+  const put = opts.upload ?? defaultUpload;
   const now = opts.now ?? Date.now;
   let entry = registry.get(prefix);
   if (!entry) {
@@ -203,11 +241,14 @@ export function startPartUploads(opts: {
   let released = false;
   let shut = false;
   let retry: ReturnType<typeof setInterval> | undefined;
-  const shutdownIfDone = () => {
-    if (!released || retired || shut || e.sessions > 0 || !outbox.idle()) return;
+  const shutdown = () => {
     shut = true;
     clearInterval(retry);
     if (e.live === self) registry.delete(prefix);
+  };
+  const shutdownIfDone = () => {
+    if (!released || retired || shut || e.sessions > 0 || !outbox.idle()) return;
+    shutdown();
   };
   const outbox: SnapshotOutbox = createSnapshotOutbox({
     prefix,
@@ -216,9 +257,18 @@ export function startPartUploads(opts: {
     after: handover,
     onIdle: () => shutdownIfDone(),
     pendingMessage: "Some recording pieces are waiting to upload. Keep the app open and check your connection.",
-    upload: async (key, blob) => {
+    haltOn: opts.haltOn,
+    onHalt: (status) => {
+      shutdown();
+      opts.onHalt?.(status);
+    },
+    upload: async (key, blob): Promise<UploadResult> => {
+      const name = key.slice(base.length);
+      const bad = badName(name);
+      if (bad) return { refused: 400, reason: bad, final: true };
       try {
-        return !!await put({ examId: opts.folder, ownerSegment: opts.owner, kind: "recordings", name: key.slice(base.length), blob });
+        const res = await put({ examId: opts.folder, ownerSegment: opts.owner, kind: "recordings", name, blob });
+        return typeof res === "object" && res ? res : !!res;
       } catch {
         return false;
       }
@@ -277,6 +327,7 @@ export function startPartUploads(opts: {
       }
     },
     pendingCount: () => (retired && e.live && e.live !== self ? e.live.pendingCount() : outbox.pendingCount()),
+    refusedPieces: () => (retired && e.live && e.live !== self ? e.live.refusedPieces() : outbox.refused()),
     producedCount: () => e.produced,
     stop: () => {
       if (retired) return;
@@ -284,6 +335,10 @@ export function startPartUploads(opts: {
       shutdownIfDone();
     },
     check: () => shutdownIfDone(),
+    halt: () => {
+      void outbox.retire();
+      shutdown();
+    },
     retire: () => {
       retired = true;
       clearInterval(retry);
@@ -302,28 +357,74 @@ export function openPartUploads(opts: Parameters<typeof startPartUploads>[0]): P
 
 const LEFTOVER = /^(.+)\/([^/]+)\/recordings\/parts\/(exam|screen)_\d+(?:_\d+)?\.webm$/;
 
+export type LeftoverReport = {
+  /** Piece prefixes now uploading (they belong to the signed-in student). */
+  resumed: string[];
+  /** Pieces kept on this device for students who are not signed in. */
+  waiting: number;
+  waitingOwners: string[];
+};
+
+const leftoverUploaders = new Set<PartUploader>();
+
 /**
- * App start: upload pieces left on this device by any earlier sitting (a
- * crash, a closed app, a reload). Each uploader shuts down once its pieces
- * have landed. Returns the piece prefixes found.
+ * Upload recording pieces left on this device by an earlier sitting (a crash,
+ * a closed app, a reload), but only those of the student signed in now
+ * (`owners`: their roll number and student id). Other students' pieces stay
+ * on disk until that student signs in here; they are counted, not retried.
+ * A 403 stops the uploader at once instead of retrying every 10 s.
  */
-export async function resumeLeftoverPieces(opts: { store?: SnapshotStore; upload?: UploadFn } = {}): Promise<string[]> {
+export async function resumeLeftoverPieces(opts: {
+  owners: string[];
+  store?: SnapshotStore;
+  upload?: UploadFn;
+  log?: (message: string) => void;
+}): Promise<LeftoverReport> {
+  const report: LeftoverReport = { resumed: [], waiting: 0, waitingOwners: [] };
   const store = opts.store ?? defaultSnapshotStore();
-  if (!store) return [];
+  if (!store) return report;
   let keys: string[];
-  try { keys = await store.keys(""); } catch { return []; }
+  try { keys = await store.keys(""); } catch { return report; }
+  const mine = new Set(opts.owners.filter(Boolean));
   const found = new Map<string, { folder: string; owner: string; family: RecordingFamily }>();
+  const waitingOwners = new Set<string>();
   for (const key of keys) {
     const m = key.match(LEFTOVER);
     if (!m) continue;
     const [, folder, owner, family] = m;
+    if (!mine.has(owner)) {
+      report.waiting += 1;
+      waitingOwners.add(owner);
+      continue;
+    }
     found.set(`${folder}/${owner}/recordings/parts/${family}_`, { folder, owner, family: family as RecordingFamily });
+  }
+  report.waitingOwners = [...waitingOwners];
+  const log = opts.log ?? ((msg: string) => console.info(`[recordingParts] ${msg}`));
+  if (report.waiting > 0) {
+    log(`${report.waiting} recording piece(s) from ${waitingOwners.size} other student(s) are waiting on this PC; they upload when that student signs in here.`);
   }
   for (const [prefix, where] of found) {
     if (registry.get(prefix)?.live) continue;
-    startPartUploads({ ...where, store, upload: opts.upload }).stop();
+    const uploader = startPartUploads({
+      ...where, store, upload: opts.upload, haltOn: [403],
+      onHalt: () => {
+        leftoverUploaders.delete(uploader);
+        log(`Storage refused the leftover pieces under ${prefix} (HTTP 403); they stay on this PC.`);
+      },
+    });
+    leftoverUploaders.add(uploader);
+    uploader.stop();
+    report.resumed.push(prefix);
   }
-  return [...found.keys()];
+  if (report.resumed.length > 0) log(`Uploading leftover recording pieces: ${report.resumed.join(", ")}`);
+  return report;
+}
+
+/** Signed out: stop uploading leftovers (they stay on disk for next time). */
+export function stopLeftoverPieces(): void {
+  for (const u of leftoverUploaders) (u as Uploader).halt();
+  leftoverUploaders.clear();
 }
 
 /** The parts of MediaRecorder this module drives (a test seam). */

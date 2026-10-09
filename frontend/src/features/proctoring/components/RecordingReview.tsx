@@ -4,10 +4,10 @@
 //
 // Data sources:
 //   • violations: violation_events rows. A marker sits at the violation's
-//     wall-clock time on the recording's timeline (created_at minus the time
-//     the first recorder started), so it stays on the real exam moment even
-//     after a page reload restarted the recorder. Recordings without
-//     wall-clock piece names fall back to offset_seconds.
+//     exam time (offset_seconds, measured on the student's clock from the
+//     attempt start; see violationTime). The recording timeline starts with
+//     the exam and keeps real time across reloads, so the two line up. A flag
+//     with no exam time is listed but not placed on the bar.
 //   • artifacts: ${examFolder}/${roll}/recordings + /violations + /report listed
 //     from Cloudflare R2 (examStorage.listStudentArtifacts), where examFolder is
 //     the slug of the exam NAME (legacy ${examId}/ folders are read too).
@@ -30,6 +30,7 @@ import { pieceTimeline, sortedParts, type PieceTimeline } from "@/shared/service
 import { createPieceFetcher, describeMissing, joinPieces, LINK_REFRESH_MARGIN_SEC, LINK_TTL_SEC, type MissingPiece } from "@/shared/services/pieceFetch";
 import { createBlobSink } from "@/shared/services/zipStream";
 import { startPiecePlayer, type PlayerStatus } from "@/features/proctoring/services/piecePlayer";
+import { violationExamSeconds } from "@/features/proctoring/domain/violationTime";
 
 function clock(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec) || sec < 0) return "00:00";
@@ -202,12 +203,15 @@ export default function RecordingReviewer({
   /** Exact stored exam folder (e.g. "Test-3") — skips DB name resolution so the
    *  reviewer reads the artifacts the evidence archive actually found. */
   folderOverride,
+  attemptStartedAt,
 }: {
   examId: string;
   roll: string;
   name: string;
   violations: ViolationEvent[];
   folderOverride?: string;
+  /** The attempt's server start time, for flags written without offset_seconds. */
+  attemptStartedAt?: string | null;
 }) {
   const [reloadKey] = useState(0);
   const artifacts = useRecordingArtifacts(examId, roll, reloadKey, folderOverride);
@@ -317,20 +321,17 @@ export default function RecordingReviewer({
   const markers = useMemo(
     () =>
       sorted
-        .map((v) => {
-          const at = Date.parse(v.created_at);
-          const t = originMs != null && Number.isFinite(at) ? (at - originMs) / 1000 : (v.offset_seconds ?? 0);
-          return {
-            v,
-            seconds: Math.max(0, t),
-            label: v.description || v.violation_type,
-            severity: v.severity,
-            created: v.created_at,
-          };
-        })
-        .sort((a, b) => a.seconds - b.seconds),
-    [sorted, originMs],
+        .map((v) => ({
+          v,
+          seconds: violationExamSeconds(v, attemptStartedAt),
+          label: v.description || v.violation_type,
+          severity: v.severity,
+          created: v.created_at,
+        }))
+        .sort((a, b) => (a.seconds ?? Infinity) - (b.seconds ?? Infinity)),
+    [sorted, attemptStartedAt],
   );
+  const placed = markers.filter((m): m is typeof m & { seconds: number } => m.seconds != null);
 
   // Download the joined pieces as one local file. Never uploaded back: the
   // pieces are the single stored copy of the recording.
@@ -509,11 +510,11 @@ export default function RecordingReviewer({
             className="absolute left-0 top-0 h-full bg-forest"
             style={{ width: visibleDuration ? `${Math.min(100, (current / visibleDuration) * 100)}%` : "0%" }}
           />
-          {markers.map((m) => {
+          {placed.map((m) => {
             const d = visibleDuration;
             const pct = d && d > 0 ? Math.min(99.5, Math.max(0, (m.seconds / d) * 100)) : null;
-            // If we can't calculate position, distribute markers evenly across the bar
-            const leftPos = pct !== null ? `${pct}%` : `${Math.min(99.5, (markers.indexOf(m) / Math.max(1, markers.length - 1)) * 100)}%`;
+            if (pct === null) return null;
+            const leftPos = `${pct}%`;
             return (
             <button
               key={m.v.id}
@@ -526,7 +527,10 @@ export default function RecordingReviewer({
           })}
         </div>
         <div className="flex items-center justify-between font-mono text-[9px] uppercase tracking-wider text-ink-soft">
-          <span>{markers.length > 0 ? `${markers.length} violation marker(s) in red` : "No violations on this timeline"}</span>
+          <span>
+            {placed.length > 0 ? `${placed.length} violation marker(s) in red` : "No violations on this timeline"}
+            {markers.length > placed.length ? ` · ${markers.length - placed.length} without an exam time` : ""}
+          </span>
           <span>{clock(current)} {visibleDuration ? `/ ${clock(visibleDuration)}` : ""}</span>
         </div>
       </div>
@@ -603,11 +607,11 @@ export default function RecordingReviewer({
                 </p>
               </div>
               <button
-                disabled={!visibleDuration}
-                onClick={() => seekTo(m.seconds)}
+                disabled={!visibleDuration || m.seconds == null}
+                onClick={() => { if (m.seconds != null) seekTo(m.seconds); }}
                 className="shrink-0 border border-alert/40 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-alert hover:bg-alert/10 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Jump to {clock(m.seconds)}
+                {m.seconds == null ? "Time not recorded" : `Jump to ${clock(m.seconds)}`}
               </button>
             </div>
             );
@@ -632,7 +636,7 @@ export default function RecordingReviewer({
               const offsetSec = Math.max(0, Math.round((snap.timestamp - firstTs) / 1000));
               
               // Find if any violation occurred near this snapshot (+/- 1.5 seconds)
-              const nearbyViolations = markers.filter(m => Math.abs(m.seconds - offsetSec) <= 1.5);
+              const nearbyViolations = placed.filter(m => Math.abs(m.seconds - offsetSec) <= 1.5);
               const hasCritical = nearbyViolations.some(m => m.severity === "critical" || m.severity === "high");
               const hasWarning = nearbyViolations.length > 0;
               const hasAudio = nearbyViolations.some(m => /voice|speak|audio|talk|sound/i.test(m.label));

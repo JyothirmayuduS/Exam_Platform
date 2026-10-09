@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PART_RETRY_MS, partName, pieceTimeline, resumeLeftoverPieces, sortedParts, startPartUploads } from "@/shared/services/recordingParts";
+import { PART_RETRY_MS, partName, pieceTimeline, resumeLeftoverPieces, sortedParts, startPartUploads, stopLeftoverPieces } from "@/shared/services/recordingParts";
+import { REFUSAL_LIMIT } from "@/shared/services/snapshotOutbox";
 import type { SnapshotStore } from "@/shared/services/snapshotOutbox";
 
 function disk(): SnapshotStore & { data: Map<string, Blob> } {
@@ -91,7 +92,7 @@ describe("recording pieces", () => {
     parts.stop();
   });
 
-  it("on app start uploads leftover pieces of every exam and leaves other evidence alone", async () => {
+  it("on app start uploads the signed-in student's leftover pieces of every exam and leaves other evidence alone", async () => {
     const store = disk();
     const keys = [
       "Midterm/R3/recordings/parts/exam_1700000010000_1700000000000.webm",
@@ -105,8 +106,9 @@ describe("recording pieces", () => {
       uploaded.push(`${o.examId}/${o.ownerSegment}/recordings/${o.name}`);
       return o.name;
     });
-    const prefixes = await resumeLeftoverPieces({ store, upload });
-    expect(prefixes.sort()).toEqual([
+    const report = await resumeLeftoverPieces({ owners: ["R3", "R4"], store, upload, log: () => {} });
+    expect(report.waiting).toBe(0);
+    expect(report.resumed.sort()).toEqual([
       "Final/R4/recordings/parts/exam_",
       "Midterm/R3/recordings/parts/exam_",
       "Midterm/R3/recordings/parts/screen_",
@@ -192,6 +194,89 @@ describe("recording pieces", () => {
   });
 });
 
+describe("pieces storage will not take", () => {
+  it("stops retrying a piece after repeated permanent refusals, keeps it on disk and reports it", async () => {
+    vi.useFakeTimers();
+    const store = disk();
+    const bad = "Exam/R8/recordings/parts/exam_1700000010000_1700000000000.webm";
+    const upload = vi.fn(async (o: { name: string }) =>
+      (o.name.startsWith("parts/exam_1700000010000") ? { refused: 400, reason: "invalid name" } : o.name));
+    store.data.set(bad, new Blob(["refused"]));
+    const parts = startPartUploads({ folder: "Exam", owner: "R8", family: "exam", store, upload });
+    parts.enqueue(new Blob(["fine"]));
+    let drained = false;
+    const drain = parts.drain().then(() => { drained = true; });
+    await vi.advanceTimersByTimeAsync(PART_RETRY_MS * (REFUSAL_LIMIT + 1));
+    expect(drained).toBe(true);
+    await drain;
+    const attempts = upload.mock.calls.filter(([o]) => o.name === bad.slice("Exam/R8/recordings/".length)).length;
+    expect(attempts).toBe(REFUSAL_LIMIT);
+    expect(parts.pendingCount()).toBe(0);
+    expect(parts.refusedPieces()).toEqual([{ key: bad, reason: "invalid name (HTTP 400)" }]);
+    expect([...store.data.keys()]).toEqual([bad]);
+    // No further attempts once given up.
+    await vi.advanceTimersByTimeAsync(PART_RETRY_MS * 5);
+    expect(upload.mock.calls.filter(([o]) => o.name === bad.slice("Exam/R8/recordings/".length)).length).toBe(REFUSAL_LIMIT);
+    parts.stop();
+  });
+
+  it("never sends a piece whose name storage would reject", async () => {
+    const store = disk();
+    const bad = "Exam/R9/recordings/parts/exam_1700000010000_1700000000000 copy.webm";
+    store.data.set(bad, new Blob(["x"]));
+    const upload = vi.fn(async (o: { name: string }) => o.name);
+    const parts = startPartUploads({ folder: "Exam", owner: "R9", family: "exam", store, upload });
+    expect(await parts.flush()).toBe(true);
+    expect(upload).not.toHaveBeenCalled();
+    expect(parts.refusedPieces().map((r) => r.reason)).toEqual(["invalid piece name (HTTP 400)"]);
+    parts.stop();
+  });
+});
+
+describe("leftover pieces of another student", () => {
+  afterEach(() => { stopLeftoverPieces(); });
+
+  it("are kept on disk and counted, not uploaded, until that student signs in", async () => {
+    vi.useFakeTimers();
+    const store = disk();
+    const other = "Exam/OTHER1/recordings/parts/exam_1700000010000_1700000000000.webm";
+    store.data.set(other, new Blob(["theirs"]));
+    const upload = vi.fn(async (o: { name: string }) => o.name);
+    const log = vi.fn();
+    const report = await resumeLeftoverPieces({ owners: ["ME1"], store, upload, log });
+    expect(report).toEqual({ resumed: [], waiting: 1, waitingOwners: ["OTHER1"] });
+    expect(log.mock.calls[0][0]).toContain("1 recording piece(s) from 1 other student(s) are waiting on this PC");
+    await vi.advanceTimersByTimeAsync(PART_RETRY_MS * 6);
+    expect(upload).not.toHaveBeenCalled();
+    expect(store.data.has(other)).toBe(true);
+
+    // That student signs in on this PC.
+    const later = await resumeLeftoverPieces({ owners: ["OTHER1"], store, upload, log });
+    expect(later.resumed).toEqual(["Exam/OTHER1/recordings/parts/exam_"]);
+    await vi.waitFor(() => expect(store.data.size).toBe(0));
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops at the first 403 instead of retrying every 10 seconds, and keeps the pieces", async () => {
+    vi.useFakeTimers();
+    const store = disk();
+    const keys = [1, 2].map((i) => `Exam/OTHER2/recordings/parts/screen_170000001000${i}_1700000000000.webm`);
+    for (const k of keys) store.data.set(k, new Blob([k]));
+    const upload = vi.fn(async () => ({ refused: 403, reason: "forbidden" }));
+    const log = vi.fn();
+    // Signed in with an account the server does not consider the owner.
+    await resumeLeftoverPieces({ owners: ["OTHER2"], store, upload, log });
+    await vi.advanceTimersByTimeAsync(PART_RETRY_MS * 12);
+    expect(upload.mock.calls.length).toBeLessThanOrEqual(keys.length);
+    expect(log.mock.calls.some(([m]) => String(m).includes("HTTP 403"))).toBe(true);
+    expect([...store.data.keys()].sort()).toEqual(keys);
+    // Signing in again later tries once more.
+    upload.mockImplementation(async () => ({ refused: 403, reason: "forbidden" }));
+    const again = await resumeLeftoverPieces({ owners: ["OTHER2"], store, upload, log });
+    expect(again.resumed).toEqual(["Exam/OTHER2/recordings/parts/screen_"]);
+  });
+});
+
 describe("piece timeline", () => {
   const art = (name: string) => ({ key: `Exam/R1/recordings/parts/${name}`, kind: "recordings" });
 
@@ -204,8 +289,8 @@ describe("piece timeline", () => {
     ], "exam");
     const t = pieceTimeline(sorted);
     expect(t.originMs).toBe(a);
-    expect(t.pieces.map((p) => [p.start, p.end, p.head, p.offsetMs])).toEqual([
-      [0, 10, true, 0], [10, 20, false, 0], [300, 310, true, 300_000], [310, 320, false, 300_000],
+    expect(t.pieces.map((p) => [p.start, p.end, p.head, p.offsetMs, p.sessionMs])).toEqual([
+      [0, 10, true, 0, 0], [10, 20, false, 0, 0], [300, 310, true, 300_000, 300_000], [310, 320, false, 300_000, 300_000],
     ]);
     expect(t.durationSec).toBe(320);
   });
@@ -213,6 +298,6 @@ describe("piece timeline", () => {
   it("reads older counter pieces at 10 s each", () => {
     const t = pieceTimeline(sortedParts([art("seg_00000002.webm"), art("seg_00000001.webm")], "seg"));
     expect(t.originMs).toBeNull();
-    expect(t.pieces.map((p) => [p.key.split("/").pop(), p.start])).toEqual([["seg_00000001.webm", 0], ["seg_00000002.webm", 10]]);
+    expect(t.pieces.map((p) => [p.key.split("/").pop(), p.start, p.sessionMs])).toEqual([["seg_00000001.webm", 0, 0], ["seg_00000002.webm", 10, 0]]);
   });
 });

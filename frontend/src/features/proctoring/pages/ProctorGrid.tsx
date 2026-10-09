@@ -1022,6 +1022,7 @@ function ProctorReports({ examId, examName, onShowRecordings }: { examId: string
                         roll={r.roll}
                         name={r.name}
                         violations={liveByRoll.get(r.roll)?.violations ?? []}
+                        attemptStartedAt={liveByRoll.get(r.roll)?.started_at}
                       />
                     </div>
                   )}
@@ -1094,6 +1095,7 @@ type RecordingRow = {
   roll: string;
   status: string;
   violations: ViolationEvent[];
+  startedAt?: string | null;
 };
 
 function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] }) {
@@ -1122,6 +1124,7 @@ function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] })
         roll: a.student?.roll ?? "—",
         status: a.state === "submitted" ? "Submitted" : a.state === "paused" ? "Paused" : a.state === "in_progress" ? "Writing" : "Not started",
         violations: a.violations ?? [],
+        startedAt: a.started_at,
       }));
     }
     // No mock data: without a live roster there is nothing to archive.
@@ -1206,6 +1209,7 @@ function ProctorRecordings({ examId, tiles }: { examId: string; tiles: Tile[] })
                 roll={selected.roll}
                 name={selected.name}
                 violations={selected.violations}
+                attemptStartedAt={selected.startedAt}
               />
             ) : (
               <p className="py-16 text-center font-mono text-[11px] text-soft">Waiting for candidates to join the session…</p>

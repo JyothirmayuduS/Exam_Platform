@@ -39,12 +39,26 @@ export function defaultSnapshotStore(): SnapshotStore | undefined {
   try { return browserSnapshotStore(); } catch { return undefined; }
 }
 
+/**
+ * What an upload attempt returned. `refused` is a permanent answer from
+ * storage (a 4xx such as a bad name or a forbidden folder): retrying the same
+ * request cannot succeed. `final` gives up on the first refusal.
+ */
+export type UploadResult = boolean | { refused: number; reason: string; final?: boolean };
+
+/** Permanent refusals of one item before it stops being retried. */
+export const REFUSAL_LIMIT = 3;
+
 export type SnapshotOutbox = {
   enqueue: (key: string, blob: Blob) => void;
   retry: () => void;
   setPaused: (on: boolean) => void;
-  /** Items waiting on disk (or in memory when disk is unavailable). */
+  /** Items waiting on disk (or in memory when disk is unavailable). Excludes refused items. */
   pendingCount: () => number;
+  /** Items storage refused for good: kept on disk, no longer retried. */
+  refused: () => { key: string; reason: string }[];
+  /** True once a refusal listed in `haltOn` stopped all uploads. */
+  halted: () => boolean;
   /** Nothing waiting, writing or uploading. */
   idle: () => boolean;
   flush: () => Promise<boolean>;
@@ -58,7 +72,7 @@ export type SnapshotOutbox = {
 
 export function createSnapshotOutbox(opts: {
   prefix: string;
-  upload: (key: string, blob: Blob) => Promise<boolean>;
+  upload: (key: string, blob: Blob) => Promise<UploadResult>;
   onError?: (message: string) => void;
   store?: SnapshotStore;
   /** Shown when an upload fails (default: camera snapshots wording). */
@@ -67,6 +81,12 @@ export function createSnapshotOutbox(opts: {
   after?: Promise<Map<string, Blob>>;
   /** Called whenever the outbox becomes idle after work. */
   onIdle?: () => void;
+  /**
+   * Refusal statuses that stop every upload at once (items stay on disk), e.g.
+   * 401/403 for pieces of a student who is not signed in.
+   */
+  haltOn?: number[];
+  onHalt?: (status: number, reason: string) => void;
 }): SnapshotOutbox {
   const fallback = new Map<string, Blob>();
   const pending = new Set<string>();
@@ -74,6 +94,9 @@ export function createSnapshotOutbox(opts: {
   const writes = new Set<Promise<void>>();
   let failed = false;
   let retired = false;
+  let halted = false;
+  const refusals = new Map<string, number>();
+  const refused = new Map<string, string>();
   // Paused (weak link): items stay on disk; flush() still drains them.
   let paused = false;
   let flushing = 0;
@@ -93,7 +116,7 @@ export function createSnapshotOutbox(opts: {
   })();
 
   const pump = () => {
-    if (retired || failed || (paused && flushing === 0)) return;
+    if (retired || halted || failed || (paused && flushing === 0)) return;
     for (const key of pending) {
       if (active.size >= 3) break;
       if (active.has(key)) continue;
@@ -105,10 +128,28 @@ export function createSnapshotOutbox(opts: {
             pending.delete(key);
             return;
           }
-          if (!await opts.upload(key, blob)) throw new Error("Snapshot upload incomplete");
+          const result = await opts.upload(key, blob);
+          if (typeof result === "object") {
+            if (opts.haltOn?.includes(result.refused)) {
+              halted = true;
+              opts.onHalt?.(result.refused, result.reason);
+              return;
+            }
+            const count = (refusals.get(key) ?? 0) + 1;
+            refusals.set(key, count);
+            if (result.final || count >= REFUSAL_LIMIT) {
+              // Stays on disk; only this outbox stops retrying it.
+              refused.set(key, `${result.reason} (HTTP ${result.refused})`);
+              pending.delete(key);
+              return;
+            }
+            throw new Error(result.reason);
+          }
+          if (!result) throw new Error("Snapshot upload incomplete");
           await store?.remove(key);
           fallback.delete(key);
           pending.delete(key);
+          refusals.delete(key);
         } catch {
           // Keep the original capture timestamp and bytes for a later retry.
           failed = true;
@@ -147,6 +188,8 @@ export function createSnapshotOutbox(opts: {
       if (!on) void ready.then(pump);
     },
     pendingCount: () => pending.size,
+    refused: () => [...refused].map(([key, reason]) => ({ key, reason })),
+    halted: () => halted,
     idle: isIdle,
     async flush(): Promise<boolean> {
       flushing += 1;
@@ -156,7 +199,7 @@ export function createSnapshotOutbox(opts: {
         failed = false;
         pump();
         while (active.size) await Promise.all([...active.values()]);
-        return pending.size === 0;
+        return pending.size === 0 && !halted;
       } finally {
         flushing -= 1;
       }

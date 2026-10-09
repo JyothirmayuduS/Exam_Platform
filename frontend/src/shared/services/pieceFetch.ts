@@ -5,7 +5,7 @@
 // before they are needed and signed again before they expire, or when storage
 // answers 401/403. A piece that cannot be signed or fetched is reported, never
 // silently skipped.
-import { getArtifactObjectUrl, getArtifactUrls } from "@/shared/services/examStorage";
+import { signArtifactBatch } from "@/shared/services/examStorage";
 import { PART_SECONDS, type PieceTimeline, type TimedPiece } from "@/shared/services/recordingParts";
 import { IncompatibleSessionError, startsWithWebmHeader, WebmJoiner } from "@/shared/services/webmJoin";
 
@@ -24,13 +24,33 @@ export class PieceError extends Error {
   }
 }
 
-/** Batch-sign; keys the batch call left out are signed one by one. */
-export async function signKeys(keys: string[], expiresSec: number): Promise<Map<string, string>> {
-  const signed = await getArtifactUrls(keys, expiresSec);
-  const missing = keys.filter((k) => !signed.has(k));
-  const single = await Promise.all(missing.map((k) => getArtifactObjectUrl(k, expiresSec).catch(() => null)));
-  missing.forEach((k, i) => { const u = single[i]; if (u) signed.set(k, u); });
-  return signed;
+export const SIGN_ATTEMPTS = 4;
+export const SIGN_BACKOFF_MS = 1000;
+
+/**
+ * Sign one batch in one call. A failed call is retried as a batch with
+ * backoff, never split into one call per key: when storage is struggling,
+ * forty single calls only make it worse. Keys the server leaves out are ones
+ * the reviewer may not read, so they stay unsigned.
+ */
+export async function signKeys(
+  keys: string[],
+  expiresSec: number,
+  opts: { batch?: (keys: string[], expiresSec: number) => Promise<Map<string, string>>; attempts?: number; backoffMs?: number } = {},
+): Promise<Map<string, string>> {
+  const batch = opts.batch ?? signArtifactBatch;
+  const attempts = opts.attempts ?? SIGN_ATTEMPTS;
+  const backoff = opts.backoffMs ?? SIGN_BACKOFF_MS;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, backoff * 2 ** (attempt - 1)));
+    try {
+      return await batch(keys, expiresSec);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Signing failed");
 }
 
 export type PieceFetcher = {
@@ -212,7 +232,7 @@ export async function joinPieces<T>(opts: {
     } else {
       // A session whose header piece was lost continues with the previous
       // session's track layout, at its own place on the timeline.
-      if (!header && piece.session !== session && joiner.header) joiner.resync(null, piece.offsetMs);
+      if (!header && piece.session !== session && joiner.header) joiner.resync(null, piece.sessionMs);
       session = piece.session;
       try {
         await out(joiner.push(data, piece.offsetMs));

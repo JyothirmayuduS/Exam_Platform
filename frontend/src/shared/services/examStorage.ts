@@ -280,6 +280,16 @@ export async function getArtifactUrls(keys: string[], expiresIn = 3600): Promise
   }
 }
 
+/**
+ * One batch signing call. Throws when the call itself fails, so callers can
+ * retry the batch; keys the caller may not read are omitted from the result.
+ */
+export async function signArtifactBatch(keys: string[], expiresIn = 3600): Promise<Map<string, string>> {
+  if (keys.length === 0) return new Map();
+  if (!r2Configured) throw new Error("R2 storage is not configured");
+  return r2PresignGetMany(keys, expiresIn, { strict: true });
+}
+
 /** Playable/embeddable URL for an R2 artifact (server-signed GET). */
 export async function getArtifactObjectUrl(key: string, expiresIn = 3600): Promise<string | null> {
   return getR2ObjectUrl(key, expiresIn);

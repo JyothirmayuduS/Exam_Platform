@@ -27,6 +27,7 @@ export type R2ListedObject = {
 };
 
 let lastR2Error: string | null = null;
+let lastR2Status: number | null = null;
 
 /** Last store-artifact failure, for surfaces that otherwise only see null. */
 export function consumeR2Error(): string | null {
@@ -46,6 +47,7 @@ async function readInvokeError(error: { message?: string; context?: Response }):
 
 async function invoke<T>(body: Record<string, unknown>): Promise<T | null> {
   lastR2Error = null;
+  lastR2Status = null;
   if (!supabaseConfigured) {
     lastR2Error = "Supabase is not configured";
     return null;
@@ -58,6 +60,7 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T | null> {
   try {
     const { data, error } = await db.functions.invoke("store-artifact", { body });
     if (error || !data) {
+      lastR2Status = (error as { context?: Response } | null)?.context?.status ?? null;
       lastR2Error = error ? await readInvokeError(error as { message?: string; context?: Response }) : "store-artifact returned no data";
       console.warn(`[r2Function] store-artifact (${body.op ?? "put"}) failed:`, lastR2Error);
       return null;
@@ -74,6 +77,10 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T | null> {
   }
 }
 
+export type R2PutResult =
+  | { key: string }
+  | { key: null; status: number | null; error: string };
+
 /** Presign a PUT for one object, then upload the blob with a plain fetch PUT. */
 export async function r2PutBlob(opts: {
   /** Top-level R2 folder segment — slug of the exam name, or the exam id. */
@@ -83,6 +90,18 @@ export async function r2PutBlob(opts: {
   name: string;
   blob: Blob;
 }): Promise<string | null> {
+  return (await r2PutBlobResult(opts)).key;
+}
+
+/** Like r2PutBlob, with the HTTP status of a refusal (storage or edge function). */
+export async function r2PutBlobResult(opts: {
+  /** Top-level R2 folder segment — slug of the exam name, or the exam id. */
+  examId: string;
+  ownerSegment: string;
+  kind: R2Kind;
+  name: string;
+  blob: Blob;
+}): Promise<R2PutResult> {
   const contentType = opts.blob.type || "application/octet-stream";
   const signed = await invoke<{ url: string; key: string }>({
     op: "put",
@@ -92,7 +111,7 @@ export async function r2PutBlob(opts: {
     name: opts.name,
     contentType,
   });
-  if (!signed?.url) return null;
+  if (!signed?.url) return { key: null, status: lastR2Status, error: lastR2Error ?? "store-artifact failed" };
   try {
     const res = await fetch(signed.url, {
       method: "PUT",
@@ -101,12 +120,12 @@ export async function r2PutBlob(opts: {
     });
     if (!res.ok) {
       console.warn("[r2Function] R2 PUT failed:", res.status, res.statusText);
-      return null;
+      return { key: null, status: res.status, error: `R2 PUT failed: ${res.status}` };
     }
-    return signed.key;
+    return { key: signed.key };
   } catch (err) {
     console.warn("[r2Function] R2 PUT error:", err);
-    return null;
+    return { key: null, status: null, error: err instanceof Error ? err.message : "R2 PUT error" };
   }
 }
 
@@ -117,12 +136,13 @@ export async function r2PresignGet(key: string, expiresSec = 3600): Promise<stri
 }
 
 /** Presigned GETs for many keys, 500 per edge call. Missing keys are omitted. */
-export async function r2PresignGetMany(keys: string[], expiresSec = 3600): Promise<Map<string, string>> {
+export async function r2PresignGetMany(keys: string[], expiresSec = 3600, opts: { strict?: boolean } = {}): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const batches: string[][] = [];
   for (let i = 0; i < keys.length; i += 500) batches.push(keys.slice(i, i + 500));
   await Promise.all(batches.map(async (batch) => {
     const res = await invoke<{ urls: Record<string, string> }>({ op: "get-many", keys: batch, expiresSec });
+    if (!res && opts.strict) throw new Error(lastR2Error ?? "batch presign failed");
     for (const [k, v] of Object.entries(res?.urls ?? {})) out.set(k, v);
   }));
   return out;
