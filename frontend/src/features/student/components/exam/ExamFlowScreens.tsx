@@ -220,7 +220,7 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
   );
 }
 
-export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId, uploadState, uploadDetail, submitFailed, report, feedbackStudentId }: {
+export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId, uploadState, uploadDetail, recordingPiecesLeft = 0, submitFailed, report, feedbackStudentId }: {
   answeredCount: number;
   totalQuestions: number;
   studentName: string;
@@ -231,6 +231,8 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
   /** Where the exam recording/evidence landed after submit (storage status). */
   uploadState?: "uploading" | "stored" | "partial" | "failed";
   uploadDetail?: string;
+  /** Recording pieces still on this device; the window stays open until 0. */
+  recordingPiecesLeft?: number;
   /** True when the final answer-submit DB write failed (answers saved locally). */
   submitFailed?: boolean;
   /** Auto-graded result, present only when the exam releases results on submit. */
@@ -239,7 +241,10 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
   feedbackStudentId?: string | null;
 }) {
   const [feedbackDone, setFeedbackDone] = useState(!feedbackStudentId);
-  const holdOpen = !!report || !feedbackDone;
+  const holdOpen = !!report || !feedbackDone || recordingPiecesLeft > 0;
+  const piecesNote = recordingPiecesLeft > 0
+    ? `Uploading your exam recording (${recordingPiecesLeft} piece${recordingPiecesLeft === 1 ? "" : "s"} left). Keep this window open and stay connected; it closes by itself when the upload finishes.`
+    : null;
   // Real attempt id from the DB (short-displayed). Falls back to the exam id
   // when the attempt row hasn't been created yet — never a random fake.
   const receiptId = attemptId && attemptId.length > 8 ? attemptId.slice(0, 8).toUpperCase() : (attemptId || examId || "—");
@@ -307,7 +312,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
             <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Exam recording</p>
             <p className="mt-1">
               {uploadState === "stored" && <>Your exam recording has been secured. You may close this window.</>}
-              {uploadState === "uploading" && <>Securing your exam evidence…</>}
+              {uploadState === "uploading" && <>{piecesNote ?? "Securing your exam evidence…"}</>}
               {uploadState === "partial" && <>{uploadDetail ?? "Some exam evidence is still pending. Keep the app open and inform your invigilator."}</>}
               {uploadState === "failed" && <>Your answers are submitted. Please tell the invigilator before leaving so your recording can be verified.</>}
             </p>
@@ -319,6 +324,7 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
           <div className="mt-6 border border-success/40 bg-success/5 px-4 py-3 text-left text-[12px] text-success">
             <p className="font-mono text-[9px] uppercase tracking-widest opacity-80">Status</p>
             <p className="mt-1">Your exam has been submitted successfully.{holdOpen ? "" : " This window will close shortly."}</p>
+            {piecesNote && <p className="mt-2 text-amber">{piecesNote}</p>}
           </div>
         )}
 
@@ -356,19 +362,20 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
 
         <div className="mt-8 space-y-4">
           <p className="text-[13px] text-soft leading-relaxed px-4">
-            {report ? "You may now close this window. Your full report is also in Results on your dashboard." : "You may now close this window. Your results will appear in Results on your dashboard once your teacher releases them."}
+            {piecesNote ?? (report ? "You may now close this window. Your full report is also in Results on your dashboard." : "You may now close this window. Your results will appear in Results on your dashboard once your teacher releases them.")}
           </p>
 
-          <a 
+          {recordingPiecesLeft === 0 && <a 
             href="/student/results" 
             className="block w-full border border-ink bg-ink py-3 font-mono text-[12px] uppercase tracking-widest text-paper transition-colors hover:bg-ink/90"
           >
             Go to Results Hub /
-          </a>
+          </a>}
           
           <button 
             onClick={closeExamWindow} 
-            className="block w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink transition-colors hover:bg-raised"
+            disabled={recordingPiecesLeft > 0}
+            className="block w-full border border-line py-3 font-mono text-[12px] uppercase tracking-widest text-ink transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50"
           >
             Close Exam Window
           </button>

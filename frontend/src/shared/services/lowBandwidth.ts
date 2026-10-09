@@ -6,9 +6,10 @@
 //
 // Storage for one 2-hour exam, measured with Chromium's encoders
 // (frontend/scripts/measure-proctor-storage.mjs; details in
-// docs/low-bandwidth-proctoring.md):
-//   before: ~1.9 GB = recordings ~1.7 GB + 7,201 snapshots ~169 MB
-//   after:  ~0.76 GB = recordings ~0.75 GB +   361 snapshots ~5 MB
+// docs/low-bandwidth-proctoring.md). Each recording is stored once, as 10 s
+// pieces; these are the totals for that one copy:
+//   before: ~1.02 GB = recordings ~0.85 GB (camera 0.83 GB + screen 21 MB) + 7,201 snapshots ~169 MB
+//   after:  ~0.38 GB = recordings ~375 MB  (camera 359 MB  + screen 16 MB) +   361 snapshots ~5 MB
 
 export type ConnectionState = "good" | "weak" | "lost";
 

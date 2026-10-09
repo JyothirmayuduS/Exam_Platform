@@ -33,7 +33,6 @@ describe("screen recording", () => {
       folder: "Exam", owner: "R1", family: "screen", store: disk(),
       upload: async (o) => { uploads.push({ name: o.name, size: o.blob.size }); return o.name; },
     });
-    const enqueue = vi.spyOn(uploader, "enqueue");
     const handle = startVideoRecording({ stream: {} as MediaStream, examId: "E", roll: "R1", kind: "screen", uploader });
 
     expect(RECORDING_CHUNK_MS).toBe(10_000);
@@ -43,9 +42,9 @@ describe("screen recording", () => {
     expect(await handle.flush()).toBe(true);
 
     // Every chunk handed off as its own piece; nothing concatenated.
-    expect(enqueue.mock.calls.map(([b]) => b.size)).toEqual([100, 200, 300, 10]);
-    expect(uploads).toHaveLength(4);
-    expect(uploads.every((u) => /^parts\/screen_\d+\.webm$/.test(u.name))).toBe(true);
+    expect([...uploads].sort((a, b) => a.name.localeCompare(b.name)).map((u) => u.size)).toEqual([100, 200, 300, 10]);
+    expect(uploads.every((u) => /^parts\/screen_\d{13}_\d{13}\.webm$/.test(u.name))).toBe(true);
+    expect(new Set(uploads.map((u) => u.name.split("_")[2])).size).toBe(1);
     expect(Math.max(...uploads.map((u) => u.size))).toBe(300);
     uploader.stop();
   });

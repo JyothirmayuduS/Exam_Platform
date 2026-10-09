@@ -33,6 +33,29 @@ function browserSnapshotStore(): SnapshotStore {
   };
 }
 
+/** The device's evidence store, or undefined where IndexedDB is unavailable. */
+export function defaultSnapshotStore(): SnapshotStore | undefined {
+  if (typeof indexedDB === "undefined") return undefined;
+  try { return browserSnapshotStore(); } catch { return undefined; }
+}
+
+export type SnapshotOutbox = {
+  enqueue: (key: string, blob: Blob) => void;
+  retry: () => void;
+  setPaused: (on: boolean) => void;
+  /** Items waiting on disk (or in memory when disk is unavailable). */
+  pendingCount: () => number;
+  /** Nothing waiting, writing or uploading. */
+  idle: () => boolean;
+  flush: () => Promise<boolean>;
+  /**
+   * Stop uploading and hand over: resolves once in-flight writes and uploads
+   * have settled, with the items held only in memory. Items on disk are left
+   * for the successor's own scan.
+   */
+  retire: () => Promise<Map<string, Blob>>;
+};
+
 export function createSnapshotOutbox(opts: {
   prefix: string;
   upload: (key: string, blob: Blob) => Promise<boolean>;
@@ -40,33 +63,49 @@ export function createSnapshotOutbox(opts: {
   store?: SnapshotStore;
   /** Shown when an upload fails (default: camera snapshots wording). */
   pendingMessage?: string;
-}) {
+  /** A retiring predecessor's handover; nothing is scanned or uploaded before it settles. */
+  after?: Promise<Map<string, Blob>>;
+  /** Called whenever the outbox becomes idle after work. */
+  onIdle?: () => void;
+}): SnapshotOutbox {
   const fallback = new Map<string, Blob>();
   const pending = new Set<string>();
   const active = new Map<string, Promise<void>>();
   const writes = new Set<Promise<void>>();
   let failed = false;
+  let retired = false;
   // Paused (weak link): items stay on disk; flush() still drains them.
   let paused = false;
   let flushing = 0;
   let store: SnapshotStore | undefined;
   const reportError = () => opts.onError?.(opts.pendingMessage ?? "Some camera snapshots are pending upload. Keep the app open and check your connection.");
   try { store = opts.store ?? browserSnapshotStore(); } catch { /* unavailable browser storage */ }
+  const isIdle = () => pending.size === 0 && active.size === 0 && writes.size === 0;
   const ready = (async () => {
+    if (opts.after) {
+      try {
+        for (const [key, blob] of await opts.after) { fallback.set(key, blob); pending.add(key); }
+      } catch { /* predecessor had nothing to hand over */ }
+    }
     if (!store) return;
     try { for (const key of await store.keys(opts.prefix)) pending.add(key); }
     catch { store = undefined; opts.onError?.("Local snapshot storage is unavailable. Do not close the app until evidence uploads finish."); }
   })();
 
   const pump = () => {
-    if (failed || (paused && flushing === 0)) return;
+    if (retired || failed || (paused && flushing === 0)) return;
     for (const key of pending) {
       if (active.size >= 3) break;
       if (active.has(key)) continue;
       const work = (async () => {
         try {
           const blob = fallback.get(key) ?? await store?.get(key);
-          if (!blob || !await opts.upload(key, blob)) throw new Error("Snapshot upload incomplete");
+          if (!blob) {
+            // Gone from disk and memory: another uploader already sent it.
+            pending.delete(key);
+            return;
+          }
+          if (!await opts.upload(key, blob)) throw new Error("Snapshot upload incomplete");
           await store?.remove(key);
           fallback.delete(key);
           pending.delete(key);
@@ -75,7 +114,11 @@ export function createSnapshotOutbox(opts: {
           failed = true;
           reportError();
         }
-      })().finally(() => { active.delete(key); pump(); });
+      })().finally(() => {
+        active.delete(key);
+        pump();
+        if (isIdle()) opts.onIdle?.();
+      });
       active.set(key, work);
     }
   };
@@ -103,8 +146,8 @@ export function createSnapshotOutbox(opts: {
       paused = on;
       if (!on) void ready.then(pump);
     },
-    /** Items waiting on disk (or in memory when disk is unavailable). */
     pendingCount: () => pending.size,
+    idle: isIdle,
     async flush(): Promise<boolean> {
       flushing += 1;
       try {
@@ -117,6 +160,17 @@ export function createSnapshotOutbox(opts: {
       } finally {
         flushing -= 1;
       }
+    },
+    async retire(): Promise<Map<string, Blob>> {
+      retired = true;
+      await ready.catch(() => undefined);
+      while (writes.size || active.size) await Promise.all([...writes, ...active.values()]);
+      const handover = new Map<string, Blob>();
+      for (const key of pending) {
+        const blob = fallback.get(key);
+        if (blob) handover.set(key, blob);
+      }
+      return handover;
     },
   };
 }

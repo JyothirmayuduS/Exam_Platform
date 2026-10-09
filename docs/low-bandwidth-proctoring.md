@@ -44,22 +44,27 @@ snapshot interval. The question paper stays text-only.
 Measured with `node frontend/scripts/measure-proctor-storage.mjs 45 120`. The
 script runs Chromium's real JPEG encoder and MediaRecorder (VP9 + Opus) on a
 640×480 webcam-like scene with microphone audio, and on a 1366×768 text exam
-page. It then scales bytes per second to 120 minutes. Figures are per copy.
-Recordings used to be stored twice (the live parts plus a merged file at
-submit), which doubled the recording rows. They are now stored once, as 10 s
-pieces only (see `frontend/src/shared/services/recordingParts.ts`).
+page. It then scales bytes per second to 120 minutes.
+
+Each recording is stored once, as 10 s pieces under `recordings/parts/` (see
+`frontend/src/shared/services/recordingParts.ts`). No merged copy is uploaded
+at submit; review and the evidence ZIP join the pieces when they are read.
+Every figure below is for that one stored copy.
 
 | | Before | After |
 | --- | --- | --- |
-| Camera + mic recording | 923 kbps → 1.66 GB | 399 kbps → 0.72 GB |
-| Screen recording (text page) | 23 kbps → 42 MB | 18 kbps → 33 MB |
+| Camera + mic recording | 923 kbps → 0.83 GB | 399 kbps → 0.36 GB |
+| Screen recording (text page) | 23 kbps → 21 MB | 18 kbps → 16 MB |
 | Webcam snapshots | 7,201 × 23.5 KB → 169 MB | 361 × 14.0 KB → 5 MB |
 | Each violation frame | 46.9 KB | 29.2 KB |
-| **Total** | **≈ 1.87 GB** | **≈ 0.76 GB** (60% less) |
+| **Total** | **≈ 1.02 GB** | **≈ 0.38 GB** (63% less) |
 
 These are measured figures for that synthetic scene. A real webcam with more
 motion and noise can push the camera recorder toward its cap. That is
-1.6 Mbps → 2.9 GB per exam before, and 500 kbps → 0.9 GB after. A static exam
-page costs almost nothing to record. Scrolling and window switching raise the
-screen recording toward its cap: 2.5 Mbps → 4.5 GB before, and
-700 kbps → 1.3 GB after.
+1.6 Mbps → 1.44 GB per exam before, and 500 kbps → 0.45 GB after. A static
+exam page costs almost nothing to record. Scrolling and window switching raise
+the screen recording toward its cap: 2.5 Mbps → 2.25 GB before, and
+700 kbps → 0.63 GB after.
+
+Older kiosks also uploaded a merged copy of each recording at submit, so they
+stored the recording rows twice (≈ 1.87 GB per exam before these limits).

@@ -3,13 +3,14 @@
 // copy: nothing is held in memory and no full file is uploaded at the end.
 //
 // Pieces land under:
-//   ${examFolder}/${roll}/recordings/parts/screen_${seq}.webm
+//   ${examFolder}/${roll}/recordings/parts/screen_${seq}_${session}.webm
 //
 // where ${examFolder} is the slug of the exam NAME (fallback: exam id).
+// Restarting the recorder starts a new uploader, which retires the old one.
 
 import { storageFolderSegment } from "@/shared/services/examStorage";
 import { RECORDING_BITRATE } from "@/shared/services/lowBandwidth";
-import { startPartUploads, type PartUploader } from "@/shared/services/recordingParts";
+import { recordInto, startPartUploads, type PartUploader } from "@/shared/services/recordingParts";
 
 export const RECORDING_CHUNK_MS = 10_000;
 
@@ -51,15 +52,13 @@ export function startVideoRecording(opts: {
     mimeType,
     videoBitsPerSecond: RECORDING_BITRATE[kind],
   });
-  recorder.ondataavailable = (e) => {
-    if (e.data && e.data.size > 0) parts.enqueue(e.data);
-  };
-  recorder.onstop = () => { void parts.flush(); };
-  recorder.start(RECORDING_CHUNK_MS);
+  const recording = recordInto(recorder, parts, RECORDING_CHUNK_MS);
 
   return {
     stop: () => {
-      if (recorder.state !== "inactive") recorder.stop();
+      recording.stop();
+      // Keeps uploading until every piece on the device has landed.
+      parts.stop();
     },
     setLowBandwidth: (on) => parts.setPaused(on),
     flush: () => parts.flush(),

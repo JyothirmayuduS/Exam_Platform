@@ -3,27 +3,33 @@
 // a row in the violation log) jumps the video straight to the flagged moment.
 //
 // Data sources:
-//   • violations: violation_events rows (offset_seconds = seconds into the
-//     exam; when a marker appears before the recording duration is known the
-//     position is estimated from the recording file time instead)
+//   • violations: violation_events rows. A marker sits at the violation's
+//     wall-clock time on the recording's timeline (created_at minus the time
+//     the first recorder started), so it stays on the real exam moment even
+//     after a page reload restarted the recorder. Recordings without
+//     wall-clock piece names fall back to offset_seconds.
 //   • artifacts: ${examFolder}/${roll}/recordings + /violations + /report listed
 //     from Cloudflare R2 (examStorage.listStudentArtifacts), where examFolder is
 //     the slug of the exam NAME (legacy ${examId}/ folders are read too).
 //
 // Two playback modes:
-//   • "parts" — the normal case. The exam is stored ONLY as 10 s pieces
-//     uploaded live (parts/exam_* for the camera, parts/screen_* for the
-//     screen); no merged copy exists. Pieces are joined in order and shown
-//     as ONE full-length video — reviewers never see individual pieces. The
-//     seek bar spans the whole exam from the start; red violation markers
-//     work across the piece boundaries.
-//   • "file"  — a finished recording_….webm from older kiosk versions.
+//   • pieces — the normal case. The exam is stored ONLY as 10 s pieces
+//     (parts/exam_* for the camera, parts/screen_* for the screen; older
+//     kiosks wrote seg_* / camera_*). They play as ONE full-length video
+//     (piecePlayer): loaded around the playhead, reloaded on any seek, with
+//     links re-signed before they expire. Pieces that cannot be signed or
+//     fetched are listed under the video.
+//   • file — a finished recording_….webm from older exam browsers; its link
+//     is re-signed before it expires, keeping the playback position.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FiDownload } from "react-icons/fi";
-import { listStudentArtifacts, getArtifactObjectUrl, getArtifactUrls } from "@/shared/services/examStorage";
+import { listStudentArtifacts, getArtifactObjectUrl, getArtifactUrls, type R2Artifact } from "@/shared/services/examStorage";
 import type { ViolationEvent } from "@/shared/data/examApi";
-import { sortedParts } from "@/shared/services/recordingParts";
+import { pieceTimeline, sortedParts, type PieceTimeline } from "@/shared/services/recordingParts";
+import { createPieceFetcher, describeMissing, joinPieces, LINK_REFRESH_MARGIN_SEC, LINK_TTL_SEC, type MissingPiece } from "@/shared/services/pieceFetch";
+import { createBlobSink } from "@/shared/services/zipStream";
+import { startPiecePlayer, type PlayerStatus } from "@/features/proctoring/services/piecePlayer";
 
 function clock(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec) || sec < 0) return "00:00";
@@ -36,154 +42,121 @@ function clock(sec: number | null | undefined): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-type PartItem = { key: string; url: string };
 export type PartSource = "camera" | "screen";
 
+/** Screenshots, flagged frames and the PDF are signed for long enough to outlast a review session. */
+const EVIDENCE_LINK_SEC = 12 * 3600;
 
 type LoadingArtifacts = {
-  /** Finished full video URL (normal submitted exam). */
-  recordingUrl: string | null;
-  /** Camera pieces (parts/exam_*) to stitch when no finished video exists. */
-  parts: PartItem[];
+  /** Finished full video (older exam browsers), used when no pieces exist. */
+  fileKey: string | null;
+  /** Camera pieces (parts/exam_*, or older seg_* / camera_*). */
+  camera: PieceTimeline<R2Artifact> | null;
   /** Screen pieces (parts/screen_*). */
-  screenParts: PartItem[];
-  /** True when the URL above is a parts-assembled preview, not one file. */
-  rebuilt: boolean;
+  screen: PieceTimeline<R2Artifact> | null;
   posterUrl: string | null;
   snapshotUrls: string[];
-  /** Per-second screenshot timeline URLs (from screenshots/ folder). */
+  /** Periodic screenshots (from the screenshots/ folder). */
   screenshotTimelineUrls: { url: string; timestamp: number }[];
-  reportUrl: string | null;
+  reportKey: string | null;
   status: "loading" | "ready" | "empty" | "error";
 };
 
+const EMPTY: LoadingArtifacts = {
+  fileKey: null, camera: null, screen: null, posterUrl: null, snapshotUrls: [],
+  screenshotTimelineUrls: [], reportKey: null, status: "loading",
+};
+
 function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, folderOverride?: string): LoadingArtifacts {
-  const [state, setState] = useState<LoadingArtifacts>({
-    recordingUrl: null,
-    parts: [],
-    screenParts: [],
-    rebuilt: false,
-    posterUrl: null,
-    snapshotUrls: [],
-    screenshotTimelineUrls: [],
-    reportUrl: null,
-    status: "loading",
-  });
+  const [state, setState] = useState<LoadingArtifacts>(EMPTY);
 
   useEffect(() => {
     let cancelled = false;
     if (!examId || !roll) {
-      setState((s) => ({ ...s, status: "empty" }));
+      setState({ ...EMPTY, status: "empty" });
       return;
     }
-    setState((s) => ({ ...s, status: "loading", recordingUrl: null, parts: [], screenParts: [], snapshotUrls: [], screenshotTimelineUrls: [], reportUrl: null }));
+    setState(EMPTY);
     void (async () => {
       try {
         const arts = await listStudentArtifacts(examId, roll, folderOverride);
         if (cancelled) return;
-        if (!arts) {
-          setState((s) => ({ ...s, status: "error" }));
-          return;
-        }
-        if (arts.length === 0) {
-          setState((s) => ({ ...s, status: "empty" }));
-          return;
-        }
+        if (!arts) { setState({ ...EMPTY, status: "error" }); return; }
+        if (arts.length === 0) { setState({ ...EMPTY, status: "empty" }); return; }
         // Each recorder family is its own timeline and must never be
         // interleaved: mixing them made the review video jump between
-        // recorders and stop early (~198 s of a 3-minute exam).
-        const parts = sortedParts(arts, "exam");
-        const screenParts = sortedParts(arts, "screen");
+        // recorders and stop early.
+        const cameraPieces = [sortedParts(arts, "exam"), sortedParts(arts, "seg"), sortedParts(arts, "camera")].find((l) => l.length > 0) ?? [];
+        const screenPieces = sortedParts(arts, "screen");
         const recordings = arts
           .filter((a) => a.kind === "recordings" && !a.key.includes("/parts/"))
           .sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? ""));
-        // A finished file that concatenates SEPARATE recorder sessions (screen
-        // → camera failover) usually ships a broken/absent duration header and
-        // some players stall on it. The parts sequence is always cleanly
-        // decodable, so when parts exist the PARTS timeline is the primary
-        // playback source and the merged file is the fallback.
-        const mergedIsUnstable = parts.length > 2 && parts.length * 8 > 90; // >90 s of exam ⇒ ≥12 parts
         const snaps = arts
           .filter((a) => a.kind === "violations")
           .sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? ""));
         const report = arts.find((a) => a.kind === "report") ?? null;
-
-        // Prefer the full-exam webm, fall back to the screen / camera stream.
         const chosen =
           recordings.find((a) => a.name.startsWith("recording_")) ??
           recordings.find((a) => a.name.startsWith("screen_")) ??
           recordings.find((a) => a.name.startsWith("camera_")) ??
           recordings[0] ??
           null;
-        const poster = snaps[0] ?? null;
-
-        const [recUrl, posterUrl] = await Promise.all([
-          chosen ? getArtifactObjectUrl(chosen.key) : Promise.resolve<string | null>(null),
-          poster ? getArtifactObjectUrl(poster.key) : Promise.resolve<string | null>(null),
-        ]);
-        const snapshotUrls = await Promise.all(
-          snaps.slice(0, 8).map((a) => getArtifactObjectUrl(a.key)),
-        );
-        const reportUrl = report ? await getArtifactObjectUrl(report.key) : null;
-
-        // No finished video (crash before submit?) — stitch the live-uploaded
-        // segments into a continuous preview. Sign every segment URL up front.
-        // ALSO used as the PRIMARY source when the merged file looks unstable
-        // (mergedIsUnstable) — playback then rides the clean 10 s segments.
-        const signParts = async (list: typeof parts): Promise<PartItem[]> => {
-          if (list.length === 0) return [];
-          const signed = await getArtifactUrls(list.map((a) => a.key));
-          return list
-            .map((a) => ({ key: a.key, url: signed.get(a.key) ?? "" }))
-            .filter((p): p is PartItem => Boolean(p.url));
-        };
-        const usePieces = (parts.length > 0 || screenParts.length > 0) && (!recUrl || mergedIsUnstable);
-        const [partsWithUrl, screenWithUrl] = usePieces
-          ? await Promise.all([signParts(parts), signParts(screenParts)])
-          : [[], []];
-        // Per-second screenshot timeline from screenshots/ folder.
-        // Sort by snap_ timestamp to display in chronological order.
         const screenshotArts = arts
           .filter((a) => a.kind === "screenshots" && a.name.startsWith("snap_"))
-          .sort((a, b) => {
-            const tsA = Number(a.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0);
-            const tsB = Number(b.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0);
-            return tsA - tsB;
-          })
+          .sort((a, b) => Number(a.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0) - Number(b.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0))
           .slice(0, 120); // Cap at 120 to avoid signing too many URLs
+        const evidenceKeys = [...snaps.slice(0, 8).map((a) => a.key), ...screenshotArts.map((a) => a.key)];
+        const signed = evidenceKeys.length ? await getArtifactUrls(evidenceKeys, EVIDENCE_LINK_SEC) : new Map<string, string>();
+        const signOne = async (key: string) => signed.get(key) ?? await getArtifactObjectUrl(key, EVIDENCE_LINK_SEC);
+        const snapshotUrls = await Promise.all(snaps.slice(0, 8).map((a) => signOne(a.key)));
         const screenshotTimeline: { url: string; timestamp: number }[] = [];
-        if (screenshotArts.length > 0) {
-          const screenshotSignedUrls = await Promise.all(
-            screenshotArts.map((a) => getArtifactObjectUrl(a.key)),
-          );
-          for (let i = 0; i < screenshotArts.length; i++) {
-            const url = screenshotSignedUrls[i];
-            const ts = Number(screenshotArts[i].name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0);
-            if (url) screenshotTimeline.push({ url, timestamp: ts });
-          }
+        for (const a of screenshotArts) {
+          const url = await signOne(a.key);
+          if (url) screenshotTimeline.push({ url, timestamp: Number(a.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0) });
         }
         if (cancelled) return;
-        const havePieces = partsWithUrl.length > 0 || screenWithUrl.length > 0;
+        const camera = cameraPieces.length ? pieceTimeline(cameraPieces) : null;
+        const screen = screenPieces.length ? pieceTimeline(screenPieces) : null;
+        const havePieces = !!camera || !!screen;
         setState({
-          recordingUrl: havePieces ? null : recUrl,
-          parts: partsWithUrl,
-          screenParts: screenWithUrl,
-          rebuilt: havePieces,
-          posterUrl,
+          fileKey: havePieces ? null : chosen?.key ?? null,
+          camera,
+          screen,
+          posterUrl: snapshotUrls[0] ?? null,
           snapshotUrls: snapshotUrls.filter((u): u is string => !!u),
           screenshotTimelineUrls: screenshotTimeline,
-          reportUrl,
-          status: recUrl || havePieces ? "ready" : "empty",
+          reportKey: report?.key ?? null,
+          status: havePieces || chosen ? "ready" : "empty",
         });
       } catch (err) {
         console.warn("[RecordingReview] artifact load failed:", err);
-        if (!cancelled) setState((s) => ({ ...s, status: "error" }));
+        if (!cancelled) setState({ ...EMPTY, status: "error" });
       }
     })();
     return () => { cancelled = true; };
   }, [examId, roll, reloadKey, folderOverride]);
 
   return state;
+}
+
+/** A signed link for one stored file, signed again before it expires. */
+function useRefreshingUrl(key: string | null, retry: number): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    setUrl(null);
+    if (!key) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const sign = async () => {
+      const u = await getArtifactObjectUrl(key, LINK_TTL_SEC);
+      if (cancelled) return;
+      setUrl(u);
+      timer = setTimeout(() => void sign(), (LINK_TTL_SEC - LINK_REFRESH_MARGIN_SEC) * 1000);
+    };
+    void sign();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [key, retry]);
+  return url;
 }
 
 function sortViolations(violations: ViolationEvent[]): ViolationEvent[] {
@@ -194,152 +167,31 @@ function sortViolations(violations: ViolationEvent[]): ViolationEvent[] {
   });
 }
 
-function isWebm(buf: ArrayBuffer): boolean {
-  const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-  return b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3;
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-/**
- * MSE type matching the tracks actually in the WebM header. Chrome rejects the
- * init segment when the declared codecs list a track the file lacks (screen
- * recordings carry no audio, so "vp9,opus" failed every time).
- */
-function webmTypeFromHeader(buf: ArrayBuffer): string | undefined {
-  const head = new TextDecoder("latin1").decode(new Uint8Array(buf, 0, Math.min(65_536, buf.byteLength)));
-  const video = head.includes("V_VP9") ? "vp9" : head.includes("V_VP8") ? "vp8" : null;
-  if (!video) return undefined;
-  const audio = head.includes("A_OPUS") ? "opus" : head.includes("A_VORBIS") ? "vorbis" : null;
-  return `video/webm; codecs="${audio ? `${video},${audio}` : video}"`;
-}
-
-function sbWait(sb: SourceBuffer, op: () => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const done = () => { cleanup(); resolve(); };
-    const fail = () => { cleanup(); reject(new Error("Part of the video could not be decoded")); };
-    const cleanup = () => {
-      sb.removeEventListener("updateend", done);
-      sb.removeEventListener("error", fail);
-    };
-    sb.addEventListener("updateend", done);
-    sb.addEventListener("error", fail);
-    try { op(); } catch (err) { cleanup(); reject(err); }
-  });
-}
-
-type Stitched = { url: string | null; loaded: number; done: boolean; error: string | null };
-
-/**
- * Join crash-safe parts into one playable source. WebM streams through Media
- * Source Extensions (playback starts after the first segment, memory stays
- * bounded); other containers, or a MediaSource failure, fall back to one Blob.
- */
-function useStitchedParts(
-  parts: PartItem[] | null,
-  getCurrentTime: () => number,
-  forceBlob: boolean,
-): Stitched {
-  const [state, setState] = useState<Stitched>({ url: null, loaded: 0, done: false, error: null });
-  const timeRef = useRef(getCurrentTime);
-  timeRef.current = getCurrentTime;
-
-  useEffect(() => {
-    setState({ url: null, loaded: 0, done: false, error: null });
-    if (!parts || parts.length === 0) return;
-    let cancelled = false;
-    const objectUrls: string[] = [];
-    // Keep a few pieces downloading ahead so long exams load quickly.
-    const inflight = new Map<number, Promise<ArrayBuffer>>();
-    const download = (i: number) => {
-      let p = inflight.get(i);
-      if (!p) {
-        p = fetch(parts[i].url).then((res) => {
-          if (!res.ok) throw new Error(`Video download failed (HTTP ${res.status})`);
-          return res.arrayBuffer();
-        });
-        p.catch(() => undefined);
-        inflight.set(i, p);
-      }
-      return p;
-    };
-    const fetchPart = (i: number) => {
-      for (let j = i + 1; j < Math.min(parts.length, i + 5); j++) void download(j);
-      const p = download(i);
-      inflight.delete(i);
-      return p;
-    };
-
-    const asBlob = async (first: ArrayBuffer) => {
-      // Drop any failed stream URL so the player shows join progress, not its error.
-      setState({ url: null, loaded: 1, done: false, error: null });
-      const bufs = [first];
-      for (let i = 1; i < parts.length; i++) {
-        if (cancelled) return;
-        bufs.push(await fetchPart(i));
-        setState((s) => ({ ...s, loaded: i + 1 }));
-      }
-      const url = URL.createObjectURL(new Blob(bufs, { type: isWebm(first) ? "video/webm" : "video/mp4" }));
-      objectUrls.push(url);
-      if (!cancelled) setState({ url, loaded: parts.length, done: true, error: null });
-    };
-
-    const viaMediaSource = async (first: ArrayBuffer, type: string) => {
-      const ms = new MediaSource();
-      const url = URL.createObjectURL(ms);
-      objectUrls.push(url);
-      const opened = new Promise<void>((resolve) => ms.addEventListener("sourceopen", () => resolve(), { once: true }));
-      setState({ url, loaded: 1, done: false, error: null });
-      await opened;
-      const sb = ms.addSourceBuffer(type);
-      sb.mode = "sequence";
-      for (let i = 0; i < parts.length; i++) {
-        if (cancelled) return;
-        const buf = i === 0 ? first : await fetchPart(i);
-        for (;;) {
-          try {
-            await sbWait(sb, () => sb.appendBuffer(buf));
-            break;
-          } catch (err) {
-            if (!(err instanceof DOMException && err.name === "QuotaExceededError")) throw err;
-            const keepFrom = Math.max(0, timeRef.current() - 30);
-            if (sb.buffered.length && sb.buffered.start(0) < keepFrom) {
-              await sbWait(sb, () => sb.remove(0, keepFrom));
-            } else {
-              await new Promise((r) => setTimeout(r, 2000));
-            }
-            if (cancelled) return;
-          }
-        }
-        setState((s) => ({ ...s, loaded: i + 1 }));
-      }
-      if (ms.readyState === "open") ms.endOfStream();
-      if (!cancelled) setState((s) => ({ ...s, done: true }));
-    };
-
-    void (async () => {
-      let first: ArrayBuffer | null = null;
-      try {
-        first = await fetchPart(0);
-        if (cancelled) return;
-        const sniffed = !forceBlob && isWebm(first) && typeof MediaSource !== "undefined" ? webmTypeFromHeader(first) : undefined;
-        const type = sniffed && MediaSource.isTypeSupported(sniffed) ? sniffed : undefined;
-        if (type) await viaMediaSource(first, type);
-        else await asBlob(first);
-      } catch (err) {
-        if (cancelled) return;
-        if (first) {
-          try { await asBlob(first); return; } catch { /* report below */ }
-        }
-        setState((s) => ({ ...s, error: err instanceof Error ? err.message : String(err) }));
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      objectUrls.forEach((u) => URL.revokeObjectURL(u));
-    };
-  }, [parts, forceBlob]);
-
-  return state;
+function MissingList({ missing, label }: { missing: MissingPiece[]; label: string }) {
+  if (missing.length === 0) return null;
+  const lines = describeMissing(missing);
+  return (
+    <div className="border-l-2 border-alert bg-alert/5 px-3 py-2 text-[12px] text-alert">
+      <p className="font-medium">
+        {missing.length} piece{missing.length === 1 ? "" : "s"} of this {label} could not be loaded. The video skips {missing.length === 1 ? "this part" : "these parts"} of the exam:
+      </p>
+      <ul className="mt-1 font-mono text-[10px]">
+        {lines.slice(0, 6).map((l) => <li key={l}>{l}</li>)}
+        {lines.length > 6 && <li>…and {lines.length - 6} more</li>}
+      </ul>
+    </div>
+  );
 }
 
 export default function RecordingReviewer({
@@ -357,54 +209,98 @@ export default function RecordingReviewer({
   violations: ViolationEvent[];
   folderOverride?: string;
 }) {
-  const [reloadKey, setReloadKey] = useState(0);
+  const [reloadKey] = useState(0);
   const artifacts = useRecordingArtifacts(examId, roll, reloadKey, folderOverride);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const attachVideo = useCallback((el: HTMLVideoElement | null) => { videoRef.current = el; setVideoEl(el); }, []);
   const [duration, setDuration] = useState<number | null>(null);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
-  // Crash-safe parts are timeslice chunks of ONE recorder: only the first
-  // carries the container header, so they must be joined into one stream —
-  // playing them one by one fails from the second segment on.
   const [source, setSource] = useState<PartSource>("camera");
   const activeSource: PartSource =
-    source === "camera" && artifacts.parts.length === 0 ? "screen"
-      : source === "screen" && artifacts.screenParts.length === 0 ? "camera"
+    source === "camera" && !artifacts.camera ? "screen"
+      : source === "screen" && !artifacts.screen ? "camera"
         : source;
-  const activeParts = activeSource === "screen" ? artifacts.screenParts : artifacts.parts;
-  const partMode = !artifacts.recordingUrl && activeParts.length > 0;
-  const hasBothSources = artifacts.parts.length > 0 && artifacts.screenParts.length > 0;
-  // A stream that fails mid-playback (e.g. a recorder restart changed the
-  // track layout) is retried once as a single Blob before showing an error.
-  const [forceBlob, setForceBlob] = useState(false);
-  useEffect(() => setForceBlob(false), [activeParts]);
-  const stitched = useStitchedParts(partMode ? activeParts : null, () => videoRef.current?.currentTime ?? 0, forceBlob);
-  const videoSrc = partMode ? stitched.url : artifacts.recordingUrl;
+  const timeline = activeSource === "screen" ? artifacts.screen : artifacts.camera;
+  const partMode = !!timeline;
+  const hasBothSources = !!artifacts.camera && !!artifacts.screen;
+  const fetcher = useMemo(
+    () => (timeline ? createPieceFetcher({ keys: timeline.pieces.map((p) => p.key) }) : null),
+    [timeline],
+  );
 
-  // Re-apply the source explicitly when it changes: React will not re-write an
-  // unchanged `src`, which left the element at NETWORK_EMPTY.
+  // A video that fails mid-playback is rebuilt at the same position (twice)
+  // before an error is shown; a finished file is re-signed and retried.
+  const [attempt, setAttempt] = useState(0);
+  const resumeAt = useRef(0);
+  const [player, setPlayer] = useState<PlayerStatus | null>(null);
+  const [joinedUrl, setJoinedUrl] = useState<string | null>(null);
+  const fileUrl = useRefreshingUrl(partMode ? null : artifacts.fileKey, attempt);
+
+  useEffect(() => {
+    setAttempt(0);
+    resumeAt.current = 0;
+  }, [timeline, artifacts.fileKey]);
+
+  // Reset the player state when the source changes.
   useEffect(() => {
     setDuration(null);
     setCurrent(0);
     setPlaying(false);
     setLoadError(false);
-    const el = videoRef.current;
-    if (el) {
-      if (videoSrc) {
-        if (el.getAttribute("src") !== videoSrc) el.src = videoSrc;
-        el.load();
-      } else {
-        el.removeAttribute("src");
-      }
-    }
-  }, [videoSrc]);
+  }, [timeline, artifacts.fileKey]);
 
-  // While segments are still streaming in, size the seek bar for the whole
-  // exam (~10 s per segment) so violation markers land in the right place.
-  const visibleDuration =
-    partMode && !stitched.done ? Math.max(duration ?? 0, activeParts.length * 10) : duration;
+  // Pieces: stream them through Media Source around the playhead.
+  useEffect(() => {
+    setPlayer(null);
+    setJoinedUrl(null);
+    if (!videoEl || !timeline || !fetcher) return;
+    const handle = startPiecePlayer({ video: videoEl, timeline, fetcher, onStatus: setPlayer, startAt: resumeAt.current });
+    return () => handle.destroy();
+  }, [videoEl, timeline, fetcher, attempt]);
+
+  // Browsers that cannot stream the pieces get them joined into one file.
+  const needsFile = !!player?.needsFile;
+  useEffect(() => {
+    if (!needsFile || !timeline || !fetcher || !videoEl) return;
+    let cancelled = false;
+    let url: string | null = null;
+    void (async () => {
+      const sink = createBlobSink("video/webm");
+      const res = await joinPieces({ timeline, fetcher, write: sink.write });
+      const blob = await sink.close();
+      if (cancelled || !blob) return;
+      url = URL.createObjectURL(blob);
+      setJoinedUrl(url);
+      setPlayer((p) => (p ? { ...p, missing: res.missing, loaded: p.total } : p));
+      videoEl.src = url;
+    })();
+    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
+  }, [needsFile, timeline, fetcher, videoEl]);
+
+  // A finished file: (re)apply its signed link, keeping the position.
+  useEffect(() => {
+    const el = videoEl;
+    if (!el || partMode) return;
+    if (!fileUrl) { el.removeAttribute("src"); return; }
+    if (el.getAttribute("src") === fileUrl) return;
+    const at = el.currentTime;
+    const wasPlaying = !el.paused;
+    el.src = fileUrl;
+    el.load();
+    if (at > 0) {
+      el.addEventListener("loadedmetadata", () => {
+        el.currentTime = at;
+        if (wasPlaying) void el.play().catch(() => undefined);
+      }, { once: true });
+    }
+  }, [fileUrl, videoEl, partMode]);
+
+  const hasVideo = partMode || !!fileUrl;
+  const visibleDuration = partMode ? Math.max(duration ?? 0, timeline?.durationSec ?? 0) || null : duration;
 
   const recordDuration = (d: number) => setDuration(d);
 
@@ -416,12 +312,14 @@ export default function RecordingReviewer({
   };
 
   const sorted = useMemo(() => sortViolations(violations), [violations]);
+  const originMs = partMode ? timeline?.originMs ?? null : null;
 
   const markers = useMemo(
     () =>
       sorted
         .map((v) => {
-          const t = v.offset_seconds ?? 0;
+          const at = Date.parse(v.created_at);
+          const t = originMs != null && Number.isFinite(at) ? (at - originMs) / 1000 : (v.offset_seconds ?? 0);
           return {
             v,
             seconds: Math.max(0, t),
@@ -431,51 +329,61 @@ export default function RecordingReviewer({
           };
         })
         .sort((a, b) => a.seconds - b.seconds),
-    [sorted],
+    [sorted, originMs],
   );
-
-  const markerStyle = (seconds: number) => {
-    const d = visibleDuration;
-    const pct = d && d > 0 ? Math.min(99.5, Math.max(0, (seconds / d) * 100)) : 0;
-    return { left: `${pct}%` };
-  };
-
-  const preparedPct = activeParts.length > 0 ? Math.round((stitched.loaded / activeParts.length) * 100) : 0;
 
   // Download the joined pieces as one local file. Never uploaded back: the
   // pieces are the single stored copy of the recording.
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveMissing, setSaveMissing] = useState<MissingPiece[]>([]);
   const [mergeMsg, setMergeMsg] = useState<string | null>(null);
   const saveMergedVideo = async () => {
-    if (!partMode || saving) return;
+    if (!timeline || saving) return;
     setSaving(true);
     setSaveError(null);
+    setSaveMissing([]);
     setMergeMsg(null);
     try {
-      const chunks: Blob[] = [];
-      for (let i = 0; i < activeParts.length; i++) {
-        setMergeMsg(`Preparing full video… ${Math.round((i / activeParts.length) * 100)}%`);
-        const res = await fetch(activeParts[i].url);
-        if (!res.ok) throw new Error(`Video download failed (HTTP ${res.status})`);
-        chunks.push(await res.blob());
-      }
-      const merged = new Blob(chunks, { type: "video/webm" });
-      const url = URL.createObjectURL(merged);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${roll}_${activeSource}_recording.webm`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      const base = `${roll}_${activeSource}_recording`;
+      let part = 1;
+      let sink = createBlobSink("video/webm");
+      const finishFile = async () => {
+        const blob = await sink.close();
+        if (blob && blob.size > 0) triggerDownload(blob, part === 1 ? `${base}.webm` : `${base}_part${part}.webm`);
+      };
+      const res = await joinPieces({
+        timeline,
+        fetcher: createPieceFetcher({ keys: timeline.pieces.map((p) => p.key) }),
+        write: sink.write,
+        nextFile: async () => {
+          await finishFile();
+          part += 1;
+          sink = createBlobSink("video/webm");
+        },
+        onProgress: (done, total) => setMergeMsg(`Preparing full video… ${Math.round((done / total) * 100)}%`),
+      });
+      if (res.bytes === 0) throw new Error("no piece of this recording could be downloaded");
+      await finishFile();
+      setSaveMissing(res.missing);
       setMergeMsg(null);
     } catch (err) {
+      setMergeMsg(null);
       setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
   };
+
+  const openReport = async () => {
+    if (!artifacts.reportKey) return;
+    const url = await getArtifactObjectUrl(artifacts.reportKey, LINK_TTL_SEC);
+    if (url) window.open(url, "_blank", "noreferrer");
+  };
+
+  const playerError = player?.error ?? null;
+  const buffering = partMode && hasVideo && !loadError && !playerError && (player?.loaded ?? 0) === 0 && !joinedUrl;
+  const missing = player?.missing ?? [];
 
   return (
     <div className="space-y-4">
@@ -483,15 +391,14 @@ export default function RecordingReviewer({
         {artifacts.status === "loading" && (
           <p className="font-mono text-[10px] uppercase tracking-widest text-paper/60">Loading recording…</p>
         )}
-        {artifacts.rebuilt && (
+        {partMode && (
           <span className="absolute left-3 top-3 z-10 border border-amber/40 bg-ink/70 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-amber">
             Full exam recording · {activeSource === "screen" ? "Screen" : "Camera"}
           </span>
         )}
-        {artifacts.status !== "loading" && videoSrc && (
+        {artifacts.status === "ready" && hasVideo && (
           <video
-            ref={videoRef}
-            src={videoSrc}
+            ref={attachVideo}
             poster={artifacts.posterUrl ?? undefined}
             controls
             playsInline
@@ -502,8 +409,8 @@ export default function RecordingReviewer({
               const d = el.duration;
               if (Number.isFinite(d) && d > 0) {
                 recordDuration(d);
-              } else {
-                // MediaRecorder .webm chunks often ship without a duration
+              } else if (!partMode) {
+                // MediaRecorder .webm files often ship without a duration
                 // header (duration = NaN/Infinity). Probe once: seek to a huge
                 // time — the browser clamps to the real end and fires
                 // durationchange with a finite value, giving us the total for
@@ -513,8 +420,7 @@ export default function RecordingReviewer({
                   if (probed || !Number.isFinite(el.duration) || el.duration <= 0) return;
                   probed = true;
                   el.removeEventListener("durationchange", onDur);
-                  const real = el.duration;
-                  recordDuration(real);
+                  recordDuration(el.duration);
                   // The probe seek landed at the end — rewind to the start.
                   el.currentTime = 0;
                 };
@@ -534,23 +440,23 @@ export default function RecordingReviewer({
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onEnded={() => setPlaying(false)}
-            onError={() => {
-              if (partMode && !forceBlob) setForceBlob(true);
-              else setLoadError(true);
+            onError={(e) => {
+              if (attempt < 2) {
+                resumeAt.current = e.currentTarget.currentTime || resumeAt.current;
+                setAttempt((a) => a + 1);
+              } else {
+                setLoadError(true);
+              }
             }}
           />
         )}
-        {artifacts.status === "ready" && !videoSrc && !loadError && (
-          <p className={`px-6 text-center font-mono text-[10px] uppercase tracking-widest ${stitched.error ? "text-alert" : "text-paper/60"}`}>
-            {partMode
-              ? stitched.error ?? `Preparing full video… ${preparedPct}%`
-              : "No playable recording found"}
-          </p>
-        )}
-        {partMode && videoSrc && !stitched.done && !stitched.error && (
+        {buffering && (
           <span className="absolute bottom-14 left-3 z-10 bg-ink/70 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-paper/80">
-            Loading full video · {preparedPct}%
+            {needsFile ? "Preparing full video…" : "Loading video…"}
           </span>
+        )}
+        {artifacts.status === "ready" && !hasVideo && (
+          <p className="px-6 text-center font-mono text-[10px] uppercase tracking-widest text-paper/60">Loading recording…</p>
         )}
         {artifacts.status === "empty" && (
           <div className="flex flex-col items-center px-6 text-center">
@@ -569,21 +475,23 @@ export default function RecordingReviewer({
             Could not read the recording from secure storage.
           </p>
         )}
-        {loadError && videoSrc && (
+        {(loadError || playerError) && hasVideo && (
           <div className="absolute inset-0 flex items-center justify-center bg-ink/85 px-6 text-center">
             <p className="font-mono text-[10px] uppercase tracking-widest text-alert">
               {partMode
-                ? "The full video could not be played here. Use Download full video below to watch it."
+                ? `The full video could not be played here${playerError ? ` (${playerError})` : ""}. Use Download full video below to watch it.`
                 : "Recording could not be played — it may still be uploading."}
             </p>
           </div>
         )}
 
         <span className="absolute right-2 top-2 bg-ink/75 px-2 py-1 font-mono text-[9px] uppercase text-paper">
-          {videoSrc ? `REC · ${clock(current)}${visibleDuration ? ` / ${clock(visibleDuration)}` : ""}` : "NO RECORDING"}
+          {hasVideo ? `REC · ${clock(current)}${visibleDuration ? ` / ${clock(visibleDuration)}` : ""}` : "NO RECORDING"}
         </span>
         {playing && <span className="absolute left-2 top-2 h-2 w-2 animate-pulse rounded-none bg-alert" />}
       </div>
+
+      {partMode && <MissingList missing={missing} label={activeSource === "screen" ? "screen recording" : "camera recording"} />}
 
       {/* Seek bar with RED violation markers */}
       <div className="space-y-2">
@@ -602,7 +510,6 @@ export default function RecordingReviewer({
             style={{ width: visibleDuration ? `${Math.min(100, (current / visibleDuration) * 100)}%` : "0%" }}
           />
           {markers.map((m) => {
-            // Calculate marker position - use available duration or estimate from marker position
             const d = visibleDuration;
             const pct = d && d > 0 ? Math.min(99.5, Math.max(0, (m.seconds / d) * 100)) : null;
             // If we can't calculate position, distribute markers evenly across the bar
@@ -658,8 +565,9 @@ export default function RecordingReviewer({
         <p className="font-mono text-[10px] text-ink-soft">{mergeMsg}</p>
       )}
       {saveError && (
-        <p className="font-mono text-[10px] text-alert">Could not download full video — {saveError}. The video above still plays.</p>
+        <p className="font-mono text-[10px] text-alert">Could not download full video — {saveError}.</p>
       )}
+      {saveMissing.length > 0 && <MissingList missing={saveMissing} label="downloaded video" />}
 
       {/* Violation log with jump buttons */}
       <div>
@@ -718,9 +626,10 @@ export default function RecordingReviewer({
           </div>
           <div className="mt-2 flex gap-1.5 overflow-x-auto pb-2" style={{ scrollbarWidth: "thin" }}>
             {artifacts.screenshotTimelineUrls.map((snap, i) => {
-              // Compute the relative offset from the first snapshot
-              const firstTs = artifacts.screenshotTimelineUrls[0]?.timestamp ?? snap.timestamp;
-              const offsetSec = Math.round((snap.timestamp - firstTs) / 1000);
+              // Place the frame on the recording's timeline by wall-clock time
+              // (or relative to the first frame for older recordings).
+              const firstTs = originMs ?? artifacts.screenshotTimelineUrls[0]?.timestamp ?? snap.timestamp;
+              const offsetSec = Math.max(0, Math.round((snap.timestamp - firstTs) / 1000));
               
               // Find if any violation occurred near this snapshot (+/- 1.5 seconds)
               const nearbyViolations = markers.filter(m => Math.abs(m.seconds - offsetSec) <= 1.5);
@@ -760,7 +669,7 @@ export default function RecordingReviewer({
       )}
 
       {/* Violation snapshots + report */}
-      {(artifacts.snapshotUrls.length > 0 || artifacts.reportUrl) && (
+      {(artifacts.snapshotUrls.length > 0 || artifacts.reportKey) && (
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Evidence</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -769,15 +678,13 @@ export default function RecordingReviewer({
                 <img src={u} alt={`flagged frame ${i + 1}`} className="h-16 w-24 object-cover" />
               </a>
             ))}
-            {artifacts.reportUrl && (
-              <a
-                href={artifacts.reportUrl}
-                target="_blank"
-                rel="noreferrer"
+            {artifacts.reportKey && (
+              <button
+                onClick={() => void openReport()}
                 className="border border-forest bg-forest/5 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-forest hover:bg-forest/10"
               >
                 <FiDownload aria-hidden /> Open PDF report
-              </a>
+              </button>
             )}
           </div>
         </div>

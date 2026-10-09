@@ -65,7 +65,8 @@ import useConnectionLost from "@/features/student/hooks/useConnectionLost";
 import useConnectionState from "@/features/student/hooks/useConnectionState";
 import ConnectionBadge from "@/shared/components/ConnectionBadge";
 import { RECORDING_BITRATE } from "@/shared/services/lowBandwidth";
-import { startPartUploads, type PartUploader } from "@/shared/services/recordingParts";
+import { openPartUploads, recordInto, startPartUploads, type PartUploader } from "@/shared/services/recordingParts";
+import { secureExamEvidence } from "@/shared/services/submitEvidence";
 import type { LinkQuality } from "@/features/proctoring/services/proctor";
 import { clearPending, planResume, readPending, resumeSection, saveOrQueue, writePending, type ResumePlan } from "@/features/student/domain/resume";
 import useCurrentProfile from "@/features/auth/hooks/useCurrentProfile";
@@ -253,6 +254,10 @@ function StudentExamSession() {
   // (console only). The student UI deliberately does NOT show storage details:
   // candidates should never see infrastructure names like "Cloudflare".
   const [artifactStatus, setArtifactStatus] = useState<{ state: "uploading" | "stored" | "partial" | "failed"; detail?: string } | null>(null);
+  // After submit: recording pieces still on the device. The kiosk never exits
+  // while any remain.
+  const [piecesLeft, setPiecesLeft] = useState(0);
+  const [piecesLanded, setPiecesLanded] = useState(false);
   // True when the final submitAttempt write failed (answers stayed local and
   // will retry on reconnect) — the submitted screen warns instead of faking it.
   const [submitFailed, setSubmitFailed] = useState(false);
@@ -291,7 +296,7 @@ function StudentExamSession() {
   });
 
   // Screen recording runs separately from the webcam snapshot timeline.
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const examRecordingRef = useRef<{ stop: () => void } | null>(null);
   const recorderOnScreenRef = useRef(false);
   const submitStartedRef = useRef(false);
   // In-progress attempt found on open: restored answers are applied at once,
@@ -310,10 +315,11 @@ function StudentExamSession() {
   lowBandwidthRef.current = lowBandwidth;
   // Recording pieces are the only stored copy of the exam video: every 10 s
   // chunk goes to the device's disk outbox and uploads to R2 as
-  // parts/exam_<seq>.webm (see shared/services/recordingParts.ts). Nothing
-  // accumulates in memory and no merged file is uploaded at submit — review
-  // stitches the pieces. A failed piece stays on disk and retries; on a weak
-  // link uploads pause until it recovers.
+  // parts/exam_<seq>_<session>.webm (see shared/services/recordingParts.ts).
+  // Nothing accumulates in memory and no merged file is uploaded at submit —
+  // review joins the pieces. A failed piece stays on disk and retries; on a
+  // weak link uploads pause until it recovers. Unmounting releases the
+  // uploader, which keeps going until nothing is left on the device.
   const partUploaderRef = useRef<PartUploader | null>(null);
   const partUploader = (): PartUploader | null => {
     if (!supabaseConfigured || !EXAM_ID || !STUDENT_ROLL) return null;
@@ -333,17 +339,18 @@ function StudentExamSession() {
    * Start (or restart) the exam MediaRecorder on the given stream. Called once
    * at exam start and again if the screen-share track dies mid-exam — a dead
    * display track keeps producing BLACK frames, so we fail over to the live
-   * camera stream instead of recording a black video. WebM chunks from both
-   * sessions concatenate into one continuous timeline (the crash-part rebuild
-   * in RecordingReview works the same way), so the merged video stays intact.
+   * camera stream instead of recording a black video. Each recorder is its own
+   * session (its pieces carry its start time); review and export join the
+   * sessions into one timeline.
    */
   function startExamRecorder(stream: MediaStream) {
     try {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-        // stop() emits the final chunk (last real frames) as a piece
-        // before the new recorder starts.
-        mediaRecorderRef.current.stop();
-      }
+      // stop() emits the final chunk (last real frames) as a piece of the
+      // old session before the new recorder starts its own session.
+      examRecordingRef.current?.stop();
+      examRecordingRef.current = null;
+      const parts = partUploader();
+      if (!parts) return;
       const mime =
         [
           "video/webm;codecs=vp9,opus",
@@ -353,12 +360,7 @@ function StudentExamSession() {
         ].find((t) => MediaRecorder.isTypeSupported(t)) || "";
       const bitrate = recorderOnScreenRef.current ? RECORDING_BITRATE.screen : RECORDING_BITRATE.camera;
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: bitrate } : { videoBitsPerSecond: bitrate });
-      mr.ondataavailable = (e) => {
-        if (e.data.size <= 0) return;
-        partUploader()?.enqueue(e.data);
-      };
-      mr.start(10_000);
-      mediaRecorderRef.current = mr;
+      examRecordingRef.current = recordInto(mr, parts, 10_000);
     } catch (e) {
       console.warn("Failed to start MediaRecorder", e);
     }
@@ -389,7 +391,7 @@ function StudentExamSession() {
     if (recorderOnScreenRef.current) {
       recorderOnScreenRef.current = false;
       if (camLive) startExamRecorder(cam);
-      else if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") mediaRecorderRef.current.stop();
+      else examRecordingRef.current?.stop();
     }
     // Point the screenshot frame source at the camera too (it was the screen).
     const el = hiddenVideoRef.current;
@@ -804,9 +806,7 @@ function StudentExamSession() {
     accessStreamRef.current?.getTracks().forEach((t) => t.stop());
     cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
     screenStreamRef.current?.getTracks().forEach((t) => t.stop());
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
+    examRecordingRef.current?.stop();
   }, []);
 
   // Eagerly create the attempt as soon as the student is identified (e.g. during access check),
@@ -1209,16 +1209,20 @@ function StudentExamSession() {
       confirmTimer = setTimeout(doExit, 800);
     }
 
-    // Hard timeout so the student is never trapped. While the full recording
-    // and PDF are still uploading allow up to 2 minutes; once that settles
-    // (stored / partial / failed) exit after 30 s.
+    // Recording pieces still on the device: never exit; the screen shows
+    // what is left and the uploads keep retrying on any link.
+    if (!piecesLanded) return () => clearTimeout(confirmTimer);
+
+    // Hard timeout so the student is never trapped once the recording has
+    // landed. While the snapshots and PDF are still uploading allow up to 2
+    // minutes; once that settles (stored / partial / failed) exit after 30 s.
     const timeoutTimer = setTimeout(doExit, artifactStatus?.state === "uploading" ? 120_000 : 30_000);
 
     return () => {
       clearTimeout(confirmTimer);
       clearTimeout(timeoutTimer);
     };
-  }, [step, submitFailed, artifactStatus?.state]);
+  }, [step, submitFailed, artifactStatus?.state, piecesLanded]);
 
   // ── Authoritative violation count (student↔teacher parity) ────────────────
   // The local `violations` list counts ONLY what this browser flagged. The
@@ -1516,9 +1520,8 @@ function StudentExamSession() {
     // Tear down the optional phone desk-monitor session before evidence upload.
     setEndMonitor(true);
     if (isTauri()) void invoke("set_window_sharing", { allow: false }).catch(() => {});
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
+    examRecordingRef.current?.stop();
+    examRecordingRef.current = null;
     setArtifactStatus({ state: "uploading", detail: "Securing your exam recording…" });
     // Stop sampling immediately, but keep uploading queued frames. The exit
     // flow waits for this promise as well as the recording, so the tail of a
@@ -1560,58 +1563,45 @@ function StudentExamSession() {
 
     // Finish the exam evidence: the remaining recording pieces, violation
     // snapshots and the PDF — all private storage. The pieces ARE the
-    // recording; no merged copy is uploaded. The successful status enables
-    // Tauri auto-exit only after every piece, frame and the PDF have landed.
+    // recording; no merged copy is uploaded. Camera and screen pieces keep
+    // uploading on any link until none is left on the device; the kiosk does
+    // not exit before that. "Secured" needs every piece, frame and the PDF.
     void (async () => {
       try {
-        // 1. Give the recorder a moment to emit its final chunk. The full video
-        //    and PDF go first: the kiosk closes shortly after submit, and the
-        //    snapshot outbox can take minutes on a slow network (it keeps
-        //    retrying in the background and survives a restart).
-        await new Promise((r) => setTimeout(r, 400));
-        const parts = partUploader();
-        const partsFlush = parts ? parts.flush() : Promise.resolve(true);
-        const partsSettled = Promise.race([
-          partsFlush,
-          new Promise<boolean>((r) => setTimeout(() => r(false), 20_000)),
-        ]);
-        const snapshotsSettled = Promise.race([
-          snapshotsStored,
-          new Promise<boolean>((r) => setTimeout(() => r(false), 15_000)),
-        ]);
-        const result = await uploadExamRecords({
-          examId: EXAM_ID,
-          examName: examNameRef.current,
-          roll: STUDENT_ROLL,
-          studentName: studentName,
-          violationSnapshots: violationSnapshotsRef.current,
-          durationSec: Math.max(0, Math.round(durationMin * 60 - secondsLeft)),
-          startedAt: examStartedAtRef.current ? new Date(examStartedAtRef.current).toISOString() : null,
-          violations: attemptIdRef.current
-            ? await (await import("@/shared/data/examApi")).listAttemptViolations(attemptIdRef.current).then((events) =>
-                (events ?? []).map((v) => ({ ...v, type: v.violation_type })),
-              ).catch(() => undefined)
-            : undefined,
-        });
-        console.log("[StudentExam] artifacts stored:", result);
-        const [allSnapshotsStored, allPartsStored] = await Promise.all([snapshotsSettled, partsSettled]);
-        // Tell the submitted screen what actually landed so the student (and
-        // invigilator) can see storage worked instead of silently losing a
-        // recording.
-        if (result.pdfKey && allSnapshotsStored && allPartsStored) {
-          setArtifactStatus({ state: "stored", detail: "Exam recording secured." });
-        } else {
-          console.warn("[StudentExam] exam evidence is incomplete or pending upload");
-          setArtifactStatus({ state: "partial", detail: "Some exam evidence is missing or still pending upload. Please inform your invigilator before closing the app." });
-          // Pieces left on the device keep retrying; upgrade once they land.
-          if (result.pdfKey && allSnapshotsStored && parts) {
-            void partsFlush.then(async (done) => {
-              if (done || await parts.flush()) {
-                setArtifactStatus({ state: "stored", detail: "Exam recording secured." });
-              }
+        const camera = partUploader();
+        const screen = supabaseConfigured && EXAM_ID && STUDENT_ROLL
+          ? openPartUploads({ folder: storageFolderSegment(EXAM_ID, examNameRef.current), owner: STUDENT_ROLL, family: "screen" })
+          : null;
+        const outcome = await secureExamEvidence({
+          camera,
+          screen,
+          violationSnapshotCount: violationSnapshotsRef.current.length,
+          snapshots: snapshotsStored,
+          onPiecesLeft: setPiecesLeft,
+          onPiecesLanded: () => setPiecesLanded(true),
+          uploadRecords: async () => {
+            const result = await uploadExamRecords({
+              examId: EXAM_ID,
+              examName: examNameRef.current,
+              roll: STUDENT_ROLL,
+              studentName: studentName,
+              violationSnapshots: violationSnapshotsRef.current,
+              durationSec: Math.max(0, Math.round(durationMin * 60 - secondsLeft)),
+              startedAt: examStartedAtRef.current ? new Date(examStartedAtRef.current).toISOString() : null,
+              violations: attemptIdRef.current
+                ? await (await import("@/shared/data/examApi")).listAttemptViolations(attemptIdRef.current).then((events) =>
+                    (events ?? []).map((v) => ({ ...v, type: v.violation_type })),
+                  ).catch(() => undefined)
+                : undefined,
             });
-          }
-        }
+            console.log("[StudentExam] artifacts stored:", result);
+            return result;
+          },
+        });
+        // Releases the screen uploader if this opened it; the drain already finished.
+        screen?.stop();
+        if (outcome.state !== "stored") console.warn("[StudentExam] exam evidence is incomplete:", outcome.detail);
+        setArtifactStatus({ state: outcome.state, detail: outcome.detail });
       } catch (err) {
         console.error("Failed to upload recording:", err);
         setArtifactStatus({ state: "failed", detail: "Recording upload failed." });
@@ -1866,6 +1856,7 @@ function StudentExamSession() {
         attemptId={attemptId ?? null}
         uploadState={artifactStatus?.state}
         uploadDetail={artifactStatus?.detail}
+        recordingPiecesLeft={piecesLanded ? 0 : Math.max(1, piecesLeft)}
         submitFailed={submitFailed}
         report={submitGrade && showInstantReport ? submitGrade : null}
         feedbackStudentId={examSettings.skipFeedback === true ? null : studentIdRef.current}

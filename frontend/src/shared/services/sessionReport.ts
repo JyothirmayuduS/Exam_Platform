@@ -13,7 +13,7 @@
 
 import { jsPDF } from "jspdf";
 import { listStudentArtifacts, getArtifactBlob, getArtifactUrls } from "@/shared/services/examStorage";
-import { PART_SECONDS, PIECE_FAMILIES, sortedParts } from "@/shared/services/recordingParts";
+import { PART_SECONDS, PIECE_FAMILIES, pieceTimeline, sortedParts } from "@/shared/services/recordingParts";
 
 export type ReportRow = {
   name: string;
@@ -419,7 +419,7 @@ async function drawAudioInventory(doc: jsPDF, row: ReportRow, examId: string): P
     const last = pieces[pieces.length - 1].lastModified;
     rows.push({
       title: `${f.title} recording — full exam`,
-      detail: `≈ ${Math.max(1, Math.round((pieces.length * PART_SECONDS) / 60))} min · ${(bytes / 1024 / 1024).toFixed(1)} MB${last ? ` · finished ${new Date(last).toLocaleString()}` : ""}`,
+      detail: `≈ ${Math.max(1, Math.round((pieceTimeline(pieces).durationSec || pieces.length * PART_SECONDS) / 60))} min · ${(bytes / 1024 / 1024).toFixed(1)} MB${last ? ` · finished ${new Date(last).toLocaleString()}` : ""}`,
     });
   }
   for (const a of all) {
