@@ -45,6 +45,9 @@ vi.mock("@/features/auth/pages/PasswordRecover", () => ({ default: () => <div>RE
 vi.mock("@/features/auth/components/ProtectedRoute", () => ({
   default: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
+vi.mock("@/features/student/components/RegistrationPhotoGate", () => ({
+  default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 vi.mock("@/features/student/pages/StudentExams", () => ({ default: () => <div>STUDENT EXAMS PAGE</div> }));
 vi.mock("@/features/student/pages/StudentHome", () => ({ default: () => <div>STUDENT HOME PAGE</div> }));
 vi.mock("@/features/student/pages/StudentExam", () => ({ default: () => <div>STUDENT EXAM PAGE</div> }));

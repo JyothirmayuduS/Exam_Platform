@@ -43,6 +43,7 @@ export type AdminOverview = {
     unlinked: { id: string; email: string | null; created_at: string; last_sign_in_at: string | null }[];
     missingAppRole: { id: string; email: string | null; kind: "staff" | "student" | "unlinked" }[];
     studentsWithoutLogin: number;
+    photos: { taken: number; missingTotal: number; missing: StudentRef[] };
   };
   versions: { latest: string | null; inUse: { version: string; attempts: number; students: number; lastSeen: string | null; outdated: boolean }[] };
   exams: (ExamRef & { status: string | null; phase: Phase; scheduled_at: string | null; settings: Record<string, unknown> })[];
@@ -83,6 +84,7 @@ const ERRORS: Record<string, string> = {
   sign_in_required: "Sign in again to use the admin console.",
   admins_only: "This account is not an admin.",
   flag_not_found: "That flag no longer exists.",
+  photo_not_found: "That student has no registration photo.",
   server_error: "The admin service failed. Try again.",
 };
 
@@ -107,4 +109,6 @@ export const loadAdminUploads = () => call<AdminUploads>({ op: "uploads" });
 export const loadAdminAudit = (f: { actorId?: string; examId?: string; action?: string; limit?: number }) =>
   call<{ entries: AdminAuditEntry[] }>({ op: "audit", ...f });
 export const resendMoodleGrades = (examId?: string) => call<{ ok: true; queued: number }>({ op: "resend_moodle", examId });
+export const loadRegistrationPhotos = () => call<{ photos: { student: StudentRef; capturedAt: string; url: string | null }[] }>({ op: "photos" });
+export const resetRegistrationPhoto = (studentId: string) => call<{ ok: true }>({ op: "reset_photo", studentId });
 export const reviewFlag = (violationId: string, note?: string) => call<{ ok: true }>({ op: "review_flag", violationId, note });

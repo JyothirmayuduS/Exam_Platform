@@ -7,6 +7,8 @@
 // POST { op: "audit", actorId?, examId?, action?, limit? }
 // POST { op: "resend_moodle", examId? }         queue failed Moodle grades for the next retry run
 // POST { op: "review_flag", violationId, note? }
+// POST { op: "photos" }                         registration photos taken, with short-lived view links
+// POST { op: "reset_photo", studentId }         clear a registration photo so the student retakes it
 import {
   connectionOf, flagsAwaitingReview, gradePostState, kioskUploads, liveCounts, phaseOf, readiness, releaseVersion,
   storageByExam, unreleased, versionsInUse,
@@ -55,7 +57,14 @@ export interface AdminStore {
   resendGrades(examId: string | null, nowIso: string): Promise<number>;
   reviewFlag(violationId: string, by: string, note: string | null): Promise<{ exam_id: string | null } | null>;
   writeAudit(entry: { actorId: string; action: string; targetType: string; targetId: string; meta: Record<string, unknown> }): Promise<void>;
+  allStudents(): Promise<StudentRef[]>;
+  registrationPhotos(): Promise<RegistrationPhoto[]>;
+  photoUrls(paths: string[]): Promise<Map<string, string>>;
+  /** Deletes the row and file; false when the student had no photo. */
+  resetPhoto(studentId: string): Promise<boolean>;
 }
+
+export type RegistrationPhoto = { student_id: string; storage_path: string; captured_at: string };
 
 export type HealthCheck = { key: string; label: string; ok: boolean; detail: string; ms: number | null };
 export type Release = { tag: string; version: string | null; publishedAt: string | null; url: string | null };
@@ -87,9 +96,12 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
   const { store, probes } = deps;
 
   async function overview(now: number) {
-    const [exams, staff, attempts, studentCounts, status] = await Promise.all([
+    const [exams, staff, attempts, studentCounts, status, everyone, photos] = await Promise.all([
       store.exams(), store.staff(), store.attempts(new Date(now - 30 * DAY).toISOString()), store.studentCounts(), store.systemStatus(),
+      store.allStudents(), store.registrationPhotos(),
     ]);
+    const withPhoto = new Set(photos.map((p) => p.student_id));
+    const noPhoto = everyone.filter((s) => !withPhoto.has(s.id)).sort((a, b) => a.roll.localeCompare(b.roll));
     const ownerName = new Map(staff.map((s) => [s.auth_id, s.name]));
     const ref = (e: AdminExam): ExamRef => ({ id: e.id, name: e.name, batch: e.batch, owner: e.created_by ? ownerName.get(e.created_by) ?? null : null });
     const byId = new Map(exams.map((e) => [e.id, e]));
@@ -210,6 +222,7 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
         unlinked: status.unlinked_accounts,
         missingAppRole: status.missing_app_role,
         studentsWithoutLogin: studentCounts.withoutLogin,
+        photos: { taken: everyone.length - noPhoto.length, missingTotal: noPhoto.length, missing: noPhoto.slice(0, 500) },
       },
       versions: { latest: release?.version ?? null, inUse: versionsInUse(attempts, release?.version ?? null) },
       exams: exams.map((e) => ({ ...ref(e), status: e.status, phase: phase.get(e.id), scheduled_at: e.scheduled_at, settings: e.settings ?? {} })),
@@ -322,6 +335,22 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
         const flag = await store.reviewFlag(id, actor.authId, note);
         if (!flag) return json({ error: "flag_not_found" }, 404);
         await store.writeAudit({ actorId: actor.authId, action: "admin.flag_reviewed", targetType: "violation", targetId: id, meta: { exam_id: flag.exam_id, note } });
+        return json({ ok: true });
+      }
+
+      if (op === "photos") {
+        const photos = (await store.registrationPhotos()).sort((a, b) => b.captured_at.localeCompare(a.captured_at)).slice(0, 500);
+        const [students, urls] = await Promise.all([store.students(photos.map((p) => p.student_id)), store.photoUrls(photos.map((p) => p.storage_path))]);
+        return json({
+          photos: photos.map((p) => ({ student: students.get(p.student_id) ?? { id: p.student_id, roll: "", full_name: null }, capturedAt: p.captured_at, url: urls.get(p.storage_path) ?? null })),
+        });
+      }
+
+      if (op === "reset_photo") {
+        const id = text(body.studentId);
+        if (!id || !UUID.test(id)) return json({ error: "bad_student" }, 400);
+        if (!(await store.resetPhoto(id))) return json({ error: "photo_not_found" }, 404);
+        await store.writeAudit({ actorId: actor.authId, action: "admin.photo_reset", targetType: "student", targetId: id, meta: {} });
         return json({ ok: true });
       }
 

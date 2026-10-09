@@ -83,7 +83,7 @@ export default function AdminDashboard() {
             {section === "overview" && <AdminLive data={d} />}
             {section === "results" && <AdminResults data={d} notify={notify} onChanged={refresh} />}
             {section === "moodle" && <AdminMoodle data={d} notify={notify} onChanged={refresh} />}
-            {section === "accounts" && <AdminAccounts data={d} />}
+            {section === "accounts" && <AdminAccounts data={d} notify={notify} onChanged={refresh} />}
             {section === "storage" && <AdminData data={d} />}
             {section === "system" && <AdminSystem />}
             {section === "audit" && <AdminAudit data={d} />}

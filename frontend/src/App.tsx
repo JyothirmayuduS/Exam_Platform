@@ -21,6 +21,7 @@ import ForgotPassword from "@/features/auth/pages/ForgotPassword";
 import PasswordRecover from "@/features/auth/pages/PasswordRecover";
 import LtiLaunch from "@/features/auth/pages/LtiLaunch";
 import ProtectedRoute from "@/features/auth/components/ProtectedRoute";
+import RegistrationPhotoGate from "@/features/student/components/RegistrationPhotoGate";
 import SystemCheckPage from "@/shared/components/SystemCheckPage";
 import OfflineIndicator from "@/shared/components/OfflineIndicator";
 import LockdownNotice from "@/shared/components/LockdownNotice";
@@ -59,15 +60,15 @@ export default function App() {
         <Route path="/lti/launch" element={inKiosk ? studentOnly : <LtiLaunch />} />
       
       {/* Student Routes */}
-      <Route path="/student" element={<ProtectedRoute allowedRole="student"><StudentHome /></ProtectedRoute>} />
-      <Route path="/student/exams" element={<ProtectedRoute allowedRole="student"><StudentExams /></ProtectedRoute>} />
-      <Route path="/student/exams/:examId" element={<ProtectedRoute allowedRole="student"><StudentExamDetail /></ProtectedRoute>} />
+      <Route path="/student" element={<ProtectedRoute allowedRole="student"><RegistrationPhotoGate><StudentHome /></RegistrationPhotoGate></ProtectedRoute>} />
+      <Route path="/student/exams" element={<ProtectedRoute allowedRole="student"><RegistrationPhotoGate><StudentExams /></RegistrationPhotoGate></ProtectedRoute>} />
+      <Route path="/student/exams/:examId" element={<ProtectedRoute allowedRole="student"><RegistrationPhotoGate><StudentExamDetail /></RegistrationPhotoGate></ProtectedRoute>} />
       <Route path="/student/exams/:examId/practice" element={<ProtectedRoute allowedRole="student"><PracticeModeExam /></ProtectedRoute>} />
       <Route path="/student/exams/:examId/system-check" element={<SystemCheckPage />} />
       <Route path="/student/results" element={<ProtectedRoute allowedRole="student"><StudentResults /></ProtectedRoute>} />
       <Route path="/student/results/:resultId" element={<ProtectedRoute allowedRole="student"><StudentResultDetail /></ProtectedRoute>} />
       <Route path="/student/help" element={<ProtectedRoute allowedRole="student"><StudentHelp /></ProtectedRoute>} />
-      <Route path="/student/exam" element={<ProtectedRoute allowedRole="student"><StudentExam /></ProtectedRoute>} />
+      <Route path="/student/exam" element={<ProtectedRoute allowedRole="student"><RegistrationPhotoGate><StudentExam /></RegistrationPhotoGate></ProtectedRoute>} />
       <Route path="/system-check" element={<SystemCheckPage />} />
       <Route path="/student/practice" element={<ProtectedRoute allowedRole="student"><PracticeModeExam /></ProtectedRoute>} />
       <Route path="/mobile-upload/:token" element={<MobileUpload />} />

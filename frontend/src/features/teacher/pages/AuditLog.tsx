@@ -37,6 +37,8 @@ const ACTION_LABEL: Record<string, string> = {
   "lti.student_linked": "Confirmed a Moodle student",
   "admin.moodle_resend": "Resent failed Moodle grades",
   "admin.flag_reviewed": "Reviewed a proctoring flag",
+  "admin.photo_reset": "Deleted a registration photo for a retake",
+  "student.photo_registered": "Took registration photo",
 };
 
 export const auditActionLabel = (action: string) => ACTION_LABEL[action] ?? action;

@@ -24,7 +24,9 @@ export type AuditAction =
   | "result.withheld"
   | "result.released_from_hold"
   | "admin.moodle_resend"
-  | "admin.flag_reviewed";
+  | "admin.flag_reviewed"
+  | "admin.photo_reset"
+  | "student.photo_registered";
 
 /** Record one staff action. Resolves the actor from the current session. */
 export async function logAudit(opts: {

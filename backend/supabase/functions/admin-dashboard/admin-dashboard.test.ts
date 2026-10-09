@@ -206,6 +206,7 @@ function makeStore(over: Partial<AdminStore> = {}) {
   const audits: { action: string; targetId: string; meta: Record<string, unknown> }[] = [];
   const resends: (string | null)[] = [];
   const reviews: string[] = [];
+  const photoResets: string[] = [];
   const live = exam({ id: "EX-LIVE", name: "Live exam", scheduled_at: ago(1800), duration_minutes: 120 });
   const soon = exam({ id: "EX-SOON", name: "Tomorrow", scheduled_at: ago(-86400) });
   const done = exam({ id: "EX-DONE", name: "Finished", scheduled_at: ago(86400), duration_minutes: 60 });
@@ -243,9 +244,13 @@ function makeStore(over: Partial<AdminStore> = {}) {
     resendGrades: async (examId) => { resends.push(examId); return 3; },
     reviewFlag: async (id) => { reviews.push(id); return id === "00000000-0000-4000-8000-000000000001" ? { exam_id: "EX-LIVE" } : null; },
     writeAudit: async (e) => { audits.push(e); },
+    allStudents: async () => [{ id: "s2", roll: "21BQ2", full_name: "B" }, { id: "s1", roll: "21BQ1", full_name: "A" }, { id: "s3", roll: "21BQ3", full_name: "C" }],
+    registrationPhotos: async () => [{ student_id: "s3", storage_path: "s3/p.jpg", captured_at: ago(100) }],
+    photoUrls: async (paths) => new Map(paths.map((p) => [p, `https://signed/${p}`])),
+    resetPhoto: async (id) => { photoResets.push(id); return id === "00000000-0000-4000-8000-000000000003"; },
     ...over,
   };
-  return { store, audits, resends, reviews };
+  return { store, audits, resends, reviews, photoResets };
 }
 
 const probes: AdminProbes = {
@@ -341,6 +346,29 @@ describe("admin-dashboard endpoint", () => {
     expect(seen).toEqual({ actorId: "00000000-0000-4000-8000-0000000000aa", examId: "EX-DONE", action: "result", limit: 200 });
     expect(body.entries.map((e: { actor_name: string }) => e.actor_name)).toEqual(["Admin", "21BQ · stu-9"]);
     expect((await call(store, { op: "audit", examId: "x),or(1.eq.1" })).status).toBe(400);
+  });
+
+  it("lists students without a registration photo, by roll", async () => {
+    const { store } = makeStore();
+    const { body } = await call(store, { op: "overview" });
+    expect(body.accounts.photos).toEqual({ taken: 1, missingTotal: 2, missing: [{ id: "s1", roll: "21BQ1", full_name: "A" }, { id: "s2", roll: "21BQ2", full_name: "B" }] });
+  });
+
+  it("lists taken photos with view links", async () => {
+    const { store } = makeStore();
+    const { body } = await call(store, { op: "photos" });
+    expect(body.photos).toEqual([{ student: { id: "s3", roll: "R-s3", full_name: "Name s3" }, capturedAt: ago(100), url: "https://signed/s3/p.jpg" }]);
+  });
+
+  it("clears a registration photo for a retake and logs it", async () => {
+    const { store, audits, photoResets } = makeStore();
+    expect((await call(store, { op: "reset_photo", studentId: "00000000-0000-4000-8000-000000000003" })).body).toEqual({ ok: true });
+    expect(audits[0]).toMatchObject({ action: "admin.photo_reset", targetId: "00000000-0000-4000-8000-000000000003" });
+    expect((await call(store, { op: "reset_photo", studentId: "00000000-0000-4000-8000-000000000004" })).status).toBe(404);
+    expect((await call(store, { op: "reset_photo", studentId: "s1" })).status).toBe(400);
+    expect(photoResets).toEqual(["00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004"]);
+    expect((await call(store, { op: "reset_photo", studentId: "00000000-0000-4000-8000-000000000003" }, "teacher-A")).status).toBe(403);
+    expect(audits).toHaveLength(1);
   });
 
   it("does not record an action whose change failed", async () => {

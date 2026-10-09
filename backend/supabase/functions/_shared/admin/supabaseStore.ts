@@ -2,6 +2,7 @@
 // deno-lint-ignore-file no-explicit-any
 import type { AdminStore, StaffRef, StudentRef } from "./handler.ts";
 import type { AdminAttempt, AdminExam, Flag, GradeTarget } from "./model.ts";
+import { PHOTO_BUCKET } from "../photos/supabaseStore.ts";
 
 type Db = any;
 
@@ -181,6 +182,28 @@ export function supabaseAdminStore(db: Db): AdminStore {
 
     async writeAudit({ actorId, action, targetType, targetId, meta }) {
       must(await db.from("audit_logs").insert({ actor_id: actorId, actor_role: "staff", action, target_type: targetType, target_id: targetId, meta }));
+    },
+
+    async allStudents() {
+      const rows = must(await db.from("students").select("id, roll, full_name").limit(50000)) as any[];
+      return (rows ?? []).map((r): StudentRef => ({ id: String(r.id), roll: r.roll ?? "", full_name: r.full_name ?? null }));
+    },
+
+    async registrationPhotos() {
+      return (must(await db.from("student_photos").select("student_id, storage_path, captured_at").limit(50000)) as any[]) ?? [];
+    },
+
+    async photoUrls(paths) {
+      if (!paths.length) return new Map();
+      const signed = must(await db.storage.from(PHOTO_BUCKET).createSignedUrls(paths, 600)) as any[];
+      return new Map((signed ?? []).filter((s) => s.signedUrl).map((s) => [String(s.path), String(s.signedUrl)]));
+    },
+
+    async resetPhoto(studentId) {
+      const rows = must(await db.from("student_photos").delete().eq("student_id", studentId).select("storage_path")) as any[];
+      if (!rows?.length) return false;
+      await db.storage.from(PHOTO_BUCKET).remove(rows.map((r) => String(r.storage_path)));
+      return true;
     },
   };
 }
