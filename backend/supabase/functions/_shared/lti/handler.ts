@@ -74,6 +74,17 @@ async function body(req: Request): Promise<Record<string, unknown>> {
 
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
+/** Constant-time secret check: both sides are hashed to equal length first. */
+export async function sameSecret(given: string, expected: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([given, expected].map((s) => crypto.subtle.digest("SHA-256", enc.encode(s))));
+  const x = new Uint8Array(a);
+  const y = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
+}
+
 /** A teacher may manage an activity they launched, or any activity in a
  *  Moodle course they launched something from. */
 export function canManage(launches: InstructorLaunch[], link: { id: string | null; platformId: string; contextId: string | null }): boolean {
@@ -195,8 +206,9 @@ export function createLtiHandler(deps: LtiDeps): (req: Request) => Promise<Respo
       await store.savePendingUser(platform.id, l.identity, { id: link.id, contextId: l.contextId });
       return refuse("account_pending", { activity: title });
     }
-    const authUserId = await store.ensureAuthUser(studentId);
-    if (!authUserId) return refuse("no_account");
+    const account = await store.ensureAuthUser(studentId);
+    if ("error" in account) return refuse(account.error);
+    const { authUserId } = account;
     await store.enroll(link.examId, studentId);
     await store.saveGradeTarget({ linkId: link.id, studentId, examId: link.examId, sub: l.identity.sub, lineitem: l.lineitem });
 
@@ -334,7 +346,9 @@ export function createLtiHandler(deps: LtiDeps): (req: Request) => Promise<Respo
       if (route === "session" && req.method === "POST") return await session(req);
       if (route === "jwks" && req.method === "GET") return json({ keys: [(await deps.key()).publicJwk] });
       if (route === "retry" && req.method === "POST") {
-        if (!deps.cronSecret || req.headers.get("x-lti-cron-secret") !== deps.cronSecret) return json({ error: "forbidden" }, 403);
+        if (!deps.cronSecret || !(await sameSecret(req.headers.get("x-lti-cron-secret") ?? "", deps.cronSecret))) {
+          return json({ error: "forbidden" }, 403);
+        }
         return json(await retryDueScores(await scoreDeps()));
       }
       if (TEACHER_ROUTES.has(route) && req.method === "POST") {

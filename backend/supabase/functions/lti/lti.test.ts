@@ -4,7 +4,7 @@
 // using real RS256 keys.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLAIM, INSTRUCTOR, LEARNER, SCORE_SCOPE } from "../_shared/lti/claims.ts";
-import { createLtiHandler } from "../_shared/lti/handler.ts";
+import { createLtiHandler, sameSecret } from "../_shared/lti/handler.ts";
 import { loadToolKey, signJwt, verifyJwt, type Jwk, type ToolKey } from "../_shared/lti/jwt.ts";
 import { postAttemptScore, retryDueScores } from "../_shared/lti/scores.ts";
 import type { GradeTarget, InstructorLaunch, Link, LtiStore, PendingUser, Platform, Ticket } from "../_shared/lti/types.ts";
@@ -27,7 +27,10 @@ const LINEITEM = `${ISS}/mod/lti/services.php/2/lineitems/5/lineitem?type_id=1`;
 const form = { "content-type": "application/x-www-form-urlencoded" };
 
 type Student = { id: string; roll: string; email: string; authId: string | null };
-type Target = { linkId: string; studentId: string; examId: string; sub: string; lineitem: string | null; scoreMaximum: number | null; pendingScore: number | null; attempts: number; nextAttemptAt: number | null; lastScore: number | null };
+type Target = {
+  linkId: string; studentId: string; examId: string; sub: string; lineitem: string | null; scoreMaximum: number | null;
+  pendingScore: number | null; attempts: number; nextAttemptAt: number | null; lastScore: number | null; claim: string | null; claimedUntil: number | null;
+};
 
 function memoryStore(clock: () => number) {
   const s = {
@@ -55,6 +58,7 @@ function memoryStore(clock: () => number) {
   };
   const inScope = (platformId: string, linkId: string | null, contextId: string | null, scope: { linkIds: string[]; contextIds: string[] }) =>
     platformId === s.platform.id && ((!!linkId && scope.linkIds.includes(linkId)) || (!!contextId && scope.contextIds.includes(contextId)));
+  let claimSeq = 0;
   const target = (t: Target): GradeTarget => ({
     linkId: t.linkId, studentId: t.studentId, sub: t.sub, lineitem: t.lineitem!, scoreMaximum: t.scoreMaximum,
     pendingScore: t.pendingScore, attempts: t.attempts, platform: s.platform,
@@ -82,7 +86,12 @@ function memoryStore(clock: () => number) {
     studentLinkedSub: async (_p, studentId) => [...s.ltiUsers.entries()].find(([, id]) => id === studentId)?.[0] ?? null,
     linkStudent: async (_p, sub, studentId) => { s.ltiUsers.set(sub, studentId); },
     createStudent: async (who) => { const st = { id: `stu-${who.roll}`, roll: who.roll, email: who.email ?? "", authId: null }; s.students.push(st); return { id: st.id }; },
-    ensureAuthUser: async (studentId) => { const st = s.students.find((x) => x.id === studentId); if (!st) return null; st.authId ??= `auth-${st.roll}`; return st.authId; },
+    ensureAuthUser: async (studentId) => {
+      const st = s.students.find((x) => x.id === studentId);
+      if (!st) return { error: "no_account" };
+      st.authId ??= `auth-${st.roll}`;
+      return { authUserId: st.authId };
+    },
     savePendingUser: async (platformId, who, link) => {
       const id = `pending-${who.sub}`;
       s.pending.set(id, { id, platformId, sub: who.sub, name: who.name, email: who.email, username: who.username, sourcedId: who.sourcedId, contextId: link.contextId, contextTitle: who.contextTitle, linkId: link.id });
@@ -105,22 +114,46 @@ function memoryStore(clock: () => number) {
     takeTicket: async (hash) => { const t = s.tickets.get(hash) ?? null; s.tickets.delete(hash); return t; },
     sessionTokenHash: async (authUserId) => `magic-${authUserId}`,
     saveGradeTarget: async (t) => {
-      s.targets.set(`${t.linkId}:${t.studentId}`, { ...t, scoreMaximum: null, pendingScore: null, attempts: 0, nextAttemptAt: null, lastScore: null });
+      s.targets.set(`${t.linkId}:${t.studentId}`, { ...t, scoreMaximum: null, pendingScore: null, attempts: 0, nextAttemptAt: null, lastScore: null, claim: null, claimedUntil: null });
     },
-    gradeTargets: async (examId, studentId) => [...s.targets.values()].filter((t) => t.examId === examId && t.studentId === studentId && t.lineitem).map(target),
     setScoreMaximum: async (examId, studentId, max) => {
       for (const t of s.targets.values()) if (t.examId === examId && t.studentId === studentId) t.scoreMaximum = max;
     },
-    scorePosted: async (linkId, studentId, score) => {
-      Object.assign(s.targets.get(`${linkId}:${studentId}`)!, { lastScore: score, pendingScore: null, attempts: 0, nextAttemptAt: null });
+    // Same rules as lti_claim_scores / lti_finish_score.
+    queueScore: async (examId, studentId, q) => {
+      let n = 0;
+      for (const t of s.targets.values()) {
+        if (t.examId !== examId || t.studentId !== studentId || !t.lineitem) continue;
+        Object.assign(t, { pendingScore: q.score, attempts: 0, nextAttemptAt: q.nowMs });
+        if (q.max && q.max > 0) t.scoreMaximum = q.max;
+        n += 1;
+      }
+      return n;
     },
-    scoreQueued: async (linkId, studentId, q) => {
-      const t = s.targets.get(`${linkId}:${studentId}`)!;
-      Object.assign(t, { pendingScore: q.score, attempts: q.attempts, nextAttemptAt: q.nextAttemptAt });
-      if (q.max && q.max > 0) t.scoreMaximum = q.max;
+    claimScores: async (nowMs, o) =>
+      [...s.targets.values()]
+        .filter((t) => t.pendingScore !== null && t.lineitem && t.nextAttemptAt !== null && t.nextAttemptAt <= nowMs
+          && (t.claimedUntil === null || t.claimedUntil < nowMs)
+          && (!o.examId || (t.examId === o.examId && t.studentId === o.studentId)))
+        .sort((a, b) => a.nextAttemptAt! - b.nextAttemptAt!)
+        .slice(0, o.limit)
+        .map((t) => {
+          t.claim = `claim-${++claimSeq}`;
+          t.claimedUntil = nowMs + o.leaseMs;
+          return { ...target(t), pendingScore: t.pendingScore!, claim: t.claim };
+        }),
+    finishScore: async (c, outcome, _nowMs) => {
+      const t = s.targets.get(`${c.linkId}:${c.studentId}`);
+      if (!t || t.claim !== c.claim) return;
+      const same = t.pendingScore === c.pendingScore;
+      if (outcome.ok) {
+        t.lastScore = c.pendingScore;
+        if (same) Object.assign(t, { pendingScore: null, attempts: 0, nextAttemptAt: null });
+      } else if (same) {
+        Object.assign(t, { attempts: outcome.attempts, nextAttemptAt: outcome.nextAttemptAt });
+      }
+      Object.assign(t, { claim: null, claimedUntil: null });
     },
-    dueScorePosts: async (nowMs, limit) =>
-      [...s.targets.values()].filter((t) => t.pendingScore !== null && t.nextAttemptAt !== null && t.nextAttemptAt <= nowMs && t.lineitem).slice(0, limit).map(target),
     attemptScore: async () => null,
     examScores: async (examId) => s.attempts.filter((a) => a.examId === examId).map((a) => ({ studentId: a.studentId, score: a.score })),
   };
@@ -281,6 +314,15 @@ describe("Moodle launch: signing in the right student", () => {
     mem.s.ltiUsers.set("7", "stu-0777");
     const { location } = await launch({ [CLAIM.lis]: { person_sourcedid: "21BQ1A0501" } });
     expect(await (await exchange(fragment(location, "ticket"))).json()).toEqual({ tokenHash: "magic-auth-21BQ1A0777", examId: "EXAM-A" });
+  });
+
+  it("refuses to sign in through an auth account that is not a student account", async () => {
+    mem.store.ensureAuthUser = async () => ({ error: "not_student_account" });
+    const { error, location } = await launch();
+    expect(error).toBe("not_student_account");
+    expect(location.hash).toBe("");
+    expect(mem.s.tickets.size).toBe(0);
+    expect(mem.s.enrollments.size).toBe(0);
   });
 
   it("signs in a waiting student after a teacher of that course confirms them", async () => {
@@ -474,11 +516,115 @@ describe("Moodle grade passback", () => {
     expect(scoreBodies()[0]).toMatchObject({ userId: "7", scoreGiven: 5, scoreMaximum: 6 });
   });
 
+  /** Moodle that holds every score post until `release()` is called. */
+  function slowMoodle(status = 200) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (input) => {
+      if (String(input) === platform.authTokenUrl) return new Response(JSON.stringify({ access_token: "moodle-access" }));
+      await gate;
+      return new Response(null, { status });
+    });
+    return () => release();
+  }
+  const scorePostsStarted = () => fetchMock.mock.calls.filter(([u]) => String(u).includes("/scores")).length;
+  async function until(cond: () => boolean) {
+    for (let i = 0; i < 200 && !cond(); i++) await new Promise((r) => setTimeout(r, 0));
+    expect(cond()).toBe(true);
+  }
+  async function queueFailedScore(score: number) {
+    await launch(ags);
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(new Response("busy", { status: 503 }));
+    expect(await postAttemptScore(deps(), { examId: "EXAM-A", studentId: "stu-0501", score, max: 6 })).toEqual({ posted: 0, queued: 1 });
+    now += 61_000;
+    return mem.s.targets.get("link-rl-1:stu-0501")!;
+  }
+
+  it("posts a queued score once when the scheduler, a submit and a teacher's resend race", async () => {
+    await queueFailedScore(4);
+    mem.s.attempts.push({ studentId: "stu-0501", examId: "EXAM-A", score: 4 });
+    const release = slowMoodle();
+
+    const cronA = retryDueScores(deps());
+    const cronB = retryDueScores(deps());
+    await until(() => scorePostsStarted() === 1);
+    // While that post is in flight, both of these find the row held and leave it queued.
+    expect(await (await asTeacher("auth-A", "resend", { examId: "EXAM-A" })).json()).toEqual({ posted: 0, queued: 1 });
+    expect(await postAttemptScore(deps(), { examId: "EXAM-A", studentId: "stu-0501", score: 4, max: 6 })).toEqual({ posted: 0, queued: 1 });
+    release();
+
+    const results = await Promise.all([cronA, cronB]);
+    expect(results.reduce((n, r) => n + r.posted, 0)).toBe(1);
+    expect(scoreBodies()).toEqual([expect.objectContaining({ scoreGiven: 4 })]);
+    expect(mem.s.targets.get("link-rl-1:stu-0501")).toMatchObject({ pendingScore: null, lastScore: 4, claim: null });
+    expect(await retryDueScores(deps())).toEqual({ posted: 0, queued: 0 });
+    expect(scorePostsStarted()).toBe(1);
+  });
+
+  it("never lets a slow retry clear or overwrite a newer score", async () => {
+    const t = await queueFailedScore(4);
+    const release = slowMoodle();
+
+    const staleRetry = retryDueScores(deps());
+    await until(() => scorePostsStarted() === 1);
+    // A regrade lands while the old score is still on its way to Moodle.
+    expect(await postAttemptScore(deps(), { examId: "EXAM-A", studentId: "stu-0501", score: 5, max: 6 })).toEqual({ posted: 0, queued: 1 });
+    expect(scorePostsStarted()).toBe(1);
+    release();
+    expect(await staleRetry).toEqual({ posted: 1, queued: 0 });
+    expect(t).toMatchObject({ pendingScore: 5, nextAttemptAt: now, claim: null });
+
+    expect(await retryDueScores(deps())).toEqual({ posted: 1, queued: 0 });
+    expect(scoreBodies().map((b) => b.scoreGiven)).toEqual([4, 5]);
+    expect(t).toMatchObject({ pendingScore: null, lastScore: 5 });
+  });
+
+  it("keeps a newer score's schedule when an older retry fails", async () => {
+    const t = await queueFailedScore(4);
+    const release = slowMoodle(503);
+
+    const staleRetry = retryDueScores(deps());
+    await until(() => scorePostsStarted() === 1);
+    await postAttemptScore(deps(), { examId: "EXAM-A", studentId: "stu-0501", score: 5, max: 6 });
+    release();
+    await staleRetry;
+    expect(t).toMatchObject({ pendingScore: 5, attempts: 0, nextAttemptAt: now, claim: null });
+  });
+
+  it("lets another sender take over a claim whose sender died, and ignores the dead sender", async () => {
+    const t = await queueFailedScore(4);
+    const [abandoned] = await mem.store.claimScores(now, { limit: 5, leaseMs: 60_000 });
+    expect(await retryDueScores(deps())).toEqual({ posted: 0, queued: 0 });
+
+    now += 61_000;
+    fetchMock.mockReset();
+    moodleUp();
+    expect(await retryDueScores(deps())).toEqual({ posted: 1, queued: 0 });
+    await postAttemptScore(deps(), { examId: "EXAM-A", studentId: "stu-0501", score: 6, max: 6 });
+    t.claim = "held-by-someone-else";
+    await mem.store.finishScore(abandoned, { ok: true }, now);
+    expect(t).toMatchObject({ lastScore: 6, claim: "held-by-someone-else" });
+  });
+
   it("runs scheduled retries only with the scheduler secret", async () => {
-    const bare = await handler(new Request(`${TOOL}/retry`, { method: "POST" }));
-    expect(bare.status).toBe(403);
-    const ok = await handler(new Request(`${TOOL}/retry`, { method: "POST", headers: { "x-lti-cron-secret": "cron-secret" } }));
-    expect(await ok.json()).toEqual({ posted: 0, queued: 0 });
+    const retry = (secret?: string) =>
+      handler(new Request(`${TOOL}/retry`, { method: "POST", headers: secret === undefined ? {} : { "x-lti-cron-secret": secret } }));
+    expect((await retry()).status).toBe(403);
+    expect((await retry("cron-secreT")).status).toBe(403);
+    expect((await retry("cron-")).status).toBe(403);
+    expect((await retry("cron-secret-and-more")).status).toBe(403);
+    expect(await (await retry("cron-secret")).json()).toEqual({ posted: 0, queued: 0 });
+    build({ cronSecret: "" });
+    expect((await retry("")).status).toBe(403);
+  });
+
+  it("compares secrets without depending on where they differ", async () => {
+    expect(await sameSecret("cron-secret", "cron-secret")).toBe(true);
+    expect(await sameSecret("cron-secreT", "cron-secret")).toBe(false);
+    expect(await sameSecret("", "cron-secret")).toBe(false);
+    expect(await sameSecret("cron-secret\0", "cron-secret")).toBe(false);
   });
 
   it("posts nothing for a student who did not come from Moodle or a link without grades", async () => {

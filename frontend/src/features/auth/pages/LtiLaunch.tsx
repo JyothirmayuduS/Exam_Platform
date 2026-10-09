@@ -38,6 +38,7 @@ const MESSAGES: Record<string, { title: string; body: string }> = {
   platform_unreachable: { title: "Moodle did not answer in time", body: "The exam platform could not check the launch with Moodle. Wait a moment and open the activity again." },
   unknown_platform: { title: "This Moodle site is not registered", body: "The exam platform does not recognise this Moodle site. Your Moodle administrator needs to finish the setup." },
   no_account: { title: "Your account could not be linked", body: "Your Moodle account could not be matched to an exam account. Please contact your teacher." },
+  not_student_account: { title: "This sign-in is not a student account", body: "The exam account for your roll number is not set up as a student account, so it cannot be opened from Moodle. Please ask your exam administrator to fix it." },
 };
 const FALLBACK = { title: "Could not open the exam", body: "Something went wrong while opening the exam from Moodle. Go back to Moodle and try again." };
 

@@ -61,6 +61,13 @@ export type GradeTarget = {
   platform: Platform;
 };
 
+/** A queued score this sender holds the claim on, with the value to send. */
+export type ClaimedScore = GradeTarget & { claim: string; pendingScore: number };
+
+export type ScoreOutcome =
+  | { ok: true }
+  | { ok: false; error: string; attempts: number; nextAttemptAt: number | null };
+
 export type InstructorLaunch = { platformId: string; sub: string; linkId: string; contextId: string | null };
 
 export interface LtiStore {
@@ -91,8 +98,9 @@ export interface LtiStore {
   studentLinkedSub(platformId: string, studentId: string): Promise<string | null>;
   linkStudent(platformId: string, sub: string, studentId: string): Promise<void>;
   createStudent(who: { roll: string; name: string | null; email: string | null; batch: string | null }): Promise<{ id: string } | null>;
-  /** The student's auth account, created when missing. */
-  ensureAuthUser(studentId: string): Promise<string | null>;
+  /** The student's auth account, created when missing. An existing account
+   *  is adopted only when its app_metadata role is "student". */
+  ensureAuthUser(studentId: string): Promise<{ authUserId: string } | { error: "no_account" | "not_student_account" }>;
   savePendingUser(platformId: string, who: LaunchIdentity, link: { id: string; contextId: string | null }): Promise<void>;
   pendingFor(platformId: string, scope: { linkIds: string[]; contextIds: string[] }): Promise<PendingUser[]>;
   getPending(id: string): Promise<PendingUser | null>;
@@ -120,11 +128,16 @@ export interface LtiStore {
 
   // Grades
   saveGradeTarget(target: { linkId: string; studentId: string; examId: string; sub: string; lineitem: string | null }): Promise<void>;
-  gradeTargets(examId: string, studentId: string): Promise<GradeTarget[]>;
   setScoreMaximum(examId: string, studentId: string, max: number): Promise<void>;
-  scorePosted(linkId: string, studentId: string, score: number): Promise<void>;
-  scoreQueued(linkId: string, studentId: string, q: { score: number; max: number | null; error: string; attempts: number; nextAttemptAt: number | null }): Promise<void>;
-  dueScorePosts(nowMs: number, limit: number): Promise<GradeTarget[]>;
+  /** Queue a new score on every graded link of this attempt, due now.
+   *  Returns how many links it was queued on. */
+  queueScore(examId: string, studentId: string, q: { score: number; max: number | null; nowMs: number }): Promise<number>;
+  /** Atomically claim due queued scores (all, or one student's for one exam).
+   *  Rows held by another sender are skipped until their lease ends. */
+  claimScores(nowMs: number, opts: { limit: number; leaseMs: number; examId?: string; studentId?: string }): Promise<ClaimedScore[]>;
+  /** Release a claim. The queued score is cleared only if it still equals the
+   *  value that was sent; a stale claim changes nothing. */
+  finishScore(c: ClaimedScore, outcome: ScoreOutcome, nowMs: number): Promise<void>;
   attemptScore(attemptId: string): Promise<{ examId: string; studentId: string; score: number | null; submitted: boolean } | null>;
   examScores(examId: string): Promise<{ studentId: string; score: number }[]>;
 }

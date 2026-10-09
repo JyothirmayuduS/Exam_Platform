@@ -3,7 +3,7 @@
 // and retried with backoff; nothing here ever throws into the caller.
 import { SCORE_SCOPE } from "./claims.ts";
 import { randomToken, signJwt, type ToolKey } from "./jwt.ts";
-import type { GradeTarget, LtiStore, Platform } from "./types.ts";
+import type { ClaimedScore, LtiStore, Platform } from "./types.ts";
 
 export type ScoreDeps = { store: LtiStore; key: ToolKey; fetch: typeof fetch; now: () => number };
 export type ScoreResult = { posted: number; queued: number };
@@ -13,6 +13,8 @@ export const RETRY_MINUTES = [1, 5, 15, 60, 180, 360, 720, 1440];
 /** After this many failures the score stays queued for a teacher resend only. */
 export const MAX_POST_ATTEMPTS = 12;
 const HTTP_TIMEOUT_MS = 10_000;
+/** How long a sender holds a claimed row; must outlast one batch of posts. */
+export const CLAIM_LEASE_MS = 10 * 60_000;
 
 export function nextAttemptAt(attempts: number, nowMs: number): number | null {
   if (attempts >= MAX_POST_ATTEMPTS) return null;
@@ -63,13 +65,11 @@ async function accessToken(platform: Platform, deps: ScoreDeps): Promise<string>
   return body.access_token;
 }
 
-async function postTargets(
-  deps: ScoreDeps,
-  items: { target: GradeTarget; score: number; max: number | null; priorAttempts: number }[],
-): Promise<ScoreResult> {
+async function postClaimed(deps: ScoreDeps, claimed: ClaimedScore[]): Promise<ScoreResult> {
   const tokens = new Map<string, Promise<string>>();
   const out: ScoreResult = { posted: 0, queued: 0 };
-  for (const { target: t, score, max, priorAttempts } of items) {
+  for (const t of claimed) {
+    const { pendingScore: score, scoreMaximum: max } = t;
     try {
       if (!max || max <= 0) throw new Error("no score maximum");
       if (!tokens.has(t.platform.id)) tokens.set(t.platform.id, accessToken(t.platform, deps));
@@ -88,38 +88,43 @@ async function postTargets(
       }, HTTP_TIMEOUT_MS);
       if (!res.ok) throw new Error(`scores ${res.status}`);
       out.posted += 1;
-      await deps.store.scorePosted(t.linkId, t.studentId, score).catch(() => {});
+      await deps.store.finishScore(t, { ok: true }, deps.now()).catch(() => {});
     } catch (err) {
       out.queued += 1;
-      const attempts = priorAttempts + 1;
+      const attempts = t.attempts + 1;
       await deps.store
-        .scoreQueued(t.linkId, t.studentId, {
-          score,
-          max: max ?? null,
+        .finishScore(t, {
+          ok: false,
           error: String((err as Error)?.message ?? err),
           attempts,
           nextAttemptAt: nextAttemptAt(attempts, deps.now()),
-        })
+        }, deps.now())
         .catch(() => {});
     }
   }
   return out;
 }
 
-/** Post a freshly graded score. `max` falls back to the maximum recorded at submit. */
+/** Post a freshly graded score. It is queued first, then sent only on links no
+ *  other sender holds; a held link sends it after the current post finishes.
+ *  `max` falls back to the maximum recorded at submit. */
 export async function postAttemptScore(
   deps: ScoreDeps,
   input: { examId: string; studentId: string; score: number; max?: number | null },
 ): Promise<ScoreResult> {
-  const targets = await deps.store.gradeTargets(input.examId, input.studentId).catch(() => [] as GradeTarget[]);
-  return postTargets(deps, targets.map((t) => ({ target: t, score: input.score, max: input.max ?? t.scoreMaximum, priorAttempts: 0 })));
+  const queued = await deps.store
+    .queueScore(input.examId, input.studentId, { score: input.score, max: input.max ?? null, nowMs: deps.now() })
+    .catch(() => 0);
+  if (!queued) return { posted: 0, queued: 0 };
+  const claimed = await deps.store
+    .claimScores(deps.now(), { limit: queued, leaseMs: CLAIM_LEASE_MS, examId: input.examId, studentId: input.studentId })
+    .catch(() => [] as ClaimedScore[]);
+  const r = await postClaimed(deps, claimed);
+  return { posted: r.posted, queued: queued - r.posted };
 }
 
 /** Retry queued posts whose backoff has elapsed. */
 export async function retryDueScores(deps: ScoreDeps, limit = 25): Promise<ScoreResult> {
-  const due = await deps.store.dueScorePosts(deps.now(), limit).catch(() => [] as GradeTarget[]);
-  return postTargets(
-    deps,
-    due.filter((t) => t.pendingScore !== null).map((t) => ({ target: t, score: t.pendingScore!, max: t.scoreMaximum, priorAttempts: t.attempts })),
-  );
+  const claimed = await deps.store.claimScores(deps.now(), { limit, leaseMs: CLAIM_LEASE_MS }).catch(() => [] as ClaimedScore[]);
+  return postClaimed(deps, claimed);
 }

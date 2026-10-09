@@ -2,7 +2,7 @@
 // tables are not readable or writable by browsers.
 // deno-lint-ignore-file no-explicit-any
 import { randomToken } from "./jwt.ts";
-import type { GradeTarget, Link, LtiStore, PendingUser, Platform } from "./types.ts";
+import type { ClaimedScore, Link, LtiStore, PendingUser, Platform } from "./types.ts";
 
 type Db = any;
 
@@ -38,22 +38,6 @@ const toPending = (r: any): PendingUser => ({
   linkId: r.link_id ?? null,
 });
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
-const toTarget = (r: any): GradeTarget | null => {
-  const link = Array.isArray(r.link) ? r.link[0] : r.link;
-  const platform = Array.isArray(link?.platform) ? link.platform[0] : link?.platform;
-  if (!platform || !r.lineitem) return null;
-  return {
-    linkId: String(r.link_id),
-    studentId: String(r.student_id),
-    sub: String(r.sub),
-    lineitem: String(r.lineitem),
-    scoreMaximum: num(r.score_maximum),
-    pendingScore: num(r.pending_score),
-    attempts: Number(r.post_attempts ?? 0),
-    platform: toPlatform(platform),
-  };
-};
-const TARGET_COLS = "link_id, student_id, sub, lineitem, score_maximum, pending_score, post_attempts, link:lti_links(platform:lti_platforms(*))";
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 const loginEmail = (roll: string) => `${roll.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "-")}@student.vignan.ac.in`;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -68,12 +52,12 @@ function scopeFilter(scope: { linkIds: string[]; contextIds: string[] }, linkCol
   return parts.length ? parts.join(",") : null;
 }
 
-async function findAuthUserByEmail(db: Db, email: string): Promise<string | null> {
+async function findAuthUserByEmail(db: Db, email: string): Promise<{ id: string; role: unknown } | null> {
   for (let page = 1; page <= 50; page++) {
     const { data, error } = await db.auth.admin.listUsers({ page, perPage: 1000 });
     if (error || !data?.users?.length) return null;
     const hit = data.users.find((u: { email?: string }) => u.email?.toLowerCase() === email);
-    if (hit) return String(hit.id);
+    if (hit) return { id: String(hit.id), role: hit.app_metadata?.role };
     if (data.users.length < 1000) return null;
   }
   return null;
@@ -192,8 +176,8 @@ export function supabaseLtiStore(db: Db): LtiStore {
 
     async ensureAuthUser(studentId) {
       const { data: s } = await db.from("students").select("id, roll, auth_id").eq("id", studentId).maybeSingle();
-      if (!s) return null;
-      if (s.auth_id) return String(s.auth_id);
+      if (!s) return { error: "no_account" };
+      if (s.auth_id) return { authUserId: String(s.auth_id) };
       const email = loginEmail(s.roll);
       const { data: created } = await db.auth.admin.createUser({
         email,
@@ -202,12 +186,17 @@ export function supabaseLtiStore(db: Db): LtiStore {
         app_metadata: { role: "student", roll: s.roll, lti: true },
         user_metadata: { roll: s.roll },
       });
-      const authUserId = created?.user?.id ? String(created.user.id) : await findAuthUserByEmail(db, email);
-      if (!authUserId) return null;
+      let authUserId = created?.user?.id ? String(created.user.id) : null;
+      if (!authUserId) {
+        const existing = await findAuthUserByEmail(db, email);
+        if (!existing) return { error: "no_account" };
+        if (existing.role !== "student") return { error: "not_student_account" };
+        authUserId = existing.id;
+      }
       const { data: linked } = await db.from("students").update({ auth_id: authUserId }).eq("id", s.id).is("auth_id", null).select("auth_id");
-      if (linked?.length) return authUserId;
+      if (linked?.length) return { authUserId };
       const { data: again } = await db.from("students").select("auth_id").eq("id", s.id).maybeSingle();
-      return again?.auth_id ? String(again.auth_id) : null;
+      return again?.auth_id ? { authUserId: String(again.auth_id) } : { error: "no_account" };
     },
 
     async savePendingUser(platformId, who, link) {
@@ -334,45 +323,70 @@ export function supabaseLtiStore(db: Db): LtiStore {
       ));
     },
 
-    async gradeTargets(examId, studentId) {
-      const { data } = await db.from("lti_grade_targets").select(TARGET_COLS).eq("exam_id", examId).eq("student_id", studentId).not("lineitem", "is", null);
-      return (data ?? []).map(toTarget).filter(Boolean) as GradeTarget[];
-    },
-
     async setScoreMaximum(examId, studentId, max) {
       await db.from("lti_grade_targets").update({ score_maximum: max }).eq("exam_id", examId).eq("student_id", studentId);
     },
 
-    async scorePosted(linkId, studentId, score) {
-      await db.from("lti_grade_targets").update({
-        last_score: score,
-        last_posted_at: iso(Date.now()),
-        last_error: null,
-        pending_score: null,
-        post_attempts: 0,
-        next_attempt_at: null,
-      }).eq("link_id", linkId).eq("student_id", studentId);
-    },
-
-    async scoreQueued(linkId, studentId, q) {
-      await db.from("lti_grade_targets").update({
+    async queueScore(examId, studentId, q) {
+      const { data, error } = await db.from("lti_grade_targets").update({
         pending_score: q.score,
         ...(q.max && q.max > 0 ? { score_maximum: q.max } : {}),
-        last_error: q.error,
-        post_attempts: q.attempts,
-        next_attempt_at: q.nextAttemptAt === null ? null : iso(q.nextAttemptAt),
-      }).eq("link_id", linkId).eq("student_id", studentId);
+        post_attempts: 0,
+        next_attempt_at: iso(q.nowMs),
+        last_error: null,
+      }).eq("exam_id", examId).eq("student_id", studentId).not("lineitem", "is", null).select("link_id");
+      if (error) throw new Error(error.message);
+      return data?.length ?? 0;
     },
 
-    async dueScorePosts(nowMs, limit) {
-      const { data } = await db
-        .from("lti_grade_targets")
-        .select(TARGET_COLS)
-        .not("pending_score", "is", null)
-        .lte("next_attempt_at", iso(nowMs))
-        .order("next_attempt_at", { ascending: true })
-        .limit(limit);
-      return (data ?? []).map(toTarget).filter(Boolean) as GradeTarget[];
+    async claimScores(nowMs, o) {
+      const { data, error } = await db.rpc("lti_claim_scores", {
+        p_now: iso(nowMs),
+        p_limit: o.limit,
+        p_lease_seconds: Math.ceil(o.leaseMs / 1000),
+        p_exam_id: o.examId ?? null,
+        p_student_id: o.studentId ?? null,
+      });
+      if (error) throw new Error(error.message);
+      const rows: any[] = data ?? [];
+      if (!rows.length) return [];
+      const { data: links } = await db.from("lti_links").select("id, platform:lti_platforms(*)").in("id", [...new Set(rows.map((r) => r.link_id))]);
+      const platforms = new Map<string, Platform>();
+      for (const l of links ?? []) {
+        const p = Array.isArray(l.platform) ? l.platform[0] : l.platform;
+        if (p) platforms.set(String(l.id), toPlatform(p));
+      }
+      const out: ClaimedScore[] = [];
+      for (const r of rows) {
+        const platform = platforms.get(String(r.link_id));
+        if (!platform || r.pending_score === null) continue;
+        out.push({
+          linkId: String(r.link_id),
+          studentId: String(r.student_id),
+          sub: String(r.sub),
+          lineitem: String(r.lineitem),
+          scoreMaximum: num(r.score_maximum),
+          pendingScore: Number(r.pending_score),
+          attempts: Number(r.post_attempts ?? 0),
+          platform,
+          claim: String(r.claim_token),
+        });
+      }
+      return out;
+    },
+
+    async finishScore(c, outcome, nowMs) {
+      must(await db.rpc("lti_finish_score", {
+        p_link_id: c.linkId,
+        p_student_id: c.studentId,
+        p_claim_token: c.claim,
+        p_score: c.pendingScore,
+        p_ok: outcome.ok,
+        p_error: outcome.ok ? null : outcome.error,
+        p_attempts: outcome.ok ? 0 : outcome.attempts,
+        p_next_attempt_at: outcome.ok || outcome.nextAttemptAt === null ? null : iso(outcome.nextAttemptAt),
+        p_now: iso(nowMs),
+      }));
     },
 
     async attemptScore(attemptId) {
