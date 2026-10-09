@@ -7,6 +7,8 @@ const verifyOtp = vi.fn();
 vi.mock("@/shared/data/supabase", () => ({
   getSupabase: () => ({ functions: { invoke }, auth: { verifyOtp } }),
 }));
+const auth = { user: null as { id: string } | null, role: null as string | null, loading: false };
+vi.mock("@/features/auth/auth", () => ({ useAuth: () => auth }));
 
 import LtiLaunch from "./LtiLaunch";
 
@@ -31,6 +33,8 @@ describe("Moodle launch landing page", () => {
     invoke.mockReset();
     verifyOtp.mockReset();
     verifyOtp.mockResolvedValue({ error: null });
+    Object.assign(auth, { user: null, role: null, loading: false });
+    sessionStorage.clear();
   });
 
   it("signs in as the Moodle user and opens the exam the server mapped", async () => {
@@ -53,5 +57,33 @@ describe("Moodle launch landing page", () => {
     open("/lti/launch?error=not_mapped&activity=Quiz%202");
     expect(await screen.findByText("This activity is not linked to an exam yet")).toBeTruthy();
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("tells a student their account is waiting for the teacher", async () => {
+    open("/lti/launch?error=account_pending&activity=Mid-term");
+    expect(await screen.findByText("Your account is waiting for your teacher")).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("refuses a launch without the Learner role with a clear message", async () => {
+    open("/lti/launch?error=unsupported_role");
+    expect(await screen.findByText("This Moodle role cannot open the exam")).toBeTruthy();
+  });
+
+  it("asks a Moodle teacher to sign in, and never signs them in from the launch", async () => {
+    open("/lti/launch?status=instructor&activity=Mid-term#claim=c-1");
+    expect(await screen.findByText("Link my Moodle course")).toBeTruthy();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(verifyOtp).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("");
+  });
+
+  it("links the Moodle course to the signed-in platform teacher once", async () => {
+    Object.assign(auth, { user: { id: "auth-A" }, role: "teacher" });
+    invoke.mockResolvedValue({ data: { ok: true }, error: null });
+    open("/lti/launch?status=instructor&activity=Mid-term#claim=c-2");
+    expect(await screen.findByText("Your Moodle course is linked")).toBeTruthy();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("lti/claim", { body: { claim: "c-2" } });
   });
 });

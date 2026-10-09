@@ -183,6 +183,9 @@ export default function Login() {
     if (teacherData) {
       if (teacherData.role === "proctor" || mode === "proctor") {
         navigate("/proctor");
+      } else if (from?.pathname === "/lti/launch") {
+        // Back to the Moodle teacher page to finish linking the Moodle course.
+        navigate(`/lti/launch${typeof from.search === "string" && from.search.startsWith("?") ? from.search : ""}`, { replace: true });
       } else {
         navigate("/teacher");
       }

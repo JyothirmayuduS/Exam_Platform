@@ -17,17 +17,8 @@ export const CLAIM = {
 export const SCORE_SCOPE = "https://purl.imsglobal.org/spec/lti-ags/scope/score";
 
 const CLOCK_SKEW_S = 60;
-const LEARNER = [
-  "http://purl.imsglobal.org/vocab/lis/v2/membership#Learner",
-  "http://purl.imsglobal.org/vocab/lis/v2/institution/person#Student",
-];
-const STAFF = [
-  "http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor",
-  "http://purl.imsglobal.org/vocab/lis/v2/membership#ContentDeveloper",
-  "http://purl.imsglobal.org/vocab/lis/v2/membership#Administrator",
-  "http://purl.imsglobal.org/vocab/lis/v2/institution/person#Administrator",
-  "http://purl.imsglobal.org/vocab/lis/v2/system/person#Administrator",
-];
+export const LEARNER = "http://purl.imsglobal.org/vocab/lis/v2/membership#Learner";
+export const INSTRUCTOR = "http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor";
 
 export type Launch = {
   deploymentId: string;
@@ -35,8 +26,8 @@ export type Launch = {
   resourceTitle: string | null;
   contextId: string | null;
   identity: LaunchIdentity;
-  /** Staff without a learner role: shown the mapping status, never signed in. */
-  staffOnly: boolean;
+  /** Learner = student (signed in). Instructor = teacher (never signed in). */
+  role: "learner" | "instructor";
   /** Optional Moodle custom parameter `exam_id`; must agree with the mapping. */
   pinnedExamId: string | null;
   /** AGS line item for this link, when Moodle accepts grades from the tool. */
@@ -66,16 +57,19 @@ export function readLaunch(
   if (claims[CLAIM.messageType] !== "LtiResourceLinkRequest") return { ok: false, reason: "message_type" };
   const deploymentId = str(claims[CLAIM.deploymentId]);
   if (!deploymentId) return { ok: false, reason: "deployment" };
-  if (platform.deploymentIds.length && !platform.deploymentIds.includes(deploymentId)) return { ok: false, reason: "deployment" };
+  if (!platform.deploymentIds.includes(deploymentId)) return { ok: false, reason: "deployment" };
   const link = obj(claims[CLAIM.resourceLink]);
   const resourceLinkId = str(link.id);
   if (!resourceLinkId) return { ok: false, reason: "resource_link" };
   const sub = str(claims.sub);
   if (!sub) return { ok: false, reason: "anonymous" };
 
-  const roles = Array.isArray(claims[CLAIM.roles]) ? (claims[CLAIM.roles] as unknown[]).map(String) : [];
-  const learner = roles.some((r) => LEARNER.includes(r));
-  const staff = roles.some((r) => STAFF.includes(r));
+  // Only the course membership roles are handled. Both at once is ambiguous.
+  const roles = Array.isArray(claims[CLAIM.roles]) ? (claims[CLAIM.roles] as unknown[]).map(String).filter(Boolean) : [];
+  if (!roles.length) return { ok: false, reason: "no_roles" };
+  const learner = roles.includes(LEARNER);
+  const instructor = roles.includes(INSTRUCTOR);
+  if (learner === instructor) return { ok: false, reason: "unsupported_role" };
   const context = obj(claims[CLAIM.context]);
   const ags = obj(claims[CLAIM.ags]);
   const scopes = Array.isArray(ags.scope) ? ags.scope.map(String) : [];
@@ -87,7 +81,7 @@ export function readLaunch(
       resourceLinkId,
       resourceTitle: str(link.title),
       contextId: str(context.id),
-      staffOnly: staff && !learner,
+      role: learner ? "learner" : "instructor",
       pinnedExamId: str(obj(claims[CLAIM.custom]).exam_id),
       lineitem: scopes.includes(SCORE_SCOPE) ? str(ags.lineitem) : null,
       identity: {
