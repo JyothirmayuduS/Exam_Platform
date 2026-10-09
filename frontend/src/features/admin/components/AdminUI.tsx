@@ -1,5 +1,51 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { ExamRef, StudentRef } from "@/shared/data/api/admin";
+
+export type AdminTab<T extends string> = { id: T; label: string; count?: number; tone?: "alert" | "amber" };
+
+/** Active tab kept in `?tab=` so a refresh or shared link opens the same view.
+ *  Without one, opens the first tab with something needing attention. */
+export function useAdminTab<T extends string>(tabs: AdminTab<T>[], otherwise: T): [T, (id: T) => void] {
+  const [params, setParams] = useSearchParams();
+  const [fallback] = useState<T>(() => tabs.find((t) => t.tone && t.count)?.id ?? otherwise);
+  const fromUrl = params.get("tab");
+  const tab = tabs.find((t) => t.id === fromUrl)?.id ?? fallback;
+  const pick = (id: T) => setParams((p) => { const next = new URLSearchParams(p); next.set("tab", id); return next; }, { replace: true });
+  return [tab, pick];
+}
+
+export function TabBar<T extends string>({ tabs, active, onPick, label }: { tabs: AdminTab<T>[]; active: T; onPick: (id: T) => void; label: string }) {
+  return (
+    <div role="tablist" aria-label={label} className="sticky top-0 z-10 -mx-1 flex gap-1 overflow-x-auto border-b border-line bg-paper px-1">
+      {tabs.map((t) => {
+        const on = active === t.id;
+        const badge = !t.count ? "border-line text-soft" : t.tone === "alert" ? "border-alert bg-alert text-paper" : t.tone === "amber" ? "border-amber text-amber" : "border-line text-soft";
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={on}
+            onClick={() => onPick(t.id)}
+            className={`-mb-px flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 font-mono text-[11px] uppercase tracking-wider ${on ? "border-forest text-forest" : "border-transparent text-soft hover:text-ink"}`}
+          >
+            {t.label}
+            {t.count !== undefined && <span className={`border px-1.5 py-px text-[10px] tabular-nums ${badge}`}>{t.count}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function Section({ note, children }: { note?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="border border-line bg-paper">
+      {note && <p className="border-b border-line bg-raised/60 px-5 py-2.5 text-[12px] text-soft">{note}</p>}
+      <div className="px-5 py-4">{children}</div>
+    </section>
+  );
+}
 
 export function Panel({ title, count, tone, note, action, children }: { title: string; count?: number | string; tone?: "alert" | "amber" | "ok"; note?: ReactNode; action?: ReactNode; children: ReactNode }) {
   const toneCls = tone === "alert" ? "border-alert text-alert" : tone === "amber" ? "border-amber text-amber" : tone === "ok" ? "border-success text-success" : "border-line text-soft";
