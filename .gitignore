@@ -37,3 +37,6 @@ venv/
 __pycache__/
 *.pyc
 .gstack/
+
+# Supabase CLI local cache when run from the repo root
+supabase/.temp/
