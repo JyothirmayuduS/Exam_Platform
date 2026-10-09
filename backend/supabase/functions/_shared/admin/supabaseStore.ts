@@ -6,6 +6,7 @@ import type { AdminAttempt, AdminExam, Flag, GradeTarget } from "./model.ts";
 type Db = any;
 
 const EXAM_COLS = "id, name, batch, status, scheduled_at, duration_minutes, total_marks, passing_marks, created_by, settings, created_at";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ATTEMPT_COLS = "id, exam_id, student_id, state, score, started_at, submitted_at, auto_saved_at, session_seen_at, user_agent";
 
 async function inChunks<T>(ids: string[], fetch: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
@@ -126,6 +127,26 @@ export function supabaseAdminStore(db: Db): AdminStore {
 
     async holds() {
       return must(await db.from("result_holds").select("attempt_id, exam_id, student_id, reason, held_by, held_at").order("held_at", { ascending: false })) as any[];
+    },
+
+    async phoneUploads(sinceIso) {
+      const rows = (must(await db.from("mobile_upload_sessions")
+        .select("id, exam_id, attempt_id, student_id, question_id, question_index, status, created_at, expires_at")
+        .gte("created_at", sinceIso).neq("status", "COMPLETED")
+        .order("created_at", { ascending: false }).limit(500)) as any[]) ?? [];
+      // Older sessions carry only the attempt; its exam is the session's exam.
+      const attemptIds = [...new Set(rows.filter((r) => !r.exam_id && UUID_RE.test(r.attempt_id ?? "")).map((r) => String(r.attempt_id)))];
+      const examOfAttempt = new Map((await inChunks(attemptIds, async (c) => must(await db.from("attempts").select("id, exam_id").in("id", c)) as any[]))
+        .map((a) => [String(a.id), String(a.exam_id)]));
+      const pending = rows.map((r) => ({
+        id: String(r.id), exam_id: r.exam_id ?? examOfAttempt.get(String(r.attempt_id)) ?? null, student_id: r.student_id ?? null,
+        question_id: r.question_id ?? null, question_index: r.question_index ?? null, status: r.status ?? null,
+        created_at: r.created_at, expires_at: r.expires_at ?? null,
+      }));
+      const done = await db.from("mobile_upload_sessions").select("id", { count: "exact", head: true })
+        .gte("created_at", sinceIso).eq("status", "COMPLETED");
+      if (done.error) throw new Error(done.error.message);
+      return { pending, completed: done.count ?? 0 };
     },
 
     async auditLogs({ actorId, examId, action, limit }) {

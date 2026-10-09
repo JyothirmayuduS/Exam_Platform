@@ -231,6 +231,57 @@ export function storageByExam(objects: StorageObject[], exams: Pick<AdminExam, "
   };
 }
 
+export type UploadState = "complete" | "uploading" | "partial" | "missing";
+/** The kiosk keeps uploading recording parts for a while after submit. */
+export const UPLOAD_GRACE_MS = 30 * 60_000;
+
+export type KioskUpload = { attempt: AdminAttempt; version: string; kinds: string[]; files: number; lastUpload: string | null; state: UploadState };
+
+/** What each submitted kiosk sitting has in R2 under <exam folder>/<student folder>/<kind>/…
+ *  The exam folder is the slugged exam name (or the exam id); the student folder is the roll
+ *  (or the student id). A sitting is complete once a recording has arrived. */
+export function kioskUploads(
+  attempts: AdminAttempt[],
+  exams: Pick<AdminExam, "id" | "name">[],
+  rolls: Map<string, string>,
+  objects: StorageObject[],
+  now: number,
+): KioskUpload[] {
+  const index = new Map<string, { kinds: Set<string>; files: number; last: number }>();
+  for (const o of objects) {
+    const p = o.key.split("/");
+    if (p.length < 4) continue;
+    const k = `${p[0]}/${p[1]}`;
+    const g = index.get(k) ?? { kinds: new Set<string>(), files: 0, last: 0 };
+    g.kinds.add(p[2]);
+    g.files += 1;
+    g.last = Math.max(g.last, ms(o.lastModified));
+    index.set(k, g);
+  }
+  const nameOf = new Map(exams.map((e) => [e.id, e.name]));
+  const out: KioskUpload[] = [];
+  for (const a of attempts) {
+    if (a.state !== "submitted") continue;
+    const version = kioskVersion(a.user_agent);
+    if (!version || version === "web") continue;
+    const examFolders = new Set([slugifyFolderSegment(nameOf.get(a.exam_id) ?? ""), a.exam_id].filter(Boolean));
+    const studentFolders = new Set([rolls.get(a.student_id) ?? "", a.student_id].filter(Boolean));
+    const kinds = new Set<string>();
+    let files = 0, last = 0;
+    for (const ef of examFolders) for (const sf of studentFolders) {
+      const g = index.get(`${ef}/${sf}`);
+      if (!g) continue;
+      g.kinds.forEach((k) => kinds.add(k));
+      files += g.files;
+      last = Math.max(last, g.last);
+    }
+    const recent = now - ms(a.submitted_at) < UPLOAD_GRACE_MS;
+    const state: UploadState = kinds.has("recordings") ? "complete" : recent ? "uploading" : files ? "partial" : "missing";
+    out.push({ attempt: a, version, kinds: [...kinds].sort(), files, lastUpload: last ? new Date(last).toISOString() : null, state });
+  }
+  return out;
+}
+
 export type Flag = { id: string; exam_id: string | null; attempt_id: string | null; student_id: string | null; violation_type: string; severity: string; source: string | null; created_at: string };
 
 /** Serious flags nobody has reviewed yet. */

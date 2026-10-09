@@ -3,11 +3,12 @@
 // POST { op: "overview" }                       live, upcoming, marking, Moodle, accounts…
 // POST { op: "system" }                         health checks, latest exam browser, jobs, backups
 // POST { op: "storage" }                        storage per exam, deletion schedule, buckets
+// POST { op: "uploads" }                        kiosk sittings missing evidence, unfinished phone uploads
 // POST { op: "audit", actorId?, examId?, action?, limit? }
 // POST { op: "resend_moodle", examId? }         queue failed Moodle grades for the next retry run
 // POST { op: "review_flag", violationId, note? }
 import {
-  connectionOf, flagsAwaitingReview, gradePostState, liveCounts, phaseOf, readiness, releaseVersion,
+  connectionOf, flagsAwaitingReview, gradePostState, kioskUploads, liveCounts, phaseOf, readiness, releaseVersion,
   storageByExam, unreleased, versionsInUse,
   type AdminAttempt, type AdminExam, type Flag, type GradeTarget, type StorageObject,
 } from "./model.ts";
@@ -18,6 +19,7 @@ export type StudentRef = { id: string; roll: string; full_name: string | null };
 export type StaffRef = { auth_id: string; name: string; email: string | null; role: string; admin: boolean };
 export type AuditRow = { id: string; actor_id: string | null; actor_role: string | null; action: string; target_type: string | null; target_id: string | null; meta: Record<string, unknown> | null; created_at: string };
 export type PendingMoodleUser = { id: string; name: string | null; email: string | null; username: string | null; sourced_id: string | null; context_title: string | null; first_seen_at: string | null; last_launch_at: string | null };
+export type PhoneUpload = { id: string; exam_id: string | null; student_id: string | null; question_id: string | null; question_index: number | null; status: string | null; created_at: string; expires_at: string | null };
 export type Hold = { attempt_id: string; exam_id: string; student_id: string; reason: string | null; held_by: string; held_at: string };
 export type SystemStatus = {
   jobs: { name: string; schedule: string; active: boolean; last_run: { status: string; started_at: string; ended_at: string | null; message: string | null } | null; failures_24h: number }[];
@@ -46,6 +48,8 @@ export interface AdminStore {
   gradeTargets(): Promise<GradeTarget[]>;
   pendingMoodleUsers(): Promise<PendingMoodleUser[]>;
   holds(): Promise<Hold[]>;
+  /** Phone (QR) answer uploads since `sinceIso`: the unfinished ones, and how many finished. */
+  phoneUploads(sinceIso: string): Promise<{ pending: PhoneUpload[]; completed: number }>;
   auditLogs(filter: { actorId?: string; examId?: string; action?: string; limit: number }): Promise<AuditRow[]>;
   systemStatus(): Promise<SystemStatus>;
   resendGrades(examId: string | null, nowIso: string): Promise<number>;
@@ -230,6 +234,45 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
     };
   }
 
+  async function uploads(now: number) {
+    const sinceMs = now - 30 * DAY;
+    const since = new Date(sinceMs).toISOString();
+    const [listing, exams, staff, attempts, phone] = await Promise.all([
+      probes.storageObjects(), store.exams(), store.staff(), store.attempts(since), store.phoneUploads(since),
+    ]);
+    const ownerName = new Map(staff.map((s) => [s.auth_id, s.name]));
+    const byId = new Map(exams.map((e) => [e.id, e]));
+    const examOf = (id: string | null): ExamRef | null => {
+      const e = id ? byId.get(id) : undefined;
+      return e ? { id: e.id, name: e.name, batch: e.batch, owner: e.created_by ? ownerName.get(e.created_by) ?? null : null } : null;
+    };
+    const recent = attempts.filter((a) => a.state === "submitted" && Date.parse(a.started_at ?? a.submitted_at ?? "") >= sinceMs);
+    const students = await store.students([...new Set([...recent.map((a) => a.student_id), ...phone.pending.map((p) => p.student_id).filter((id): id is string => !!id)])]);
+    const who = (id: string | null) => (id ? students.get(id) ?? { id, roll: "", full_name: null } : null);
+    const rolls = new Map([...students].map(([id, s]) => [id, s.roll]));
+
+    const kiosk = listing.configured ? kioskUploads(recent, exams, rolls, listing.objects, now) : [];
+    const count = (s: string) => kiosk.filter((k) => k.state === s).length;
+    const pending = phone.pending.map((p) => ({ ...p, open: !!p.expires_at && Date.parse(p.expires_at) > now }));
+    return {
+      kiosk: {
+        configured: listing.configured, truncated: listing.truncated, error: listing.error ?? null,
+        checked: kiosk.length, complete: count("complete"), uploading: count("uploading"), partial: count("partial"), missing: count("missing"),
+        items: kiosk
+          .filter((k) => k.state !== "complete")
+          .sort((a, b) => (b.attempt.submitted_at ?? "").localeCompare(a.attempt.submitted_at ?? ""))
+          .slice(0, 300)
+          .map((k) => ({ attemptId: k.attempt.id, exam: examOf(k.attempt.exam_id), student: who(k.attempt.student_id), submittedAt: k.attempt.submitted_at, version: k.version, kinds: k.kinds, files: k.files, lastUpload: k.lastUpload, state: k.state })),
+      },
+      phone: {
+        completed: phone.completed,
+        open: pending.filter((p) => p.open).length,
+        abandoned: pending.filter((p) => !p.open).length,
+        items: pending.slice(0, 300).map((p) => ({ id: p.id, exam: examOf(p.exam_id), student: who(p.student_id), question: p.question_index === null ? p.question_id : `Q${p.question_index + 1}`, status: p.status, createdAt: p.created_at, expiresAt: p.expires_at, open: p.open })),
+      },
+    };
+  }
+
   return async (req: Request): Promise<Response> => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
     if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -244,6 +287,7 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
       if (op === "overview") return json(await overview(now));
       if (op === "system") return json(await system());
       if (op === "storage") return json(await storage(now));
+      if (op === "uploads") return json(await uploads(now));
 
       if (op === "audit") {
         const actorId = text(body.actorId);

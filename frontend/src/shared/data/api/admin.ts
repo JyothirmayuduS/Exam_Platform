@@ -64,6 +64,19 @@ export type AdminStorage = {
   databaseBytes: number;
 };
 
+export type UploadState = "complete" | "uploading" | "partial" | "missing";
+export type AdminUploads = {
+  kiosk: {
+    configured: boolean; truncated: boolean; error: string | null;
+    checked: number; complete: number; uploading: number; partial: number; missing: number;
+    items: { attemptId: string; exam: ExamRef | null; student: StudentRef | null; submittedAt: string | null; version: string; kinds: string[]; files: number; lastUpload: string | null; state: UploadState }[];
+  };
+  phone: {
+    completed: number; open: number; abandoned: number;
+    items: { id: string; exam: ExamRef | null; student: StudentRef | null; question: string | null; status: string | null; createdAt: string; expiresAt: string | null; open: boolean }[];
+  };
+};
+
 export type AdminAuditEntry = { id: string; actor_id: string | null; actor_name: string | null; actor_role: string | null; action: string; target_type: string | null; target_id: string | null; meta: Record<string, unknown> | null; created_at: string };
 
 const ERRORS: Record<string, string> = {
@@ -90,6 +103,7 @@ async function call<T>(body: Record<string, unknown>): Promise<Result<T>> {
 export const loadAdminOverview = () => call<AdminOverview>({ op: "overview" });
 export const loadAdminSystem = () => call<AdminSystem>({ op: "system" });
 export const loadAdminStorage = () => call<AdminStorage>({ op: "storage" });
+export const loadAdminUploads = () => call<AdminUploads>({ op: "uploads" });
 export const loadAdminAudit = (f: { actorId?: string; examId?: string; action?: string; limit?: number }) =>
   call<{ entries: AdminAuditEntry[] }>({ op: "audit", ...f });
 export const resendMoodleGrades = (examId?: string) => call<{ ok: true; queued: number }>({ op: "resend_moodle", examId });

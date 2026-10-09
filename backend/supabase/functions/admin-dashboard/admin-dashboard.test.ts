@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { createAdminHandler, type AdminProbes, type AdminStore, type AuditRow, type SystemStatus } from "../_shared/admin/handler.ts";
 import {
-  compareVersions, connectionOf, flagsAwaitingReview, gradePostState, kioskVersion, liveCounts, readiness, releaseVersion,
+  compareVersions, connectionOf, flagsAwaitingReview, gradePostState, kioskUploads, kioskVersion, liveCounts, readiness, releaseVersion,
   storageByExam, unreleased, versionsInUse, type AdminAttempt, type AdminExam, type Flag, type GradeTarget,
 } from "../_shared/admin/model.ts";
 
@@ -156,6 +156,34 @@ describe("storage per exam", () => {
   });
 });
 
+describe("kiosk uploads", () => {
+  const exams = [{ id: "EXAM-2026-AAA", name: "Test 3" }];
+  const kiosk = "Mozilla VignanExam/0.2.60";
+  const sub = (id: string, student: string, submittedSecondsAgo: number, ua: string | null = kiosk) =>
+    att({ id, exam_id: "EXAM-2026-AAA", student_id: student, state: "submitted", submitted_at: ago(submittedSecondsAgo), user_agent: ua });
+  const rolls = new Map([["s1", "21BQ1"], ["s2", "21BQ2"], ["s3", "21BQ3"], ["s4", "21BQ4"]]);
+  const objects = [
+    { key: "Test-3/21BQ1/recordings/parts/1.webm", size: 10, lastModified: ago(3000) },
+    { key: "Test-3/21BQ1/screenshots/1.jpg", size: 10, lastModified: ago(3000) },
+    { key: "Test-3/21BQ2/screenshots/1.jpg", size: 10, lastModified: ago(3000) },
+    { key: "EXAM-2026-AAA/s4/recordings/a.webm", size: 10, lastModified: ago(100) },
+  ];
+
+  it("marks a sitting complete once a recording arrives, partial or missing otherwise", () => {
+    const out = kioskUploads([sub("a1", "s1", 3600), sub("a2", "s2", 3600), sub("a3", "s3", 3600), sub("a4", "s4", 3600)], exams, rolls, objects, NOW);
+    const by = Object.fromEntries(out.map((u) => [u.attempt.id, u]));
+    expect(by.a1).toMatchObject({ state: "complete", kinds: ["recordings", "screenshots"], files: 2 });
+    expect(by.a2).toMatchObject({ state: "partial", kinds: ["screenshots"] });
+    expect(by.a3).toMatchObject({ state: "missing", files: 0, lastUpload: null });
+    expect(by.a4.state).toBe("complete");
+  });
+
+  it("gives a fresh submission time to finish uploading, and skips browser and unknown sittings", () => {
+    const out = kioskUploads([sub("a3", "s3", 600), sub("w", "s3", 3600, "x VignanExam/web"), sub("o", "s3", 3600, null), att({ id: "live", user_agent: kiosk })], exams, rolls, objects, NOW);
+    expect(out.map((u) => [u.attempt.id, u.state])).toEqual([["a3", "uploading"]]);
+  });
+});
+
 describe("flags awaiting review", () => {
   it("keeps serious flags nobody has reviewed", () => {
     const f = (id: string, severity: string): Flag => ({ id, exam_id: "EX-1", attempt_id: "a", student_id: "s1", violation_type: "Tab switch", severity, source: "system", created_at: ago(60) });
@@ -201,6 +229,13 @@ function makeStore(over: Partial<AdminStore> = {}) {
     gradeTargets: async () => [{ link_id: "L1", student_id: "s2", exam_id: "EX-DONE", lineitem: "https://m/li", last_score: null, last_posted_at: null, last_error: "HTTP 503", pending_score: 7, post_attempts: 12, next_attempt_at: null }],
     pendingMoodleUsers: async () => [],
     holds: async () => [],
+    phoneUploads: async () => ({
+      pending: [
+        { id: "m1", exam_id: "EX-DONE", student_id: "s2", question_id: "Q-1", question_index: 2, status: "WAITING", created_at: ago(7200), expires_at: ago(6000) },
+        { id: "m2", exam_id: "EX-LIVE", student_id: "s1", question_id: "Q-7582", question_index: null, status: "WAITING", created_at: ago(60), expires_at: ago(-540) },
+      ],
+      completed: 4,
+    }),
     auditLogs: async (f): Promise<AuditRow[]> => (f.action === "results.exported"
       ? [{ id: "x1", actor_id: "teacher-A", actor_role: "teacher", action: "results.exported", target_type: "exam", target_id: "EX-DONE", meta: { format: "csv", rows: 30, exam_ids: ["EX-DONE"] }, created_at: ago(500) }]
       : [{ id: "x2", actor_id: "admin-1", actor_role: "staff", action: "admin.moodle_resend", target_type: "all", target_id: "all", meta: {}, created_at: ago(10) }]),
@@ -216,7 +251,7 @@ function makeStore(over: Partial<AdminStore> = {}) {
 const probes: AdminProbes = {
   health: async () => [{ key: "database", label: "Database", ok: true, detail: "ok", ms: 4 }],
   latestRelease: async () => ({ tag: "lockdown-v0.2.60", version: "0.2.60", publishedAt: ago(3600), url: "https://gh/rel" }),
-  storageObjects: async () => ({ configured: true, truncated: false, objects: [{ key: "Live-exam/R/screenshots/1.jpg", size: 500, lastModified: ago(60) }] }),
+  storageObjects: async () => ({ configured: true, truncated: false, objects: [{ key: "Live-exam/R-s1/screenshots/1.jpg", size: 500, lastModified: ago(60) }] }),
   retentionDays: () => 90,
   backups: async () => ({ available: false, reason: "not_connected" }),
 };
@@ -259,6 +294,23 @@ describe("admin-dashboard endpoint", () => {
     expect(body.r2).toMatchObject({ configured: true, totalBytes: 500, retentionDays: 90 });
     expect(body.r2.exams[0]).toMatchObject({ folder: "Live-exam", examIds: ["EX-LIVE"] });
     expect(body.buckets[0].bucket).toBe("exam-records");
+  });
+
+  it("reports kiosk sittings missing evidence and unfinished phone uploads", async () => {
+    const { store } = makeStore({
+      attempts: async () => [
+        att({ id: "k1", exam_id: "EX-LIVE", student_id: "s1", state: "submitted", submitted_at: ago(3600), user_agent: "VignanExam/0.2.60" }),
+        att({ id: "k2", exam_id: "EX-LIVE", student_id: "s2", state: "submitted", submitted_at: ago(7200), user_agent: "VignanExam/0.2.60" }),
+        att({ id: "old", exam_id: "EX-LIVE", student_id: "s2", state: "submitted", started_at: ago(86400 * 40), submitted_at: ago(86400 * 40), user_agent: "VignanExam/0.2.60" }),
+      ],
+    });
+    const { body } = await call(store, { op: "uploads" });
+    expect(body.kiosk).toMatchObject({ configured: true, checked: 2, complete: 0, partial: 1, missing: 1 });
+    expect(body.kiosk.items.map((i: { attemptId: string; state: string }) => [i.attemptId, i.state])).toEqual([["k1", "partial"], ["k2", "missing"]]);
+    expect(body.kiosk.items[0]).toMatchObject({ student: { roll: "R-s1" }, exam: { name: "Live exam", owner: "Teacher A" }, kinds: ["screenshots"] });
+    expect(body.phone).toMatchObject({ completed: 4, open: 1, abandoned: 1 });
+    expect(body.phone.items[0]).toMatchObject({ id: "m1", open: false, question: "Q3", student: { roll: "R-s2" }, exam: { id: "EX-DONE" } });
+    expect(body.phone.items[1]).toMatchObject({ id: "m2", open: true, question: "Q-7582" });
   });
 
   it("queues failed Moodle grades for the retry job and logs it", async () => {

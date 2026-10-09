@@ -1,7 +1,79 @@
-import type { AdminOverview } from "@/shared/data/api/admin";
-import { Empty, NotTracked, Section, TabBar, Table, Td, ago, useAdminTab, when, type AdminTab } from "@/features/admin/components/AdminUI";
+import { useEffect, useState } from "react";
+import { loadAdminUploads, type AdminOverview, type AdminUploads, type UploadState } from "@/shared/data/api/admin";
+import { Button } from "@/features/teacher/components/PageChrome";
+import { Empty, NotTracked, Section, TabBar, Table, Td, ago, examLabel, studentLabel, useAdminTab, when, type AdminTab } from "@/features/admin/components/AdminUI";
 
 const KIND: Record<string, string> = { staff: "Staff", student: "Student", unlinked: "Not linked to anyone" };
+
+const UPLOAD: Record<UploadState, { label: string; cls: string }> = {
+  complete: { label: "Complete", cls: "text-success" },
+  uploading: { label: "Still uploading", cls: "text-soft" },
+  partial: { label: "Partial: no recording", cls: "text-amber" },
+  missing: { label: "Nothing uploaded", cls: "text-alert" },
+};
+
+function UploadsTab() {
+  const [data, setData] = useState<AdminUploads | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const load = async () => {
+    setLoading(true);
+    const res = await loadAdminUploads();
+    setLoading(false);
+    if (res.ok) { setData(res.data); setError(null); } else setError(res.error);
+  };
+  useEffect(() => { void load(); }, []);
+
+  if (error) return <p role="alert" className="border-l-2 border-alert bg-alert/5 px-4 py-3 text-[13px] text-alert">{error}</p>;
+  if (!data) return <p className="py-6 text-center font-mono text-[11px] uppercase tracking-widest text-soft">Checking evidence storage…</p>;
+  const k = data.kiosk, p = data.phone;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[12.5px] text-soft">
+          Last 30 days: <span className="font-medium text-ink tabular-nums">{k.checked}</span> kiosk sittings checked, <span className="tabular-nums text-success">{k.complete}</span> complete,{" "}
+          <span className="tabular-nums">{k.uploading}</span> still uploading, <span className="tabular-nums text-amber">{k.partial}</span> partial, <span className="tabular-nums text-alert">{k.missing}</span> with nothing uploaded.
+        </p>
+        <Button size="sm" onClick={() => void load()} disabled={loading}>{loading ? "Checking…" : "Check again"}</Button>
+      </div>
+
+      <Section note={<>Submitted exam-browser sittings compared with what reached evidence storage (R2). A sitting is complete once its recording has arrived; the first 30 minutes after submit count as still uploading.{k.truncated ? " Storage listing stopped at 50,000 files, so some sittings may look incomplete." : ""}</>}>
+        {!k.configured ? <Empty>Evidence storage (R2) is not configured on the server.</Empty>
+          : k.error ? <Empty>{k.error}</Empty>
+          : k.items.length === 0 ? <Empty>Every kiosk sitting from the last 30 days has its recording.</Empty> : (
+            <Table head={["Student", "Exam", "Submitted", "Received", "Status"]}>
+              {k.items.map((i) => (
+                <tr key={i.attemptId}>
+                  <Td>{studentLabel(i.student)}</Td>
+                  <Td>{examLabel(i.exam)}<span className="block font-mono text-[10px] text-soft">v{i.version}</span></Td>
+                  <Td className="whitespace-nowrap text-soft">{when(i.submittedAt)}</Td>
+                  <Td className="text-soft">{i.files ? `${i.files} file${i.files === 1 ? "" : "s"} · ${i.kinds.join(", ")}` : "—"}{i.lastUpload && <span className="block text-[11px]">last {ago(i.lastUpload)}</span>}</Td>
+                  <Td className={`font-mono text-[10px] uppercase ${UPLOAD[i.state].cls}`}>{UPLOAD[i.state].label}</Td>
+                </tr>
+              ))}
+            </Table>
+          )}
+      </Section>
+
+      <Section note={<>Handwritten answers sent from a phone by QR code. In the last 30 days {p.completed} finished; these were opened but never finished. <span className="tabular-nums">{p.open}</span> are still open, <span className="tabular-nums">{p.abandoned}</span> expired without an upload.</>}>
+        {p.items.length === 0 ? <Empty>No unfinished phone uploads.</Empty> : (
+          <Table head={["Student", "Exam", "Question", "Opened", "Status"]}>
+            {p.items.map((i) => (
+              <tr key={i.id}>
+                <Td>{studentLabel(i.student)}</Td>
+                <Td>{i.exam ? i.exam.name : <span className="text-soft">Opened before the sitting started</span>}</Td>
+                <Td className="font-mono text-[11px]">{i.question ?? "—"}</Td>
+                <Td className="whitespace-nowrap text-soft">{when(i.createdAt)}</Td>
+                <Td className={`font-mono text-[10px] uppercase ${i.open ? "text-soft" : "text-amber"}`}>{i.open ? `Open, expires ${ago(i.expiresAt)}` : "Expired, no upload"}</Td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Section>
+    </div>
+  );
+}
 
 type TabId = "norole" | "roletag" | "browsers" | "photos" | "uploads";
 
@@ -18,7 +90,7 @@ export default function AdminAccounts({ data }: { data: AdminOverview }) {
     { id: "roletag", label: "Missing role tag", count: a.missingAppRole.length, tone: moodleRisk ? "amber" : undefined },
     { id: "browsers", label: "Exam browsers", count: outdatedStudents, tone: "amber" },
     { id: "photos", label: "Registration photos" },
-    { id: "uploads", label: "Kiosk uploads" },
+    { id: "uploads", label: "Uploads" },
   ];
   const [tab, pick] = useAdminTab(tabs, "browsers");
 
@@ -76,9 +148,7 @@ export default function AdminAccounts({ data }: { data: AdminOverview }) {
         <NotTracked>The platform doesn't collect a registration photo for students. The optional photo-ID check before an exam takes a picture on the device but doesn't store it, so there is nothing to compare against.</NotTracked>
       )}
 
-      {tab === "uploads" && (
-        <NotTracked>The exam browser keeps unsent recordings and snapshots on the device and finishes uploading on its own, but it doesn't report that progress to the server yet. Teachers see missing pieces when they open a student's evidence.</NotTracked>
-      )}
+      {tab === "uploads" && <UploadsTab />}
     </div>
   );
 }
