@@ -24,7 +24,7 @@
 
 import { jsPDF } from "jspdf";
 import { createSnapshotOutbox } from "@/shared/services/snapshotOutbox";
-import { SNAPSHOT_FRAME, VIOLATION_FRAME, WEAK_SNAPSHOT_INTERVAL_MS, snapshotIntervalMs } from "@/shared/services/lowBandwidth";
+import { SNAPSHOT_FRAME, SNAPSHOT_GAP_MS, SNAPSHOT_INTERVAL_MS, VIOLATION_FRAME } from "@/shared/services/lowBandwidth";
 import type { ReportRow } from "@/shared/services/sessionReport";
 import { supabaseConfigured } from "@/shared/data/env";
 import { r2FetchData, r2List, r2ListFolders, r2PresignGet, r2PresignGetMany, r2PutBlob, type R2Kind } from "@/shared/services/r2Function";
@@ -439,7 +439,7 @@ export type ViolationSnap = {
 
 export type ScreenshotHandle = {
   setVideo: (video: HTMLVideoElement | null) => void;
-  /** Weak link: sample less often (see lowBandwidth.ts). */
+  /** Weak or lost link: keep sampling, hold uploads on the device until it recovers. */
   setLowBandwidth: (on: boolean) => void;
   /** Stop sampling and wait for queued snapshots; false means evidence gaps. */
   stop: () => Promise<boolean>;
@@ -447,8 +447,9 @@ export type ScreenshotHandle = {
 };
 
 /**
- * Periodic webcam thumbnails (one per SNAPSHOT_INTERVAL_MS, slower on a weak
- * link) plus an immediate, sharper frame for every violation.
+ * Periodic webcam thumbnails (one per SNAPSHOT_INTERVAL_MS on any connection)
+ * plus an immediate, sharper frame for every violation. On a weak link the
+ * thumbnails wait on disk and upload once it recovers; none are dropped.
  */
 export function startScreenshotCapture(opts: {
   examId: string;
@@ -462,10 +463,9 @@ export function startScreenshotCapture(opts: {
   const folder = storageFolderSegment(examId, examName);
   let video: HTMLVideoElement | null = null;
   let stopped = false;
-  let lowBandwidth = false;
   let lastCapture = -Infinity;
   let missedFrame = false;
-  const intervalMs = () => opts.intervalMs ?? snapshotIntervalMs(lowBandwidth);
+  const every = opts.intervalMs ?? SNAPSHOT_INTERVAL_MS;
   const outbox = createSnapshotOutbox({
     prefix: `${folder}/${roll}/screenshots/`,
     upload: async (key, blob) => !!await storeArtifactWithRetry(key, blob, "image/jpeg"),
@@ -477,12 +477,11 @@ export function startScreenshotCapture(opts: {
   const tick = () => {
     if (stopped || !video) return;
     const capturedAt = Date.now();
-    const every = intervalMs();
     if (capturedAt - lastCapture < every * 0.8) return;
     try {
       const blob = video.readyState >= 2 ? captureFrame(video, SNAPSHOT_FRAME.quality, SNAPSHOT_FRAME.maxEdge) : null;
       if (!blob) throw new Error("Camera frame unavailable");
-      if (Number.isFinite(lastCapture) && capturedAt - lastCapture > Math.max(every, WEAK_SNAPSHOT_INTERVAL_MS) * 2) missedFrame = true;
+      if (Number.isFinite(lastCapture) && capturedAt - lastCapture > Math.max(every * 2, SNAPSHOT_GAP_MS)) missedFrame = true;
       lastCapture = capturedAt;
       outbox.enqueue(buildR2Path(folder, roll, "screenshots", `snap_${capturedAt}.jpg`), blob);
     } catch {
@@ -494,7 +493,7 @@ export function startScreenshotCapture(opts: {
   const schedule = () => {
     window.clearTimeout(timer);
     if (stopped) return;
-    timer = window.setTimeout(() => { tick(); schedule(); }, intervalMs());
+    timer = window.setTimeout(() => { tick(); schedule(); }, every);
   };
   schedule();
   const retryId = window.setInterval(() => outbox.retry(), 10_000);
@@ -506,11 +505,7 @@ export function startScreenshotCapture(opts: {
       video?.addEventListener("loadeddata", tick);
       if (video && video.readyState >= 2) tick();
     },
-    setLowBandwidth: (on) => {
-      if (on === lowBandwidth) return;
-      lowBandwidth = on;
-      schedule();
-    },
+    setLowBandwidth: (on) => outbox.setPaused(on),
     stop: () => {
       stopped = true;
       window.clearTimeout(timer);

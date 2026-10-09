@@ -311,7 +311,7 @@ function StudentExamSession() {
   const [saveFailures, setSaveFailures] = useState(0);
   const connectionLost = useConnectionLost(saveFailures);
   // Good / weak / lost. Anything but good turns on low-bandwidth mode: harder
-  // caps on the live video, slower snapshots, recording parts held locally.
+  // caps on the live video; snapshots and recording parts held locally.
   const [videoQuality, setVideoQuality] = useState<LinkQuality>("unknown");
   const connectionState = useConnectionState(connectionLost, videoQuality);
   const lowBandwidth = connectionState !== "good";
@@ -560,8 +560,9 @@ function StudentExamSession() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViolation]);
 
-  // Periodic webcam snapshots (every 20 s, 30 s on a weak link) whether or not
-  // AI raises a warning; violations capture their own frame immediately above.
+  // Periodic webcam snapshots every second whether or not AI raises a warning
+  // (held on the device while the link is weak); violations capture their own
+  // frame immediately above.
   // The screen stream remains the source for the separate screen recording.
   useEffect(() => {
     if (step !== "exam") return;

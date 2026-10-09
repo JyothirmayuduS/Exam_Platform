@@ -8,16 +8,17 @@
 // (frontend/scripts/measure-proctor-storage.mjs; details in
 // docs/low-bandwidth-proctoring.md). Each recording is stored once, as 10 s
 // pieces; these are the totals for that one copy:
-//   before: ~1.02 GB = recordings ~0.85 GB (camera 0.83 GB + screen 21 MB) + 7,201 snapshots ~169 MB
-//   after:  ~0.38 GB = recordings ~375 MB  (camera 359 MB  + screen 16 MB) +   361 snapshots ~5 MB
+//   before: ~1.02 GB = recordings ~0.85 GB (camera 0.83 GB + screen 21 MB) + 7,201 snapshots ~169 MB (640 px, q 0.6)
+//   now:    ~0.48 GB = recordings ~375 MB  (camera 359 MB  + screen 16 MB) + 7,201 snapshots ~101 MB (480 px, q 0.5)
+// Snapshots are taken every second on any connection; a weak or lost link
+// holds their uploads on the device until it recovers.
 
 export type ConnectionState = "good" | "weak" | "lost";
 
-/** Periodic webcam snapshot cadence. Violations capture immediately. */
-export const SNAPSHOT_INTERVAL_MS = 20_000;
-export const WEAK_SNAPSHOT_INTERVAL_MS = 30_000;
-export const snapshotIntervalMs = (lowBandwidth: boolean) =>
-  lowBandwidth ? WEAK_SNAPSHOT_INTERVAL_MS : SNAPSHOT_INTERVAL_MS;
+/** Periodic webcam snapshot cadence, on any connection. Violations capture immediately. */
+export const SNAPSHOT_INTERVAL_MS = 1_000;
+/** A gap this long between periodic snapshots is reported as missing evidence. */
+export const SNAPSHOT_GAP_MS = 60_000;
 
 /** JPEG settings: periodic frames are thumbnails; flagged frames stay readable. */
 export const SNAPSHOT_FRAME = { maxEdge: 480, quality: 0.5 } as const;

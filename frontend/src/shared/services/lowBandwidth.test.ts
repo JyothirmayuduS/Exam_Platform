@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   RECOVER_AFTER_MS,
+  SNAPSHOT_FRAME,
+  SNAPSHOT_INTERVAL_MS,
   cameraEncoding,
   classifyConnection,
   remoteConnectionState,
   screenEncoding,
   settleConnection,
-  snapshotIntervalMs,
 } from "@/shared/services/lowBandwidth";
 
 describe("connection state", () => {
@@ -53,11 +54,9 @@ describe("low-bandwidth caps", () => {
     expect(screenEncoding(true).maxBitrate).toBeLessThan(screenEncoding(false).maxBitrate);
   });
 
-  it("never samples snapshots more often than every 15 s, nor less often than every 30 s", () => {
-    for (const low of [false, true]) {
-      expect(snapshotIntervalMs(low)).toBeGreaterThanOrEqual(15_000);
-      expect(snapshotIntervalMs(low)).toBeLessThanOrEqual(30_000);
-    }
+  it("samples snapshots every second as small thumbnails", () => {
+    expect(SNAPSHOT_INTERVAL_MS).toBe(1_000);
+    expect(SNAPSHOT_FRAME).toEqual({ maxEdge: 480, quality: 0.5 });
   });
 });
 

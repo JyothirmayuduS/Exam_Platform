@@ -3,7 +3,7 @@ import { startScreenshotCapture, listStudentArtifacts, getArtifactBlob } from "@
 import { getStudentIdByRoll } from "@/shared/data/api/students";
 import { r2List, r2FetchData, r2PresignGet, r2PutBlob } from "@/shared/services/r2Function";
 
-const outbox = vi.hoisted(() => ({ enqueue: vi.fn(), retry: vi.fn(), flush: vi.fn().mockResolvedValue(true) }));
+const outbox = vi.hoisted(() => ({ enqueue: vi.fn(), retry: vi.fn(), setPaused: vi.fn(), flush: vi.fn().mockResolvedValue(true) }));
 vi.mock("@/shared/services/snapshotOutbox", () => ({ createSnapshotOutbox: vi.fn(() => outbox) }));
 vi.mock("@/shared/data/env", () => ({ supabaseConfigured: true }));
 vi.mock("@/shared/services/r2Function", () => ({
@@ -34,34 +34,36 @@ describe("webcam snapshots", () => {
   }
   const start = Date.parse("2026-09-01T10:00:00Z");
 
-  it("does not take a snapshot every second: one at start, then one every 20 s", async () => {
+  it("takes a snapshot every second: one at start, then one each second", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(start);
     const handle = startScreenshotCapture({ examId: "EXAM", roll: "R1" });
     handle.setVideo(video());
-    await vi.advanceTimersByTimeAsync(19_000);
+    await vi.advanceTimersByTimeAsync(999);
     expect(outbox.enqueue).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(41_000);
+    await vi.advanceTimersByTimeAsync(4_001);
     expect(outbox.enqueue.mock.calls.map((c) => c[0])).toEqual(
-      [0, 20_000, 40_000, 60_000].map((ms) => `EXAM/R1/screenshots/snap_${start + ms}.jpg`),
+      [0, 1_000, 2_000, 3_000, 4_000, 5_000].map((ms) => `EXAM/R1/screenshots/snap_${start + ms}.jpg`),
     );
     expect(await handle.stop()).toBe(true);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(outbox.enqueue).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(outbox.enqueue).toHaveBeenCalledTimes(6);
     expect(outbox.flush).toHaveBeenCalledTimes(1);
   });
 
-  it("slows to one every 30 s on a weak connection and back to 20 s when it recovers", async () => {
+  it("keeps one every second on a weak connection and holds uploads until it recovers", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(start);
     const handle = startScreenshotCapture({ examId: "EXAM", roll: "R1" });
     handle.setVideo(video());
     handle.setLowBandwidth(true);
+    expect(outbox.setPaused).toHaveBeenLastCalledWith(true);
     await vi.advanceTimersByTimeAsync(90_000);
-    expect(outbox.enqueue).toHaveBeenCalledTimes(4); // 0, 30, 60, 90 s
+    expect(outbox.enqueue).toHaveBeenCalledTimes(91);
     handle.setLowBandwidth(false);
-    await vi.advanceTimersByTimeAsync(40_000);
-    expect(outbox.enqueue).toHaveBeenCalledTimes(6); // +20, +40 s
+    expect(outbox.setPaused).toHaveBeenLastCalledWith(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(outbox.enqueue).toHaveBeenCalledTimes(101);
     expect(await handle.stop()).toBe(true);
   });
 
@@ -81,8 +83,8 @@ describe("webcam snapshots", () => {
     vi.mocked(r2PutBlob).mockResolvedValue("EXAM/R1/violations/x.jpg");
     const handle = startScreenshotCapture({ examId: "EXAM", roll: "R1" });
     handle.setVideo(video(1920, 1080));
-    await vi.advanceTimersByTimeAsync(5_000);
-    const flaggedAt = start + 5_000;
+    await vi.advanceTimersByTimeAsync(5_500);
+    const flaggedAt = start + 5_500;
     const blob = await handle.captureViolationSnapshot("phone_detected", flaggedAt);
     expect(blob).toBeInstanceOf(Blob);
     expect(r2PutBlob).toHaveBeenCalledWith(expect.objectContaining({
@@ -91,8 +93,11 @@ describe("webcam snapshots", () => {
     // Compressed, but sharper than the periodic thumbnails.
     expect(canvasWidths.at(-1)).toBe(960);
     expect(HTMLCanvasElement.prototype.toDataURL).toHaveBeenLastCalledWith("image/jpeg", 0.7);
-    // The violation frame is extra: the periodic schedule is unchanged.
-    expect(outbox.enqueue).toHaveBeenCalledTimes(1);
+    // The violation frame is extra: the periodic schedule stays on whole seconds.
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(outbox.enqueue.mock.calls.map((c) => c[0])).toEqual(
+      [0, 1, 2, 3, 4, 5, 6, 7].map((s) => `EXAM/R1/screenshots/snap_${start + s * 1_000}.jpg`),
+    );
     await handle.stop();
   });
 });

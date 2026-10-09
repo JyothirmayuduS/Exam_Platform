@@ -22,9 +22,10 @@ Anything other than good turns on low-bandwidth mode:
 
 - Live camera: 150 kbps, 10 fps, half width and height (normally 450 kbps, 15 fps).
 - Live screen share: 300 kbps, 2 fps (normally 800 kbps, 5 fps).
-- Webcam snapshots: every 30 s (normally every 20 s).
+- Webcam snapshots: still taken every second and saved on the device, but
+  their uploads wait until the link recovers. None are dropped.
 - Recording pieces stay on the device and upload when the link recovers.
-  Submit still drains them.
+- Submit still drains both the held snapshots and the held recording pieces.
 
 Grading, the server deadline, answer saving and violation flags are untouched.
 Every violation still captures its own frame immediately, whatever the
@@ -32,8 +33,7 @@ snapshot interval. The question paper stays text-only.
 
 ## Always on (any connection)
 
-- Snapshots every 20 s instead of every second: 480 px JPEG at quality 0.5
-  (was 640 px at 0.6).
+- Snapshots every second: 480 px JPEG at quality 0.5 (was 640 px at 0.6).
 - Violation frames: 960 px at quality 0.7 (was 1600 px at 0.85). From the
   640×480 exam camera, the frame size stays the same.
 - Live video uses a single capped layer (no simulcast).
@@ -51,13 +51,16 @@ Each recording is stored once, as 10 s pieces under `recordings/parts/` (see
 at submit; review and the evidence ZIP join the pieces when they are read.
 Every figure below is for that one stored copy.
 
-| | Before | After |
+| | Before | Now |
 | --- | --- | --- |
 | Camera + mic recording | 923 kbps → 0.83 GB | 399 kbps → 0.36 GB |
 | Screen recording (text page) | 23 kbps → 21 MB | 18 kbps → 16 MB |
-| Webcam snapshots | 7,201 × 23.5 KB → 169 MB | 361 × 14.0 KB → 5 MB |
+| Webcam snapshots (one per second) | 7,201 × 23.5 KB → 169 MB | 7,201 × 14.0 KB → 101 MB |
 | Each violation frame | 46.9 KB | 29.2 KB |
-| **Total** | **≈ 1.02 GB** | **≈ 0.38 GB** (63% less) |
+| **Total** | **≈ 1.02 GB** | **≈ 0.48 GB** (53% less) |
+
+Snapshots were briefly taken every 20 s (361 per exam, about 5 MB). They are
+back to one per second; the smaller 480 px frames keep that at about 101 MB.
 
 These are measured figures for that synthetic scene. A real webcam with more
 motion and noise can push the camera recorder toward its cap. That is
