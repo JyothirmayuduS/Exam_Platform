@@ -49,6 +49,11 @@ export type UploadResult = boolean | { refused: number; reason: string; final?: 
 /** Permanent refusals of one item before it stops being retried. */
 export const REFUSAL_LIMIT = 3;
 
+/** Statuses that mean "this exact request will never succeed". 401 (expired sign-in), 408 and 429 are worth retrying. */
+export function isPermanentRefusal(status: number | null): boolean {
+  return status != null && status >= 400 && status < 500 && status !== 401 && status !== 408 && status !== 429;
+}
+
 export type SnapshotOutbox = {
   enqueue: (key: string, blob: Blob) => void;
   retry: () => void;

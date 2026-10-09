@@ -23,7 +23,7 @@
 // A piece storage refuses for good (a 4xx such as a bad name or a forbidden
 // folder) is retried REFUSAL_LIMIT times, then kept on disk and reported
 // instead of holding up the submitted screen forever.
-import { createSnapshotOutbox, defaultSnapshotStore, type SnapshotOutbox, type SnapshotStore, type UploadResult } from "@/shared/services/snapshotOutbox";
+import { createSnapshotOutbox, defaultSnapshotStore, isPermanentRefusal, type SnapshotOutbox, type SnapshotStore, type UploadResult } from "@/shared/services/snapshotOutbox";
 import { r2PutBlobResult } from "@/shared/services/r2Function";
 
 export type RecordingFamily = "exam" | "screen";
@@ -173,10 +173,7 @@ export type PieceRefusal = { refused: number; reason: string; final?: boolean };
 
 type UploadFn = (opts: { examId: string; ownerSegment: string; kind: "recordings"; name: string; blob: Blob }) => Promise<string | null | PieceRefusal>;
 
-/** Statuses that mean "this exact request will never succeed". 401 (expired sign-in), 408 and 429 are worth retrying. */
-export function isPermanentRefusal(status: number | null): boolean {
-  return status != null && status >= 400 && status < 500 && status !== 401 && status !== 408 && status !== 429;
-}
+export { isPermanentRefusal };
 
 /** Same rules as store-artifact's safeName, so a bad name never leaves the device. */
 const SAFE_NAME = /^[A-Za-z0-9._/-]+$/;

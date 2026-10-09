@@ -31,6 +31,7 @@ import { createPieceFetcher, describeMissing, joinPieces, LINK_REFRESH_MARGIN_SE
 import { createBlobSink } from "@/shared/services/zipStream";
 import { startPiecePlayer, type PlayerStatus } from "@/features/proctoring/services/piecePlayer";
 import { violationExamSeconds } from "@/features/proctoring/domain/violationTime";
+import { pageAt, snapshotTime, timelinePage, TIMELINE_PAGE, TIMELINE_STEPS, type TimelineFrame } from "@/features/proctoring/domain/snapshotTimeline";
 
 function clock(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec) || sec < 0) return "00:00";
@@ -57,15 +58,15 @@ type LoadingArtifacts = {
   screen: PieceTimeline<R2Artifact> | null;
   posterUrl: string | null;
   snapshotUrls: string[];
-  /** Periodic screenshots (from the screenshots/ folder). */
-  screenshotTimelineUrls: { url: string; timestamp: number }[];
+  /** Every periodic snapshot (screenshots/ folder), sorted by time; signed a page at a time. */
+  screenshotFrames: TimelineFrame[];
   reportKey: string | null;
   status: "loading" | "ready" | "empty" | "error";
 };
 
 const EMPTY: LoadingArtifacts = {
   fileKey: null, camera: null, screen: null, posterUrl: null, snapshotUrls: [],
-  screenshotTimelineUrls: [], reportKey: null, status: "loading",
+  screenshotFrames: [], reportKey: null, status: "loading",
 };
 
 function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, folderOverride?: string): LoadingArtifacts {
@@ -102,19 +103,15 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
           recordings.find((a) => a.name.startsWith("camera_")) ??
           recordings[0] ??
           null;
-        const screenshotArts = arts
-          .filter((a) => a.kind === "screenshots" && a.name.startsWith("snap_"))
-          .sort((a, b) => Number(a.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0) - Number(b.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0))
-          .slice(0, 120); // Cap at 120 to avoid signing too many URLs
-        const evidenceKeys = [...snaps.slice(0, 8).map((a) => a.key), ...screenshotArts.map((a) => a.key)];
+        const screenshotFrames: TimelineFrame[] = arts
+          .filter((a) => a.kind === "screenshots")
+          .map((a) => ({ key: a.key, timestamp: snapshotTime(a.name) }))
+          .filter((f): f is TimelineFrame => f.timestamp != null)
+          .sort((a, b) => a.timestamp - b.timestamp);
+        const evidenceKeys = snaps.slice(0, 8).map((a) => a.key);
         const signed = evidenceKeys.length ? await getArtifactUrls(evidenceKeys, EVIDENCE_LINK_SEC) : new Map<string, string>();
         const signOne = async (key: string) => signed.get(key) ?? await getArtifactObjectUrl(key, EVIDENCE_LINK_SEC);
         const snapshotUrls = await Promise.all(snaps.slice(0, 8).map((a) => signOne(a.key)));
-        const screenshotTimeline: { url: string; timestamp: number }[] = [];
-        for (const a of screenshotArts) {
-          const url = await signOne(a.key);
-          if (url) screenshotTimeline.push({ url, timestamp: Number(a.name.match(/snap_(\d+)\.jpg$/)?.[1] ?? 0) });
-        }
         if (cancelled) return;
         const camera = cameraPieces.length ? pieceTimeline(cameraPieces) : null;
         const screen = screenPieces.length ? pieceTimeline(screenPieces) : null;
@@ -125,7 +122,7 @@ function useRecordingArtifacts(examId: string, roll: string, reloadKey = 0, fold
           screen,
           posterUrl: snapshotUrls[0] ?? null,
           snapshotUrls: snapshotUrls.filter((u): u is string => !!u),
-          screenshotTimelineUrls: screenshotTimeline,
+          screenshotFrames,
           reportKey: report?.key ?? null,
           status: havePieces || chosen ? "ready" : "empty",
         });
@@ -158,6 +155,23 @@ function useRefreshingUrl(key: string | null, retry: number): string | null {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [key, retry]);
   return url;
+}
+
+/** Signed links for the snapshots on the visible page of the timeline, in one batch. */
+function useSignedFrames(keys: string[]): Map<string, string> {
+  const [urls, setUrls] = useState<Map<string, string>>(new Map());
+  const joined = keys.join("\n");
+  useEffect(() => {
+    const list = joined ? joined.split("\n") : [];
+    if (list.length === 0) { setUrls(new Map()); return; }
+    let cancelled = false;
+    void (async () => {
+      const signed = await getArtifactUrls(list, EVIDENCE_LINK_SEC).catch(() => new Map<string, string>());
+      if (!cancelled) setUrls(signed);
+    })();
+    return () => { cancelled = true; };
+  }, [joined]);
+  return urls;
 }
 
 function sortViolations(violations: ViolationEvent[]): ViolationEvent[] {
@@ -332,6 +346,17 @@ export default function RecordingReviewer({
     [sorted, attemptStartedAt],
   );
   const placed = markers.filter((m): m is typeof m & { seconds: number } => m.seconds != null);
+
+  // Snapshot strip: one page of frames, either a stretch of every frame or
+  // a sample across the whole exam (default).
+  const frames = artifacts.screenshotFrames;
+  const [frameStep, setFrameStep] = useState<number>(0);
+  const [framePage, setFramePage] = useState(0);
+  useEffect(() => { setFramePage(0); }, [frames, frameStep]);
+  const strip = useMemo(() => timelinePage(frames, frameStep, framePage), [frames, frameStep, framePage]);
+  const stripUrls = useSignedFrames(useMemo(() => strip.frames.map((f) => f.key), [strip]));
+  const frameOrigin = originMs ?? frames[0]?.timestamp ?? 0;
+  const frameOffset = (ts: number) => Math.max(0, Math.round((ts - frameOrigin) / 1000));
 
   // Download the joined pieces as one local file. Never uploaded back: the
   // pieces are the single stored copy of the recording.
@@ -619,24 +644,70 @@ export default function RecordingReviewer({
         </div>
       </div>
 
-      {/* Per-second screenshot timeline — scrollable strip of camera
-          snapshots taken every 1 second during the exam. Teachers can
-          visually scan what the student looked like at any moment. */}
-      {artifacts.screenshotTimelineUrls.length > 0 && (
+      {/* Snapshot timeline — the camera snapshots taken every second, one
+          page at a time: a sample across the whole exam, or every frame of
+          a stretch. Frames sit on the recording's timeline by wall-clock
+          time (or relative to the first frame for older recordings). */}
+      {frames.length > 0 && (
         <div>
-          <div className="flex items-center justify-between">
-            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">Screenshot timeline · {artifacts.screenshotTimelineUrls.length} frame{artifacts.screenshotTimelineUrls.length === 1 ? "" : "s"}</p>
-            <p className="font-mono text-[9px] text-ink-soft">1 frame / second</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">
+              Snapshot timeline · {frames.length} frame{frames.length === 1 ? "" : "s"}
+              {strip.frames.length > 0 && ` · showing ${clock(frameOffset(strip.frames[0].timestamp))}–${clock(frameOffset(strip.frames[strip.frames.length - 1].timestamp))}`}
+            </p>
+            <div className="flex items-center gap-1.5 font-mono text-[10px] text-ink-soft">
+              <label className="flex items-center gap-1">
+                Show
+                <select
+                  aria-label="Snapshot sampling"
+                  value={frameStep}
+                  onChange={(e) => setFrameStep(Number(e.target.value))}
+                  className="border border-line bg-paper px-1 py-0.5"
+                >
+                  {TIMELINE_STEPS.map((s) => (
+                    <option key={s} value={s}>
+                      {s === 0 ? `whole exam (1 per ${strip.stepSec} s)` : s === 1 ? "every frame" : s < 60 ? `1 per ${s} s` : "1 per minute"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {strip.pages > 1 && (
+                <>
+                  <button
+                    onClick={() => setFramePage(strip.page - 1)}
+                    disabled={strip.page === 0}
+                    className="border border-line px-2 py-0.5 hover:border-forest disabled:opacity-40"
+                  >
+                    ‹ Earlier
+                  </button>
+                  <span>page {strip.page + 1} / {strip.pages}</span>
+                  <button
+                    onClick={() => setFramePage(strip.page + 1)}
+                    disabled={strip.page >= strip.pages - 1}
+                    className="border border-line px-2 py-0.5 hover:border-forest disabled:opacity-40"
+                  >
+                    Later ›
+                  </button>
+                </>
+              )}
+              {hasVideo && (
+                <button
+                  onClick={() => setFramePage(pageAt(frames, frameStep, frameOrigin + current * 1000))}
+                  className="border border-line px-2 py-0.5 hover:border-forest"
+                >
+                  At playhead
+                </button>
+              )}
+            </div>
           </div>
           <div className="mt-2 flex gap-1.5 overflow-x-auto pb-2" style={{ scrollbarWidth: "thin" }}>
-            {artifacts.screenshotTimelineUrls.map((snap, i) => {
-              // Place the frame on the recording's timeline by wall-clock time
-              // (or relative to the first frame for older recordings).
-              const firstTs = originMs ?? artifacts.screenshotTimelineUrls[0]?.timestamp ?? snap.timestamp;
-              const offsetSec = Math.max(0, Math.round((snap.timestamp - firstTs) / 1000));
-              
-              // Find if any violation occurred near this snapshot (+/- 1.5 seconds)
-              const nearbyViolations = placed.filter(m => Math.abs(m.seconds - offsetSec) <= 1.5);
+            {strip.frames.map((frame, i) => {
+              const offsetSec = frameOffset(frame.timestamp);
+              const url = stripUrls.get(frame.key);
+
+              // Flags near this frame (within half the sampling step, at least 1.5 s).
+              const near = Math.max(1.5, strip.stepSec / 2);
+              const nearbyViolations = placed.filter(m => Math.abs(m.seconds - offsetSec) <= near);
               const hasCritical = nearbyViolations.some(m => m.severity === "critical" || m.severity === "high");
               const hasWarning = nearbyViolations.length > 0;
               const hasAudio = nearbyViolations.some(m => /voice|speak|audio|talk|sound/i.test(m.label));
@@ -645,17 +716,21 @@ export default function RecordingReviewer({
 
               return (
                 <button
-                  key={snap.url}
+                  key={frame.key}
                   title={`${clock(offsetSec)} into exam${hasWarning ? ' (Warning)' : ''}`}
                   onClick={() => seekTo(offsetSec)}
                   className={`group relative flex-shrink-0 border-2 transition-colors ${borderClass}`}
                 >
-                  <img
-                    src={snap.url}
-                    alt={`frame ${i + 1}`}
-                    loading="lazy"
-                    className={`h-14 w-20 object-cover ${hasWarning ? "opacity-90" : ""}`}
-                  />
+                  {url ? (
+                    <img
+                      src={url}
+                      alt={`frame ${strip.page * TIMELINE_PAGE + i + 1}`}
+                      loading="lazy"
+                      className={`h-14 w-20 object-cover ${hasWarning ? "opacity-90" : ""}`}
+                    />
+                  ) : (
+                    <span className="block h-14 w-20 bg-ink/10" />
+                  )}
                   <span className={`absolute bottom-0 left-0 right-0 px-1 py-0.5 text-center font-mono text-[8px] text-paper ${hasCritical ? "bg-alert/80" : hasWarning ? "bg-amber/80" : "bg-ink/60"}`}>
                     {clock(offsetSec)}
                   </span>

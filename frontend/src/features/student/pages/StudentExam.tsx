@@ -1221,13 +1221,13 @@ function StudentExamSession() {
       confirmTimer = setTimeout(doExit, 800);
     }
 
-    // Recording pieces still on the device: never exit; the screen shows
-    // what is left and the uploads keep retrying on any link.
+    // Recording pieces or snapshots still on the device: never exit; the
+    // screen shows what is left and the uploads keep retrying on any link.
     if (!piecesLanded) return () => clearTimeout(confirmTimer);
 
-    // Hard timeout so the student is never trapped once the recording has
-    // landed. While the snapshots and PDF are still uploading allow up to 2
-    // minutes; once that settles (stored / partial / failed) exit after 30 s.
+    // Hard timeout so the student is never trapped once the recording and
+    // snapshots have landed. While the violation frames and PDF are still
+    // uploading allow up to 2 minutes; once that settles exit after 30 s.
     const timeoutTimer = setTimeout(doExit, artifactStatus?.state === "uploading" ? 120_000 : 30_000);
 
     return () => {
@@ -1532,6 +1532,7 @@ function StudentExamSession() {
     // Whatever fails below, the student must land on the submitted screen and
     // be able to close it: each stage catches its own errors.
     let snapshotsStored: Promise<boolean> = Promise.resolve(false);
+    let snapshotQueue: ScreenshotHandle | null = null;
     try {
       // Tear down the optional phone desk-monitor session before evidence upload.
       setEndMonitor(true);
@@ -1539,9 +1540,10 @@ function StudentExamSession() {
       examRecordingRef.current?.stop();
       examRecordingRef.current = null;
       setArtifactStatus({ state: "uploading", detail: "Securing your exam recording…" });
-      // Stop sampling immediately, but keep uploading queued frames. The exit
-      // flow waits for this promise as well as the recording, so the tail of a
-      // slow-network exam is not abandoned when the native window closes.
+      // Stop sampling immediately, but keep uploading queued frames. The
+      // submitted screen counts them with the recording pieces and stays open
+      // until both have drained (or the wait-limit warning lets the student go).
+      snapshotQueue = screenshotHandleRef.current;
       snapshotsStored = screenshotHandleRef.current?.stop() ?? Promise.resolve(false);
       screenshotHandleRef.current = null;
     } catch (err) {
@@ -1603,6 +1605,7 @@ function StudentExamSession() {
           screen,
           violationSnapshotCount: violationSnapshotsRef.current.length,
           snapshots: snapshotsStored,
+          snapshotQueue,
           onPiecesLeft: setPiecesLeft,
           onPiecesLanded: () => setPiecesLanded(true),
           onWaitLimit: (left) => setCloseWarning(waitingPiecesWarning(left)),
@@ -1885,7 +1888,7 @@ function StudentExamSession() {
         attemptId={attemptId ?? null}
         uploadState={artifactStatus?.state}
         uploadDetail={artifactStatus?.detail}
-        recordingPiecesLeft={piecesLanded ? 0 : Math.max(1, piecesLeft)}
+        evidenceLeft={piecesLanded ? 0 : Math.max(1, piecesLeft)}
         closeWarning={piecesLanded ? null : closeWarning}
         submitFailed={submitFailed}
         report={submitGrade && showInstantReport ? submitGrade : null}

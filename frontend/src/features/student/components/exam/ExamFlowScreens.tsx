@@ -220,7 +220,7 @@ export function RulesScreen({ examName, durationMin, questionsLength, agreed, on
   );
 }
 
-export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId, uploadState, uploadDetail, recordingPiecesLeft = 0, closeWarning = null, submitFailed, report, feedbackStudentId }: {
+export function SubmittedScreen({ answeredCount, totalQuestions, studentName, studentRoll, violationsCount, examId, attemptId, uploadState, uploadDetail, evidenceLeft = 0, closeWarning = null, submitFailed, report, feedbackStudentId }: {
   answeredCount: number;
   totalQuestions: number;
   studentName: string;
@@ -231,10 +231,10 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
   /** Where the exam recording/evidence landed after submit (storage status). */
   uploadState?: "uploading" | "stored" | "partial" | "failed";
   uploadDetail?: string;
-  /** Recording pieces still on this device; the window stays open until 0. */
-  recordingPiecesLeft?: number;
+  /** Recording pieces and camera snapshots still on this device; the window stays open until 0. */
+  evidenceLeft?: number;
   /**
-   * Set once the student may close although pieces are still on this device
+   * Set once the student may close although evidence is still on this device
    * (they waited long enough); shown next to the enabled Close button.
    */
   closeWarning?: string | null;
@@ -246,12 +246,12 @@ export function SubmittedScreen({ answeredCount, totalQuestions, studentName, st
   feedbackStudentId?: string | null;
 }) {
   const [feedbackDone, setFeedbackDone] = useState(!feedbackStudentId);
-  const holdOpen = !!report || !feedbackDone || recordingPiecesLeft > 0;
-  const mayClose = recordingPiecesLeft === 0 || !!closeWarning;
+  const holdOpen = !!report || !feedbackDone || evidenceLeft > 0;
+  const mayClose = evidenceLeft === 0 || !!closeWarning;
   const piecesNote = closeWarning
     ? closeWarning
-    : recordingPiecesLeft > 0
-    ? `Uploading your exam recording (${recordingPiecesLeft} piece${recordingPiecesLeft === 1 ? "" : "s"} left). Keep this window open and stay connected; it closes by itself when the upload finishes.`
+    : evidenceLeft > 0
+    ? `Uploading your exam recording and camera snapshots (${evidenceLeft} item${evidenceLeft === 1 ? "" : "s"} left). Keep this window open and stay connected; it closes by itself when the upload finishes.`
     : null;
   // Real attempt id from the DB (short-displayed). Falls back to the exam id
   // when the attempt row hasn't been created yet — never a random fake.

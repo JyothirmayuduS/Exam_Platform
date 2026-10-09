@@ -18,7 +18,7 @@ export type ConnectionState = "good" | "weak" | "lost";
 /** Periodic webcam snapshot cadence, on any connection. Violations capture immediately. */
 export const SNAPSHOT_INTERVAL_MS = 1_000;
 /** A gap this long between periodic snapshots is reported as missing evidence. */
-export const SNAPSHOT_GAP_MS = 60_000;
+export const SNAPSHOT_GAP_MS = 5_000;
 
 /** JPEG settings: periodic frames are thumbnails; flagged frames stay readable. */
 export const SNAPSHOT_FRAME = { maxEdge: 480, quality: 0.5 } as const;

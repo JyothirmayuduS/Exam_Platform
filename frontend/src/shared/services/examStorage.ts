@@ -23,7 +23,8 @@
 // checks both prefixes and merges the results.
 
 import { jsPDF } from "jspdf";
-import { createSnapshotOutbox } from "@/shared/services/snapshotOutbox";
+import { createSnapshotOutbox, type SnapshotStore } from "@/shared/services/snapshotOutbox";
+import { claimSnapshotFolder, releaseSnapshotFolder, uploadSnapshot, type SnapshotUpload } from "@/shared/services/snapshotLeftovers";
 import { SNAPSHOT_FRAME, SNAPSHOT_GAP_MS, SNAPSHOT_INTERVAL_MS, VIOLATION_FRAME } from "@/shared/services/lowBandwidth";
 import type { ReportRow } from "@/shared/services/sessionReport";
 import { supabaseConfigured } from "@/shared/data/env";
@@ -346,26 +347,6 @@ async function storeArtifact(path: string, blob: Blob, _contentType: string): Pr
   return null;
 }
 
-/**
- * storeArtifact with retries for irreplaceable evidence. A flaky edge-function invocation or presigned-PUT handshake can
- * fail once and then succeed on the next attempt — a recording is too
- * important to give up after a single try.
- */
-async function storeArtifactWithRetry(
-  path: string,
-  blob: Blob,
-  contentType: string,
-  attempts = 3,
-): Promise<StoredArtifact | null> {
-  let last: StoredArtifact | null = null;
-  for (let i = 0; i < attempts; i++) {
-    if (i > 0) await new Promise((r) => setTimeout(r, 1200 * i));
-    last = await storeArtifact(path, blob, contentType);
-    if (last) return last;
-  }
-  return last;
-}
-
 /** Store an arbitrary blob in Cloudflare R2. */
 export async function uploadArtifactBlob(
   key: string,
@@ -443,6 +424,10 @@ export type ScreenshotHandle = {
   setLowBandwidth: (on: boolean) => void;
   /** Stop sampling and wait for queued snapshots; false means evidence gaps. */
   stop: () => Promise<boolean>;
+  /** Snapshots still waiting on this device (refused ones excluded). */
+  pendingCount: () => number;
+  /** Snapshots storage refused for good: kept on this device, not retried. */
+  refusedCount: () => number;
   captureViolationSnapshot: (violationType: string, capturedAt?: number) => Promise<Blob | null>;
 };
 
@@ -458,6 +443,8 @@ export function startScreenshotCapture(opts: {
   /** Fixed cadence override; by default the low-bandwidth policy decides. */
   intervalMs?: number;
   onError?: (message: string) => void;
+  store?: SnapshotStore;
+  upload?: SnapshotUpload;
 }): ScreenshotHandle {
   const { examId, examName, roll } = opts;
   const folder = storageFolderSegment(examId, examName);
@@ -466,10 +453,13 @@ export function startScreenshotCapture(opts: {
   let lastCapture = -Infinity;
   let missedFrame = false;
   const every = opts.intervalMs ?? SNAPSHOT_INTERVAL_MS;
+  const prefix = `${folder}/${roll}/screenshots/`;
   const outbox = createSnapshotOutbox({
-    prefix: `${folder}/${roll}/screenshots/`,
-    upload: async (key, blob) => !!await storeArtifactWithRetry(key, blob, "image/jpeg"),
+    prefix,
+    store: opts.store,
+    upload: opts.upload ?? uploadSnapshot,
     onError: opts.onError,
+    after: claimSnapshotFolder(prefix),
   });
 
   // Sampling is independent of upload speed. Small JPEGs are persisted to
@@ -515,10 +505,14 @@ export function startScreenshotCapture(opts: {
       return stopping ??= (async () => {
         // Keep retrying after submit while the app remains open. Failure is
         // visible via onError; queued bytes remain on disk across a crash.
+        // A snapshot storage refuses for good leaves the queue (kept on disk).
         while (!await outbox.flush()) await new Promise((resolve) => window.setTimeout(resolve, 10_000));
+        releaseSnapshotFolder(prefix);
         return Number.isFinite(lastCapture) && !missedFrame;
       })();
     },
+    pendingCount: () => outbox.pendingCount(),
+    refusedCount: () => outbox.refused().length,
     captureViolationSnapshot: async (violationType: string, capturedAt = Date.now()) => {
       if (!video || video.readyState < 2) return null;
       const blob = captureFrame(video, VIOLATION_FRAME.quality, VIOLATION_FRAME.maxEdge);
