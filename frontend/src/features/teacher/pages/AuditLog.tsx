@@ -13,6 +13,7 @@ const FILTERS: { label: string; prefix?: string }[] = [
   { label: "Time & pauses", prefix: "attempt.time" },
   { label: "Accommodations", prefix: "enrollment." },
   { label: "Publishing", prefix: "exam." },
+  { label: "Results & ERP", prefix: "result" },
 ];
 
 const ACTION_LABEL: Record<string, string> = {
@@ -28,7 +29,17 @@ const ACTION_LABEL: Record<string, string> = {
   "exam.email_sent": "Sent exam email",
   "grading.delegated": "Delegated grading",
   "student.provisioned": "Provisioned student accounts",
+  "results.exported": "Exported results for ERP",
+  "result.withheld": "Withheld result for malpractice review",
+  "result.released_from_hold": "Released result from malpractice hold",
+  "lti.link_mapped": "Linked a Moodle activity",
+  "lti.link_unmapped": "Unlinked a Moodle activity",
+  "lti.student_linked": "Confirmed a Moodle student",
+  "admin.moodle_resend": "Resent failed Moodle grades",
+  "admin.flag_reviewed": "Reviewed a proctoring flag",
 };
+
+export const auditActionLabel = (action: string) => ACTION_LABEL[action] ?? action;
 
 type Who = { name: string; detail: string };
 

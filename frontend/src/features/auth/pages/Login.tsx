@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams, useLocation, Link } from "react-router-dom";
 import { getSupabase } from "@/shared/data/supabase";
 import { supabaseConfigured } from "@/shared/data/env";
-import { useAuth } from "@/features/auth/auth";
+import { isStaffAdmin, useAuth } from "@/features/auth/auth";
 import { isTauri } from "@/shared/platform/platform";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -187,7 +187,7 @@ export default function Login() {
         // Back to the Moodle teacher page to finish linking the Moodle course.
         navigate(`/lti/launch${typeof from.search === "string" && from.search.startsWith("?") ? from.search : ""}`, { replace: true });
       } else {
-        navigate("/teacher");
+        navigate((await isStaffAdmin()) ? "/admin" : "/teacher");
       }
     } else {
       navigate(studentDestination, { replace: true });

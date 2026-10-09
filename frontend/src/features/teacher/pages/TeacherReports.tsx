@@ -6,6 +6,7 @@ import { getSupabase } from "@/shared/data/supabase";
 import { listExamsForTeacher, listLiveAttempts, loadExamBundle, type ExamRecord } from "@/shared/data/examApi";
 import { examClosed, visibilityFor, type ReleaseSettings } from "@/shared/domain/exam";
 import ResultReleasePanel from "@/features/teacher/components/ResultReleasePanel";
+import ErpExportPanel from "@/features/teacher/components/ErpExportPanel";
 import { PASS_PERCENT, buildExamReport, type ItemRow } from "@/features/teacher/services/reportStats";
 import JobBanner from "@/shared/components/JobBanner";
 import {
@@ -255,6 +256,8 @@ export function Reports({ notify }: { notify: (s: string) => void }) {
         </div>
       )}
 
+      {activeTab === "ERP export" && <ErpExportPanel exams={exams} selectedExam={selectedExam} notify={notify} />}
+
       {activeTab === "Across exams" && <ExamTrends exams={exams} />}
     </>
   );
@@ -302,7 +305,7 @@ function FeedbackSummary({ rows }: { rows: { rating: number; comment: string | n
   );
 }
 
-const TABS = ["Overview", "Questions", "Students", "Release", "Across exams"] as const;
+const TABS = ["Overview", "Questions", "Students", "Release", "ERP export", "Across exams"] as const;
 type Tab = (typeof TABS)[number];
 
 function releaseSummary(exam: ExamRecord | undefined): string {

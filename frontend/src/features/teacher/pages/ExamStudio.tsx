@@ -49,6 +49,7 @@ type S = {
   watermarkText?: string; fixedSectionOrder?: boolean; scratchpad?: boolean;
   allowQrUpload?: boolean; showMarksInTest?: boolean; showMarks?: boolean;
   regEmail?: boolean; regName?: boolean; regUsn?: boolean; regTerms?: boolean;
+  courseCode?: string; programme?: string; semester?: string; passMark?: number; passMarkType?: "percent" | "marks";
   negativeMode: NegativeMode; negativeMarks: number; negativeFraction: number; negativeKinds: QuestionKind[];
   sectionMinutes: Record<string, number>;
 };
@@ -538,6 +539,31 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, sec
                 <label className="mt-3 block text-[12px] text-soft">Redirect test-takers after finish (optional URL)
                   <input value={s.redirectAfter ?? ""} onChange={(e) => patch("redirectAfter", e.target.value)} placeholder="https://…" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                 </label>
+              </Group>
+              <Group label="Results & ERP">
+                <p className="text-[11px] leading-snug text-soft">Used by Reports → ERP export. The programme and semester group this exam with others for a combined export.</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <label className="block text-[12px] text-soft">Course code
+                    <input value={s.courseCode ?? ""} onChange={(e) => patch("courseCode", e.target.value)} placeholder="e.g. CS301" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                  </label>
+                  <label className="block text-[12px] text-soft">Programme
+                    <input value={s.programme ?? ""} onChange={(e) => patch("programme", e.target.value)} placeholder="e.g. B.Tech CSE" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                  </label>
+                  <label className="block text-[12px] text-soft">Semester
+                    <input value={s.semester ?? ""} onChange={(e) => patch("semester", e.target.value)} placeholder="e.g. 3" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                  </label>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label className="block text-[12px] text-soft">Pass mark
+                    <NumberField value={s.passMark ?? 40} onChange={(n) => patch("passMark", n)} min={0} max={1000} fallback={s.passMark ?? 40} aria-label="Pass mark" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                  </label>
+                  <label className="block text-[12px] text-soft">Pass mark is
+                    <select value={s.passMarkType ?? "percent"} onChange={(e) => patch("passMarkType", e.target.value as S["passMarkType"])} className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest">
+                      <option value="percent">a percentage of the maximum</option>
+                      <option value="marks">a number of marks</option>
+                    </select>
+                  </label>
+                </div>
               </Group>
               <Group label="Security & access">
                 <Check label="Require Photo ID verification" detail="Students capture their face and ID card before starting." checked={!!s.photoId} onChange={(v) => patch("photoId", v)} />

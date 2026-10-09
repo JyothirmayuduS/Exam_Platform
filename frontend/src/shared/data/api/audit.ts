@@ -19,7 +19,12 @@ export type AuditAction =
   | "enrollment.extra_minutes_changed"
   | "lti.link_mapped"
   | "lti.link_unmapped"
-  | "lti.student_linked";
+  | "lti.student_linked"
+  | "results.exported"
+  | "result.withheld"
+  | "result.released_from_hold"
+  | "admin.moodle_resend"
+  | "admin.flag_reviewed";
 
 /** Record one staff action. Resolves the actor from the current session. */
 export async function logAudit(opts: {

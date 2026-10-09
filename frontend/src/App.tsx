@@ -4,6 +4,7 @@ import { isTauri } from "@/shared/platform/platform";
 import ErrorPage from "@/shared/pages/ErrorPage";
 import StudentExam from "@/features/student/pages/StudentExam";
 import TeacherDashboard from "@/features/teacher/pages/TeacherDashboard";
+import AdminDashboard from "@/features/admin/pages/AdminDashboard";
 import ProctorGrid from "@/features/proctoring/pages/ProctorGrid";
 import StudentHome from "@/features/student/pages/StudentHome";
 import StudentExams from "@/features/student/pages/StudentExams";
@@ -77,6 +78,8 @@ export default function App() {
       <Route path="/teacher/proctoring" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><TeacherProctoring /></ProtectedRoute>} />
       <Route path="/teacher/evidence" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="staff"><TeacherDashboard /></ProtectedRoute>} />
       <Route path="/teacher/*" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="teacher"><TeacherDashboard /></ProtectedRoute>} />
+      {/* Admin console — admins are teachers listed in staff_admins */}
+      <Route path="/admin/*" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="admin"><AdminDashboard /></ProtectedRoute>} />
       <Route path="/proctor" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="staff"><ProctorGrid /></ProtectedRoute>} />
       <Route path="/proctor/flags" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="staff"><ProctorGrid /></ProtectedRoute>} />
       <Route path="/proctor/recordings" element={inKiosk ? studentOnly : <ProtectedRoute allowedRole="staff"><ProctorGrid /></ProtectedRoute>} />

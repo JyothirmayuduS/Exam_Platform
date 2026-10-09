@@ -14,6 +14,7 @@ import { listExamsForTeacher, listLiveAttempts, type ExamRecord } from "@/shared
 import EvidenceBrowser from "@/features/teacher/pages/EvidenceBrowser";
 import AuditLog from "@/features/teacher/pages/AuditLog";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
+import { useAuth } from "@/features/auth/auth";
 import { Overview } from "@/features/teacher/pages/TeacherOverview";
 import { ExamWorkspace, ExamSettings } from "@/features/teacher/pages/ExamWorkspace";
 import { Reports } from "@/features/teacher/pages/TeacherReports";
@@ -51,6 +52,7 @@ export default function TeacherDashboard() {
     }, 4000);
   };
   const { profile } = useCurrentProfile();
+  const { isAdmin } = useAuth();
   
   const [createdExams, setCreatedExams] = useState<any[]>([]);
   const [loadingExams, setLoadingExams] = useState(true);
@@ -105,7 +107,10 @@ export default function TeacherDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createdExams]);
 
-  const nav = getTeacherNav(totals.live, totals.submitted, totals.flagged, createdExams.length);
+  const nav = [
+    ...getTeacherNav(totals.live, totals.submitted, totals.flagged, createdExams.length),
+    ...(isAdmin ? [{ label: "Admin console", to: "/admin" }] : []),
+  ];
 
   const avgScore =
     totals.scored > 0 ? (totals.scoreSum / totals.scored).toFixed(1) : null;

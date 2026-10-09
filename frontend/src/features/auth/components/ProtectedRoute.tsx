@@ -3,7 +3,7 @@ import { useAuth } from "@/features/auth/auth";
 import type { AuthRole } from "@/features/auth/auth";
 import { isTauri } from "@/shared/platform/platform";
 
-export type RouteRole = Exclude<AuthRole, null> | "staff";
+export type RouteRole = Exclude<AuthRole, null> | "staff" | "admin";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -11,7 +11,7 @@ interface ProtectedRouteProps {
 }
 
 export default function ProtectedRoute({ children, allowedRole }: ProtectedRouteProps) {
-  const { user, role, loading } = useAuth();
+  const { user, role, loading, isAdmin } = useAuth();
   const location = useLocation();
 
   // A deep-linked native exam restores the student's existing Supabase
@@ -55,7 +55,7 @@ export default function ProtectedRoute({ children, allowedRole }: ProtectedRoute
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (allowedRole && !roleAllowed(allowedRole, role)) {
+  if (allowedRole && !roleAllowed(allowedRole, role, isAdmin)) {
     return <Navigate to={homeFor(role, allowedRole)} replace />;
   }
 
@@ -63,9 +63,11 @@ export default function ProtectedRoute({ children, allowedRole }: ProtectedRoute
 }
 
 /** "staff" = teacher or proctor (live supervision, evidence). Authoring,
- *  grading and results stay teacher-only; the database enforces the same split. */
-export function roleAllowed(allowed: RouteRole, role: AuthRole): boolean {
+ *  grading and results stay teacher-only; the database enforces the same split.
+ *  "admin" = a teacher listed in staff_admins. */
+export function roleAllowed(allowed: RouteRole, role: AuthRole, isAdmin = false): boolean {
   if (allowed === "staff") return role === "teacher" || role === "proctor";
+  if (allowed === "admin") return role === "teacher" && isAdmin;
   return role === allowed;
 }
 

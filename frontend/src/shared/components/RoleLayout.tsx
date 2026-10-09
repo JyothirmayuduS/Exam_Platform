@@ -4,7 +4,7 @@ import { NavLink, Link } from "react-router-dom";
 type NavItem = { label: string; to: string; end?: boolean; badge?: string };
 
 type RoleLayoutProps = {
-  role: "Student" | "Teacher" | "Proctor";
+  role: "Student" | "Teacher" | "Proctor" | "Admin";
   name: string;
   subtitle: string;
   tone: string;

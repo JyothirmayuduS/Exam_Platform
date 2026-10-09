@@ -28,6 +28,7 @@ import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCur
 import AIIntegrityCard from "@/features/proctoring/components/AIIntegrityCard";
 import { usePromptDialog } from "@/shared/components/PromptDialog";
 import ResultReleasePanel from "@/features/teacher/components/ResultReleasePanel";
+import MalpracticeHoldPanel from "@/features/teacher/components/MalpracticeHoldPanel";
 import { RecordingReviewModal } from "@/features/proctoring/components/RecordingReview";
 import { uploadArtifactBlob, getArtifactObjectUrl } from "@/shared/services/examStorage";
 import { compressImage } from "@/shared/services/subjectiveUpload";
@@ -687,6 +688,7 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
           <div className="flex-1 lg:overflow-y-auto">
             <GradeBreakdown awarded={awarded} max={max} autoTotal={autoTotal} manualTotal={manualTotal} gradedManual={gradedManual} manualCount={manualQs.length} />
             <IntegrityPanel flags={candidate.flags} onOpenRecording={openRecording} />
+            <MalpracticeHoldPanel attemptId={cid} notify={notify} />
             <section className="px-5 py-5">
               <p className="font-mono text-[10px] uppercase tracking-widest text-ink-soft">AI integrity report</p>
               <div className="mt-3"><AIIntegrityCard attemptId={cid} plain /></div>

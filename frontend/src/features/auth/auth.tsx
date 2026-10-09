@@ -5,9 +5,11 @@ import { getSupabase } from "@/shared/data/supabase";
 export type AuthRole = "student" | "teacher" | "proctor" | null;
 type AuthContextType = {
   user: User | null; session: Session | null; role: AuthRole; loading: boolean;
+  /** A teacher listed in staff_admins: may open the admin console. */
+  isAdmin: boolean;
   signOut: () => Promise<void>; signInDemo?: (r: Exclude<AuthRole, null>) => void;
 };
-const AuthContext = createContext<AuthContextType>({ user: null, session: null, role: null, loading: true, signOut: async () => {}, signInDemo: undefined });
+const AuthContext = createContext<AuthContextType>({ user: null, session: null, role: null, loading: true, isAdmin: false, signOut: async () => {}, signInDemo: undefined });
 
 // Stored demo identity (dev / no-backend only — see demoAllowed below). The
 // exam platform's CI and local dev run WITHOUT a Supabase backend; the Login
@@ -31,7 +33,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<AuthRole>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
+  // The account whose role is known. Until it matches the signed-in user the
+  // provider reports loading, so routes don't redirect on a missing role.
+  const [roleFor, setRoleFor] = useState<string | null>(null);
 
   useEffect(() => {
     const db = getSupabase();
@@ -47,10 +53,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(demoUser(stored));
         setSession(null);
         setRole(stored);
+        setRoleFor(demoUser(stored).id);
         setLoading(false);
         return;
       }
-      setLoading(false);
       // No stored identity — fall through so a configured backend can still
       // resolve a real session (dev against staging).
     }
@@ -63,15 +69,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       else { setUser(null); setSession(null); setRole(null); setLoading(false); }
     });
     const { data: { subscription } } = db.auth.onAuthStateChange((_: any, s: Session | null) => {
-      setSession(s); setUser(s?.user ?? null); if (s?.user) resolveRole(s.user); else { setRole(null); setLoading(false); }
+      setSession(s); setUser(s?.user ?? null); if (s?.user) resolveRole(s.user); else { setRole(null); setIsAdmin(false); setLoading(false); }
     });
     return () => subscription.unsubscribe();
 
     async function resolveRole(u: User | null) {
-      if (!u) { setRole(null); setLoading(false); return; }
+      if (!u) { setRole(null); setIsAdmin(false); setLoading(false); return; }
       const db = getSupabase(); if (!db) { setLoading(false); return; }
       const { data: t } = await db.from("teachers").select("id, role").eq("auth_id", u.id).maybeSingle();
-      setRole(t ? (t.role === "proctor" ? "proctor" : "teacher") : "student");
+      const r: AuthRole = t ? (t.role === "proctor" ? "proctor" : "teacher") : "student";
+      setIsAdmin(r === "teacher" ? await isStaffAdmin() : false);
+      setRole(r);
+      setRoleFor(u.id);
       setLoading(false);
     }
   }, []);
@@ -84,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(demoUser(r));
     setSession(null);
     setRole(r);
+    setRoleFor(demoUser(r).id);
     setLoading(false);
     try { localStorage.setItem(DEMO_ROLE_KEY, r); } catch { /* private mode */ }
   };
@@ -92,9 +102,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const db = getSupabase();
     if (db) await db.auth.signOut();
     try { localStorage.removeItem(DEMO_ROLE_KEY); } catch { /* ignore */ }
-    setUser(null); setSession(null); setRole(null);
+    setUser(null); setSession(null); setRole(null); setIsAdmin(false); setRoleFor(null);
   };
 
-  return <AuthContext.Provider value={{ user, session, role, loading, signOut, signInDemo }}>{children}</AuthContext.Provider>;
+  const resolving = !!user && roleFor !== user.id;
+  return <AuthContext.Provider value={{ user, session, role, loading: loading || resolving, isAdmin, signOut, signInDemo }}>{children}</AuthContext.Provider>;
 }
 export const useAuth = () => useContext(AuthContext);
+
+/** The database decides: a teacher listed in staff_admins. */
+export async function isStaffAdmin(): Promise<boolean> {
+  const db = getSupabase();
+  if (!db) return false;
+  const { data, error } = await db.rpc("auth_is_staff_admin");
+  return !error && data === true;
+}
