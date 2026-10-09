@@ -10,7 +10,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}', '../backend/supabase/functions/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', '../backend/supabase/functions/**/*.test.ts', '../backend/supabase/tests/**/*.test.ts'],
     exclude: ['node_modules', 'tests-e2e', 'tests'],
   },
   resolve: {

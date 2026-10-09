@@ -9,7 +9,8 @@ import { examPhase } from "./phase";
  *
  * Each is released either manually (the teacher presses Release) or
  * automatically, as soon as the candidate submits or once the exam closes.
- * A score that hasn't been graded yet is never shown, whatever the setting.
+ * A score that hasn't been graded yet is never shown, whatever the setting,
+ * and neither is one on malpractice hold.
  */
 
 export type ReleaseTiming = "manual" | "on_submit" | "on_close";
@@ -44,8 +45,9 @@ export function releaseTiming(s: ReleaseSettings | null | undefined): ReleaseTim
 
 export function visibilityFor(
   s: ReleaseSettings | null | undefined,
-  ctx: { examClosed: boolean; graded: boolean },
+  ctx: { examClosed: boolean; graded: boolean; held?: boolean },
 ): Visibility {
+  if (ctx.held) return { score: false, answerKey: false, note: "Your result is under review." };
   const timing = releaseTiming(s);
   const auto = timing === "on_submit" || (timing === "on_close" && ctx.examClosed);
   const answerKey = s?.answer_key_published === true || auto;

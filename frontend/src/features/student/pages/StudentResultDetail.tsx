@@ -10,6 +10,7 @@ import AppealForm from "@/features/student/components/exam/AppealForm";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
 import { examClosed, gradeObjective, isAutoGraded, questionKind, remapAnswer, scoreObjective, visibilityFor, type NegativeSettings, type ReleaseSettings } from "@/shared/domain/exam";
 import { uploadPathOf } from "@/features/student/services/uploadedAnswers";
+import { loadResultStates } from "@/shared/data/api/studentResults";
 
 
 function MiniBarChart({ data }: { data: { category: string; score: number }[] }) {
@@ -53,24 +54,29 @@ export default function StudentResultDetail() {
 
       const { data: attempt } = await db
         .from("attempts")
-        .select("id, score, submitted_at, answers, minutes_used, paper")
+        .select("id, submitted_at, answers, minutes_used, paper")
         .eq("exam_id", resultId)
         .eq("student_id", student.id)
         .maybeSingle();
 
       if (!attempt) return null;
 
-      const { data: exam } = await db
-        .from("exams")
-        .select("name, total_marks, settings, status, scheduled_at, duration_minutes")
-        .eq("id", resultId)
-        .maybeSingle();
+      const [{ data: exam }, states] = await Promise.all([
+        db
+          .from("exams")
+          .select("name, total_marks, settings, status, scheduled_at, duration_minutes")
+          .eq("id", resultId)
+          .maybeSingle(),
+        loadResultStates(),
+      ]);
+      const state = states.get(resultId);
 
       const visibility = visibilityFor((exam?.settings ?? {}) as ReleaseSettings, {
         examClosed: exam ? examClosed(exam) : false,
-        graded: attempt.score !== null,
+        graded: !!state?.graded,
+        held: !!state?.held,
       });
-      if (!visibility.score) {
+      if (!visibility.score || state?.score === null || state?.score === undefined) {
         return { withheld: true as const, name: exam?.name || "Exam", note: visibility.note ?? "Results are not released yet." };
       }
 
@@ -82,7 +88,7 @@ export default function StudentResultDetail() {
       const stats = (Array.isArray(statsRows) ? statsRows[0] : statsRows) as
         | { class_avg: number | null; scored: number; below_me: number }
         | null;
-      const myScore = attempt.score ?? 0;
+      const myScore = state.score;
       const classAvg = stats?.class_avg != null ? Math.round(Number(stats.class_avg)) : 0;
       const percentile = stats?.scored ? Math.round((stats.below_me / stats.scored) * 100) : 0;
 
@@ -132,7 +138,7 @@ export default function StudentResultDetail() {
           ? "—"
           : verdict
             ? scoreObjective(kind, q.marks || 1, verdict, exam?.settings as NegativeSettings | null)
-            : (attempt.score === null ? "..." : 0);
+            : 0;
 
         const cat = q.category || "General";
         if (!categoryMap[cat]) categoryMap[cat] = { correct: 0, total: 0 };

@@ -1,5 +1,6 @@
 // Postgres implementation of ResultsStore. Needs a service-role client.
 // deno-lint-ignore-file no-explicit-any
+import { readAll, readAllIn } from "../db/paging.ts";
 import type { DBQuestion } from "../exam/types.ts";
 import type { ResultsStore } from "./handler.ts";
 import type { ExportAttempt, ExportExam, ExportStudent } from "./rows.ts";
@@ -31,12 +32,6 @@ function options(raw: unknown): string[] | null {
   return Array.isArray(v) ? v.map(String) : null;
 }
 
-async function inChunks<T>(ids: string[], fetch: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
-  const out: T[] = [];
-  for (let i = 0; i < ids.length; i += 200) out.push(...(await fetch(ids.slice(i, i + 200))));
-  return out;
-}
-
 export function supabaseResultsStore(db: Db): ResultsStore {
   const must = <T>({ data, error }: { data: T; error: { message: string } | null }): T => {
     if (error) throw new Error(error.message);
@@ -51,16 +46,17 @@ export function supabaseResultsStore(db: Db): ResultsStore {
     },
 
     async examsForProgramme(programme, semester) {
-      const rows = must(await db.from("exams").select(EXAM_COLS).neq("status", "draft").ilike("settings->>programme", escapeLike(programme.trim()))) as any[];
-      return (rows ?? []).map(toExam).filter((e) => norm(e.settings?.semester) === norm(semester));
+      const rows = await readAll(() =>
+        db.from("exams").select(EXAM_COLS).neq("status", "draft").ilike("settings->>programme", escapeLike(programme.trim())).order("id"));
+      return rows.map(toExam).filter((e) => norm(e.settings?.semester) === norm(semester));
     },
 
     async examData(examId) {
-      const links = must(await db.from("exam_questions").select("question_id").eq("exam_id", examId)) as any[];
-      const owned = must(await db.from("questions").select("id").eq("exam_id", examId)) as any[];
-      const ids = Array.from(new Set([...(links ?? []).map((r) => String(r.question_id)), ...(owned ?? []).map((r) => String(r.id))]));
-      const questions = await inChunks(ids, async (chunk) =>
-        must(await db.from("questions").select("id, exam_id, title, type, unit, difficulty, marks, options, answer, subjective_mode").in("id", chunk)) as any[]);
+      const links = await readAll(() => db.from("exam_questions").select("question_id").eq("exam_id", examId).order("question_id"));
+      const owned = await readAll(() => db.from("questions").select("id").eq("exam_id", examId).order("id"));
+      const ids = Array.from(new Set([...links.map((r) => String(r.question_id)), ...owned.map((r) => String(r.id))]));
+      const questions = await readAllIn(ids, (chunk) =>
+        db.from("questions").select("id, exam_id, title, type, unit, difficulty, marks, options, answer, subjective_mode").in("id", chunk).order("id"));
       const pool: DBQuestion[] = questions.map((r) => ({
         id: String(r.id),
         exam_id: r.exam_id ? String(r.exam_id) : null,
@@ -73,8 +69,10 @@ export function supabaseResultsStore(db: Db): ResultsStore {
         answer: r.answer === null || r.answer === undefined ? null : String(r.answer),
         subjective_mode: r.subjective_mode ?? null,
       }));
-      const enrolled = (must(await db.from("enrollments").select("student_id").eq("exam_id", examId)) as any[] ?? []).map((r) => String(r.student_id));
-      const attempts: ExportAttempt[] = (must(await db.from("attempts").select("id, student_id, state, score, submitted_at, paper, answers").eq("exam_id", examId)) as any[] ?? [])
+      const enrolled = (await readAll(() => db.from("enrollments").select("student_id").eq("exam_id", examId).order("student_id")))
+        .map((r) => String(r.student_id));
+      const attempts: ExportAttempt[] = (await readAll(() =>
+        db.from("attempts").select("id, student_id, state, score, submitted_at, paper, answers").eq("exam_id", examId).order("id")))
         .filter((r) => r.student_id)
         .map((r) => ({
           id: String(r.id),
@@ -85,12 +83,12 @@ export function supabaseResultsStore(db: Db): ResultsStore {
           paper: r.paper ?? null,
           answers: r.answers && typeof r.answers === "object" ? r.answers : {},
         }));
-      const holds = must(await db.from("result_holds").select("attempt_id").eq("exam_id", examId)) as any[];
-      return { pool, enrolled, attempts, heldAttemptIds: new Set((holds ?? []).map((r) => String(r.attempt_id))) };
+      const holds = await readAll(() => db.from("result_holds").select("attempt_id").eq("exam_id", examId).order("attempt_id"));
+      return { pool, enrolled, attempts, heldAttemptIds: new Set(holds.map((r) => String(r.attempt_id))) };
     },
 
     async students(ids) {
-      const rows = await inChunks(ids, async (chunk) => must(await db.from("students").select("id, roll, full_name").in("id", chunk)) as any[]);
+      const rows = await readAllIn(ids, (chunk) => db.from("students").select("id, roll, full_name").in("id", chunk).order("id"));
       return new Map<string, ExportStudent>(rows.map((r) => [String(r.id), { id: String(r.id), roll: String(r.roll ?? ""), full_name: r.full_name ?? null }]));
     },
 

@@ -136,3 +136,47 @@ npx playwright test # e2e (needs a running dev server + backend)
 - **Error monitoring:** Sentry DSN via `VITE_SENTRY_DSN`; an `ErrorBoundary`
   + "Report a problem" flow surfaces failures to the operator.
 - Rotate the Supabase database password / LiveKit secret before any real exam.
+- **Evidence storage in the admin console:** Storage & data never lists the
+  whole R2 bucket. It lists the top-level exam folders, and each folder is
+  counted on request (Count / Recount, ten 1,000-key pages per request). The
+  totals, the deletion schedule and each student's files are kept in
+  `evidence_usage` and `evidence_sittings`. The totals say how many folders
+  they cover; a folder that hasn't been counted yet is listed as "Not counted"
+  rather than left out silently. Accounts → Uploads checks one exam at a time
+  against its counted folder.
+
+### Backups
+
+The admin console does not hold a Supabase management token. Backup status is
+whatever the backup job reports into `public.backup_runs`, through
+`public.record_backup_run(...)`. Only the service role (or `postgres`) can call
+it; signed-in users can't read or write the table.
+
+```sql
+-- one call when the run finishes
+select public.record_backup_run('succeeded', p_started_at => '2026-10-10T01:00:00Z',
+  p_location => 's3://vignan-backups/2026-10-10.dump', p_size_bytes => 734003200);
+
+-- or mark it running first, then finish that row
+select public.record_backup_run('running');                -- returns the run id, e.g. 42
+select public.record_backup_run('failed', p_id => 42, p_message => 'pg_dump: connection lost');
+```
+
+A nightly job that dumps the database and reports the result:
+
+```bash
+id=$(psql "$DATABASE_URL" -Atc "select public.record_backup_run('running')")
+if pg_dump "$DATABASE_URL" -Fc -f "backup-$(date +%F).dump"; then
+  psql "$DATABASE_URL" -c "select public.record_backup_run('succeeded', p_id => $id, \
+    p_size_bytes => $(stat -c%s backup-$(date +%F).dump), p_location => 'backup-$(date +%F).dump')"
+else
+  psql "$DATABASE_URL" -c "select public.record_backup_run('failed', p_id => $id, p_message => 'pg_dump failed')"
+fi
+```
+
+From an HTTP job, call the same function as an RPC with the service role key:
+`POST /rest/v1/rpc/record_backup_run` with `{"p_status": "succeeded", ...}`.
+The console shows the latest run, the last good backup, and failures in the
+last 7 days. It flags a last good backup older than two days. Supabase's own
+daily backups (paid plans) are separate. Have whatever produces your backups
+report here.

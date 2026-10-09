@@ -2,17 +2,20 @@
 //
 // POST { op: "overview" }                       live, upcoming, marking, Moodle, accounts…
 // POST { op: "system" }                         health checks, latest exam browser, jobs, backups
-// POST { op: "storage" }                        storage per exam, deletion schedule, buckets
-// POST { op: "uploads" }                        kiosk sittings missing evidence, unfinished phone uploads
+// POST { op: "storage" }                        storage per exam folder from stored counts, buckets
+// POST { op: "recount_storage", folder, scanId?, token? }
+//                                               count one exam folder in R2, a few pages per call;
+//                                               repeat with the returned scanId and token until done
+// POST { op: "uploads", examId? }               kiosk sittings missing evidence for one exam, unfinished phone uploads
 // POST { op: "audit", actorId?, examId?, action?, limit? }
 // POST { op: "resend_moodle", examId? }         queue failed Moodle grades for the next retry run
 // POST { op: "review_flag", violationId, note? }
 // POST { op: "photos" }                         registration photos taken, with short-lived view links
 // POST { op: "reset_photo", studentId }         clear a registration photo so the student retakes it
 import {
-  connectionOf, flagsAwaitingReview, gradePostState, kioskUploads, liveCounts, phaseOf, readiness, releaseVersion,
-  storageByExam, unreleased, versionsInUse,
-  type AdminAttempt, type AdminExam, type Flag, type GradeTarget, type StorageObject,
+  connectionOf, countObjects, examFolders, flagsAwaitingReview, gradePostState, isKioskSitting, kioskUploads, liveCounts, phaseOf, readiness,
+  storageFromCounts, unreleased, versionsInUse,
+  type AdminAttempt, type AdminExam, type Flag, type FolderCount, type FolderUsage, type GradeTarget, type SittingFiles, type StorageObject,
 } from "./model.ts";
 import { releaseTiming, type ReleaseSettings } from "../exam/release.ts";
 
@@ -29,6 +32,8 @@ export type SystemStatus = {
   database_bytes: number;
   unlinked_accounts: { id: string; email: string | null; created_at: string; last_sign_in_at: string | null }[];
   missing_app_role: { id: string; email: string | null; kind: "staff" | "student" | "unlinked" }[];
+  cron_installed?: boolean;
+  backups?: Backups;
 };
 
 export interface AdminStore {
@@ -45,7 +50,8 @@ export interface AdminStore {
   studentNamesByAuth(authIds: string[]): Promise<Map<string, string>>;
   studentCounts(): Promise<{ total: number; withoutLogin: number }>;
   staff(): Promise<StaffRef[]>;
-  flags(sinceIso: string): Promise<Flag[]>;
+  /** Violation flags since `sinceIso`, optionally only these severities. */
+  flags(sinceIso: string, severities?: string[]): Promise<Flag[]>;
   reviewedFlags(ids: string[]): Promise<Set<string>>;
   gradeTargets(): Promise<GradeTarget[]>;
   pendingMoodleUsers(): Promise<PendingMoodleUser[]>;
@@ -62,21 +68,41 @@ export interface AdminStore {
   photoUrls(paths: string[]): Promise<Map<string, string>>;
   /** Deletes the row and file; false when the student had no photo. */
   resetPhoto(studentId: string): Promise<boolean>;
+  /** Stored evidence counts, one row per R2 exam folder. */
+  evidenceUsage(): Promise<FolderUsage[]>;
+  /** Counted student folders inside these exam folders. */
+  evidenceSittings(folders: string[]): Promise<(SittingFiles & { folder: string })[]>;
+  /** Starts a count of one folder; a newer start makes the older one stop. */
+  scanBegin(folder: string, scanId: string): Promise<void>;
+  /** Adds a batch to the count; `done` stores it. False when a newer count took over. */
+  scanAdd(folder: string, scanId: string, part: FolderCount, done: boolean, retentionDays: number): Promise<boolean>;
 }
 
 export type RegistrationPhoto = { student_id: string; storage_path: string; captured_at: string };
 
 export type HealthCheck = { key: string; label: string; ok: boolean; detail: string; ms: number | null };
 export type Release = { tag: string; version: string | null; publishedAt: string | null; url: string | null };
-export type Backups = { available: false; reason: string } | { available: true; pitr: boolean; latest: { at: string; status: string } | null; count: number };
+export type BackupRun = {
+  id: number; status: "running" | "succeeded" | "failed"; kind: string; started_at: string; finished_at: string | null;
+  location: string | null; size_bytes: number | null; message: string | null;
+};
+/** From backup_runs, which the backup job writes to (see README, "Backups"). */
+export type Backups = { latest: BackupRun | null; last_success: BackupRun | null; failures_7d: number };
 
 export interface AdminProbes {
   health(): Promise<HealthCheck[]>;
   latestRelease(): Promise<Release | null>;
-  storageObjects(): Promise<{ configured: boolean; objects: StorageObject[]; truncated: boolean; error?: string }>;
+  storageConfigured(): boolean;
+  /** Top-level folders in the evidence bucket (one per exam), every page. */
+  storageFolders(): Promise<{ configured: boolean; folders: string[]; error?: string }>;
+  /** Up to `maxPages` listing pages under "<folder>/", from `token`; `next` is null at the end. */
+  listFolder(folder: string, token: string | null, maxPages: number): Promise<{ objects: StorageObject[]; next: string | null; error?: string }>;
   retentionDays(): number;
-  backups(): Promise<Backups>;
 }
+
+/** Listing pages (1,000 keys each) counted per recount request. */
+export const RECOUNT_PAGES = 10;
+const NO_BACKUPS: Backups = { latest: null, last_success: null, failures_7d: 0 };
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -110,12 +136,15 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
     const upcomingIds = exams.filter((e) => phase.get(e.id) === "upcoming").map((e) => e.id);
     const watched = [...liveIds, ...upcomingIds];
 
-    const [enrolments, questions, moodle, proctors, flags30, targets, pendingUsers, holds, erpLog] = await Promise.all([
+    const [enrolments, questions, moodle, proctors, serious30, flags24, targets, pendingUsers, holds, erpLog] = await Promise.all([
       store.enrollments(watched), store.questionCounts(upcomingIds), store.moodleLinks(upcomingIds), store.proctorAssignments(watched),
-      store.flags(new Date(now - 30 * DAY).toISOString()), store.gradeTargets(), store.pendingMoodleUsers(), store.holds(),
+      store.flags(new Date(now - 30 * DAY).toISOString(), ["high", "critical"]), store.flags(new Date(now - DAY).toISOString()),
+      store.gradeTargets(), store.pendingMoodleUsers(), store.holds(),
       store.auditLogs({ action: "results.exported", limit: 50 }),
     ]);
     const release = await probes.latestRelease().catch(() => null);
+    const flags30 = [...new Map([...serious30, ...flags24].map((f) => [f.id, f])).values()]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
 
     const attemptsByExam = new Map<string, AdminAttempt[]>();
     for (const a of attempts) attemptsByExam.set(a.exam_id, [...(attemptsByExam.get(a.exam_id) ?? []), a]);
@@ -231,27 +260,44 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
   }
 
   async function system() {
-    const [health, release, status, backups] = await Promise.all([
-      probes.health(), probes.latestRelease().catch(() => null), store.systemStatus(), probes.backups().catch((): Backups => ({ available: false, reason: "error" })),
-    ]);
-    return { health, release, jobs: status.jobs, backups };
+    const [health, release, status] = await Promise.all([probes.health(), probes.latestRelease().catch(() => null), store.systemStatus()]);
+    return { health, release, jobs: status.jobs, cronInstalled: status.cron_installed ?? true, backups: status.backups ?? NO_BACKUPS };
   }
 
-  async function storage(now: number) {
-    const [listing, exams, status] = await Promise.all([probes.storageObjects(), store.exams(), store.systemStatus()]);
-    const days = probes.retentionDays();
+  async function storage() {
+    const [listing, exams, status, usage] = await Promise.all([probes.storageFolders(), store.exams(), store.systemStatus(), store.evidenceUsage()]);
     return {
-      r2: { configured: listing.configured, truncated: listing.truncated, error: listing.error ?? null, retentionDays: days, ...storageByExam(listing.objects, exams, days, now) },
+      r2: { configured: listing.configured, error: listing.error ?? null, retentionDays: probes.retentionDays(), ...storageFromCounts(listing.folders, usage, exams) },
       buckets: status.buckets,
       databaseBytes: status.database_bytes,
     };
   }
 
-  async function uploads(now: number) {
+  async function recount(body: Record<string, unknown>, now: number): Promise<Response> {
+    const folder = text(body.folder);
+    if (!folder || folder.includes("/") || folder.length > 300) return json({ error: "bad_folder" }, 400);
+    let scanId = text(body.scanId);
+    const token = text(body.token);
+    if (scanId && !UUID.test(scanId)) return json({ error: "bad_scan" }, 400);
+    if (token && !scanId) return json({ error: "bad_scan" }, 400);
+    if (!probes.storageConfigured()) return json({ error: "storage_not_configured" }, 503);
+    if (!scanId) {
+      scanId = crypto.randomUUID();
+      await store.scanBegin(folder, scanId);
+    }
+    const page = await probes.listFolder(folder, token, RECOUNT_PAGES);
+    if (page.error) return json({ error: "storage_unreachable", detail: page.error }, 502);
+    const days = probes.retentionDays();
+    const done = !page.next;
+    if (!(await store.scanAdd(folder, scanId, countObjects(page.objects, days, now), done, days))) return json({ error: "count_superseded" }, 409);
+    return json({ done, scanId, token: page.next, listed: page.objects.length });
+  }
+
+  async function uploads(now: number, examId: string | null) {
     const sinceMs = now - 30 * DAY;
     const since = new Date(sinceMs).toISOString();
-    const [listing, exams, staff, attempts, phone] = await Promise.all([
-      probes.storageObjects(), store.exams(), store.staff(), store.attempts(since), store.phoneUploads(since),
+    const [exams, staff, attempts, phone, usage] = await Promise.all([
+      store.exams(), store.staff(), store.attempts(since), store.phoneUploads(since), store.evidenceUsage(),
     ]);
     const ownerName = new Map(staff.map((s) => [s.auth_id, s.name]));
     const byId = new Map(exams.map((e) => [e.id, e]));
@@ -259,23 +305,53 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
       const e = id ? byId.get(id) : undefined;
       return e ? { id: e.id, name: e.name, batch: e.batch, owner: e.created_by ? ownerName.get(e.created_by) ?? null : null } : null;
     };
-    const recent = attempts.filter((a) => a.state === "submitted" && Date.parse(a.started_at ?? a.submitted_at ?? "") >= sinceMs);
-    const students = await store.students([...new Set([...recent.map((a) => a.student_id), ...phone.pending.map((p) => p.student_id).filter((id): id is string => !!id)])]);
+    const usageOf = new Map(usage.map((u) => [u.folder, u]));
+    const countedAt = (e: AdminExam) => {
+      const times = examFolders(e).map((f) => usageOf.get(f)?.counted_at).filter((t): t is string => !!t);
+      return times.length ? times.sort()[0] : null;
+    };
+
+    const kioskSittings = attempts.filter((a) => isKioskSitting(a) && Date.parse(a.started_at ?? a.submitted_at ?? "") >= sinceMs);
+    const perExam = new Map<string, AdminAttempt[]>();
+    for (const a of kioskSittings) perExam.set(a.exam_id, [...(perExam.get(a.exam_id) ?? []), a]);
+    const examList = [...perExam.entries()]
+      .filter(([id]) => byId.has(id))
+      .map(([id, list]) => ({
+        exam: examOf(id)!, sittings: list.length, countedAt: countedAt(byId.get(id)!),
+        lastSubmitted: list.reduce<string | null>((m, a) => (a.submitted_at && (!m || a.submitted_at > m) ? a.submitted_at : m), null),
+      }))
+      .sort((a, b) => (b.lastSubmitted ?? "").localeCompare(a.lastSubmitted ?? ""));
+
+    const chosen = examId ? byId.get(examId) ?? null : null;
+    const examAttempts = chosen ? perExam.get(chosen.id) ?? [] : [];
+    const folders = chosen ? examFolders(chosen) : [];
+    const counted = chosen ? countedAt(chosen) : null;
+    const sittingRows = counted ? await store.evidenceSittings(folders) : [];
+    const students = await store.students([...new Set([
+      ...examAttempts.map((a) => a.student_id), ...phone.pending.map((p) => p.student_id).filter((id): id is string => !!id),
+    ])]);
     const who = (id: string | null) => (id ? students.get(id) ?? { id, roll: "", full_name: null } : null);
     const rolls = new Map([...students].map(([id, s]) => [id, s.roll]));
-
-    const kiosk = listing.configured ? kioskUploads(recent, exams, rolls, listing.objects, now) : [];
+    const kiosk = counted
+      ? kioskUploads(examAttempts, exams, rolls, new Map(sittingRows.map((s) => [`${s.folder}/${s.student_folder}`, s])), now)
+      : [];
     const count = (s: string) => kiosk.filter((k) => k.state === s).length;
     const pending = phone.pending.map((p) => ({ ...p, open: !!p.expires_at && Date.parse(p.expires_at) > now }));
     return {
       kiosk: {
-        configured: listing.configured, truncated: listing.truncated, error: listing.error ?? null,
-        checked: kiosk.length, complete: count("complete"), uploading: count("uploading"), partial: count("partial"), missing: count("missing"),
-        items: kiosk
-          .filter((k) => k.state !== "complete")
-          .sort((a, b) => (b.attempt.submitted_at ?? "").localeCompare(a.attempt.submitted_at ?? ""))
-          .slice(0, 300)
-          .map((k) => ({ attemptId: k.attempt.id, exam: examOf(k.attempt.exam_id), student: who(k.attempt.student_id), submittedAt: k.attempt.submitted_at, version: k.version, kinds: k.kinds, files: k.files, lastUpload: k.lastUpload, state: k.state })),
+        configured: probes.storageConfigured(),
+        exams: examList,
+        detail: chosen ? {
+          exam: examOf(chosen.id)!,
+          folders: folders.map((f) => ({ folder: f, countedAt: usageOf.get(f)?.counted_at ?? null })),
+          countedAt: counted,
+          sittings: examAttempts.length,
+          checked: kiosk.length, complete: count("complete"), uploading: count("uploading"), partial: count("partial"), missing: count("missing"),
+          items: kiosk
+            .filter((k) => k.state !== "complete")
+            .sort((a, b) => (b.attempt.submitted_at ?? "").localeCompare(a.attempt.submitted_at ?? ""))
+            .map((k) => ({ attemptId: k.attempt.id, exam: examOf(k.attempt.exam_id), student: who(k.attempt.student_id), submittedAt: k.attempt.submitted_at, version: k.version, kinds: k.kinds, files: k.files, lastUpload: k.lastUpload, state: k.state })),
+        } : null,
       },
       phone: {
         completed: phone.completed,
@@ -299,8 +375,13 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
 
       if (op === "overview") return json(await overview(now));
       if (op === "system") return json(await system());
-      if (op === "storage") return json(await storage(now));
-      if (op === "uploads") return json(await uploads(now));
+      if (op === "storage") return json(await storage());
+      if (op === "recount_storage") return await recount(body, now);
+      if (op === "uploads") {
+        const examId = text(body.examId);
+        if (examId && !SAFE_ID.test(examId)) return json({ error: "bad_exam" }, 400);
+        return json(await uploads(now, examId));
+      }
 
       if (op === "audit") {
         const actorId = text(body.actorId);

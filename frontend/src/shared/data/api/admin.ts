@@ -55,22 +55,49 @@ export type AdminSystem = {
   health: HealthCheck[];
   release: { tag: string; version: string | null; publishedAt: string | null; url: string | null } | null;
   jobs: CronJob[];
-  backups: { available: false; reason: string } | { available: true; pitr: boolean; latest: { at: string; status: string } | null; count: number };
+  /** False when the database has no pg_cron, so there are no scheduled jobs to list. */
+  cronInstalled: boolean;
+  backups: Backups;
 };
 
-export type ExamStorage = { folder: string; examIds: string[]; examName: string | null; bytes: number; objects: number; oldest: string | null; dueSoonObjects: number; dueSoonBytes: number; nextDeletion: string | null };
+/** One run of the backup job, as it reported itself in backup_runs. */
+export type BackupRun = {
+  id: number; status: "running" | "succeeded" | "failed"; kind: string; started_at: string; finished_at: string | null;
+  location: string | null; size_bytes: number | null; message: string | null;
+};
+export type Backups = { latest: BackupRun | null; last_success: BackupRun | null; failures_7d: number };
+
+export type ExamStorage = {
+  folder: string; examIds: string[]; examName: string | null;
+  /** Null until the folder has been counted; its figures are then zero. */
+  countedAt: string | null;
+  bytes: number; objects: number; oldest: string | null; dueSoonObjects: number; dueSoonBytes: number; nextDeletion: string | null;
+};
 export type AdminStorage = {
-  r2: { configured: boolean; truncated: boolean; error: string | null; retentionDays: number; exams: ExamStorage[]; totalBytes: number; totalObjects: number; dueSoonBytes: number; dueSoonObjects: number };
+  r2: {
+    configured: boolean; error: string | null; retentionDays: number; exams: ExamStorage[];
+    folders: number; countedFolders: number; uncounted: string[]; oldestCount: string | null;
+    totalBytes: number; totalObjects: number; dueSoonBytes: number; dueSoonObjects: number;
+  };
   buckets: { bucket: string; objects: number; bytes: number }[];
   databaseBytes: number;
 };
 
 export type UploadState = "complete" | "uploading" | "partial" | "missing";
+export type KioskUploadItem = { attemptId: string; exam: ExamRef | null; student: StudentRef | null; submittedAt: string | null; version: string; kinds: string[]; files: number; lastUpload: string | null; state: UploadState };
 export type AdminUploads = {
   kiosk: {
-    configured: boolean; truncated: boolean; error: string | null;
-    checked: number; complete: number; uploading: number; partial: number; missing: number;
-    items: { attemptId: string; exam: ExamRef | null; student: StudentRef | null; submittedAt: string | null; version: string; kinds: string[]; files: number; lastUpload: string | null; state: UploadState }[];
+    configured: boolean;
+    /** Exams with exam-browser sittings in the last 30 days, newest first. */
+    exams: { exam: ExamRef; sittings: number; countedAt: string | null; lastSubmitted: string | null }[];
+    detail: null | {
+      exam: ExamRef;
+      folders: { folder: string; countedAt: string | null }[];
+      countedAt: string | null;
+      sittings: number;
+      checked: number; complete: number; uploading: number; partial: number; missing: number;
+      items: KioskUploadItem[];
+    };
   };
   phone: {
     completed: number; open: number; abandoned: number;
@@ -85,6 +112,9 @@ const ERRORS: Record<string, string> = {
   admins_only: "This account is not an admin.",
   flag_not_found: "That flag no longer exists.",
   photo_not_found: "That student has no registration photo.",
+  count_superseded: "Someone else started counting this folder. Their count will finish it.",
+  storage_not_configured: "R2 isn't configured for the server functions.",
+  storage_unreachable: "Evidence storage (R2) didn't answer. Try again.",
   server_error: "The admin service failed. Try again.",
 };
 
@@ -105,7 +135,24 @@ async function call<T>(body: Record<string, unknown>): Promise<Result<T>> {
 export const loadAdminOverview = () => call<AdminOverview>({ op: "overview" });
 export const loadAdminSystem = () => call<AdminSystem>({ op: "system" });
 export const loadAdminStorage = () => call<AdminStorage>({ op: "storage" });
-export const loadAdminUploads = () => call<AdminUploads>({ op: "uploads" });
+export const loadAdminUploads = (examId?: string) => call<AdminUploads>({ op: "uploads", examId });
+
+/** Counts one R2 exam folder, a batch per request, until the whole folder is counted. */
+export async function recountStorageFolder(folder: string, onProgress?: (listed: number) => void): Promise<Result<{ listed: number }>> {
+  let scanId: string | undefined;
+  let token: string | null = null;
+  let listed = 0;
+  for (;;) {
+    const res: Result<{ done: boolean; scanId: string; token: string | null; listed: number }> =
+      await call({ op: "recount_storage", folder, scanId, token: token ?? undefined });
+    if (!res.ok) return res;
+    listed += res.data.listed;
+    onProgress?.(listed);
+    if (res.data.done) return { ok: true, data: { listed } };
+    scanId = res.data.scanId;
+    token = res.data.token;
+  }
+}
 export const loadAdminAudit = (f: { actorId?: string; examId?: string; action?: string; limit?: number }) =>
   call<{ entries: AdminAuditEntry[] }>({ op: "audit", ...f });
 export const resendMoodleGrades = (examId?: string) => call<{ ok: true; queued: number }>({ op: "resend_moodle", examId });

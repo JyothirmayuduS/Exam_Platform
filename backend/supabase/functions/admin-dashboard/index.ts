@@ -1,14 +1,15 @@
 // Admin console data and actions. Request and rules: _shared/admin/handler.ts.
 // Deploy WITH JWT verification. Optional secrets:
 //   SITE_URL                    public site checked by the health panel
-//   MANAGEMENT_API_TOKEN        personal access token (sbp_…) so the console can read the backup list
-//                               (secret names may not start with SUPABASE_)
 //   LOCKDOWN_RELEASE_REPO       GitHub repo whose lockdown-v* releases are the exam browser
+//   R2_*, RETENTION_DAYS        evidence bucket, counted one exam folder at a time
+// Backup status comes from public.backup_runs, written by the backup job (README, "Backups").
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
-import { createAdminHandler, type AdminProbes, type Backups, type HealthCheck, type Release } from "../_shared/admin/handler.ts";
+import { createAdminHandler, type AdminProbes, type HealthCheck, type Release } from "../_shared/admin/handler.ts";
 import { supabaseAdminStore } from "../_shared/admin/supabaseStore.ts";
 import { releaseVersion, type StorageObject } from "../_shared/admin/model.ts";
+import { listQuery, parseListPage, type ListPage } from "../_shared/admin/r2List.ts";
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 const SUPABASE_URL = env("SUPABASE_URL").replace(/\/+$/, "");
@@ -100,45 +101,47 @@ const probes: AdminProbes = {
     return value;
   },
 
-  async storageObjects() {
-    if (!r2) return { configured: false, objects: [], truncated: false };
+  storageConfigured() {
+    return !!r2;
+  },
+
+  async storageFolders() {
+    if (!r2) return { configured: false, folders: [] };
+    const folders: string[] = [];
+    let token: string | null = null;
+    do {
+      const page = await listPage({ delimiter: "/", token });
+      if ("error" in page) return { configured: true, folders, error: page.error };
+      folders.push(...page.prefixes.map((p) => p.replace(/\/$/, "")).filter(Boolean));
+      token = page.next;
+    } while (token);
+    return { configured: true, folders };
+  },
+
+  async listFolder(folder, token, maxPages) {
     const objects: StorageObject[] = [];
-    let token: string | undefined;
-    for (let page = 0; page < 50; page++) {
-      const qs = new URLSearchParams({ "list-type": "2", "max-keys": "1000" });
-      if (token) qs.set("continuation-token", token);
-      const res = await fetch(await r2.aws.sign(new Request(`${r2.endpoint}/${r2.bucket}?${qs}`, { method: "GET" })));
-      if (!res.ok) { await res.body?.cancel(); return { configured: true, objects, truncated: true, error: `R2 list failed: HTTP ${res.status}` }; }
-      const xml = await res.text();
-      for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
-        const part = m[1];
-        objects.push({
-          key: part.match(/<Key>([\s\S]*?)<\/Key>/)?.[1] ?? "",
-          size: Number(part.match(/<Size>(\d+)<\/Size>/)?.[1] ?? 0),
-          lastModified: part.match(/<LastModified>([\s\S]*?)<\/LastModified>/)?.[1] ?? null,
-        });
-      }
-      token = xml.match(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/)?.[1];
-      if (!token) return { configured: true, objects, truncated: false };
+    let next: string | null = token;
+    for (let i = 0; i < maxPages; i++) {
+      const page = await listPage({ prefix: `${folder}/`, token: next });
+      if ("error" in page) return { objects, next, error: page.error };
+      objects.push(...page.objects);
+      next = page.next;
+      if (!next) break;
     }
-    return { configured: true, objects, truncated: true };
+    return { objects, next };
   },
 
   retentionDays() {
     return Math.max(1, Math.min(3650, Number(env("RETENTION_DAYS") || 90)));
   },
-
-  async backups(): Promise<Backups> {
-    const token = env("MANAGEMENT_API_TOKEN");
-    if (!token) return { available: false, reason: "not_connected" };
-    const ref = new URL(SUPABASE_URL).hostname.split(".")[0];
-    const r = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/backups`, { headers: { authorization: `Bearer ${token}` } });
-    if (!r.ok) { await r.body?.cancel(); return { available: false, reason: `http_${r.status}` }; }
-    const b = (await r.json()) as { pitr_enabled?: boolean; backups?: { inserted_at: string; status: string }[] };
-    const list = (b.backups ?? []).slice().sort((x, y) => y.inserted_at.localeCompare(x.inserted_at));
-    return { available: true, pitr: !!b.pitr_enabled, latest: list[0] ? { at: list[0].inserted_at, status: list[0].status } : null, count: list.length };
-  },
 };
+
+async function listPage(opts: { prefix?: string; delimiter?: string; token: string | null }): Promise<ListPage | { error: string }> {
+  if (!r2) return { error: "R2 secrets are not set" };
+  const res = await fetch(await r2.aws.sign(new Request(`${r2.endpoint}/${r2.bucket}?${listQuery(opts)}`, { method: "GET" })));
+  if (!res.ok) { await res.body?.cancel(); return { error: `R2 list failed: HTTP ${res.status}` }; }
+  return parseListPage(await res.text());
+}
 
 async function actor(req: Request) {
   const jwt = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();

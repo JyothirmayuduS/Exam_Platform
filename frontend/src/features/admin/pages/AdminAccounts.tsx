@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { loadAdminUploads, loadRegistrationPhotos, resetRegistrationPhoto, type AdminOverview, type AdminUploads, type StudentRef, type UploadState } from "@/shared/data/api/admin";
+import { loadAdminUploads, loadRegistrationPhotos, recountStorageFolder, resetRegistrationPhoto, type AdminOverview, type AdminUploads, type StudentRef, type UploadState } from "@/shared/data/api/admin";
 import { Button } from "@/features/teacher/components/PageChrome";
 import { Empty, Section, TabBar, Table, Td, ago, examLabel, studentLabel, useAdminTab, when, type AdminTab } from "@/features/admin/components/AdminUI";
 
@@ -14,36 +14,76 @@ const UPLOAD: Record<UploadState, { label: string; cls: string }> = {
 
 function UploadsTab() {
   const [data, setData] = useState<AdminUploads | null>(null);
+  const [examId, setExamId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const load = async () => {
+  const [counting, setCounting] = useState<number | null>(null);
+  const load = async (id: string | null) => {
     setLoading(true);
-    const res = await loadAdminUploads();
+    const res = await loadAdminUploads(id ?? undefined);
     setLoading(false);
-    if (res.ok) { setData(res.data); setError(null); } else setError(res.error);
+    if (!res.ok) { setError(res.error); return; }
+    setError(null);
+    const first = res.data.kiosk.exams[0]?.exam.id ?? null;
+    if (!id && first) { setExamId(first); void load(first); }
+    setData(res.data);
   };
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(null); }, []);
+  const pick = (id: string) => { setExamId(id); void load(id); };
+
+  const count = async () => {
+    const d = data?.kiosk.detail;
+    if (!d) return;
+    setCounting(0);
+    for (const f of d.folders) {
+      const res = await recountStorageFolder(f.folder, (n) => setCounting(n));
+      if (!res.ok) { setError(res.error); break; }
+    }
+    setCounting(null);
+    void load(d.exam.id);
+  };
 
   if (error) return <p role="alert" className="border-l-2 border-alert bg-alert/5 px-4 py-3 text-[13px] text-alert">{error}</p>;
-  if (!data) return <p className="py-6 text-center font-mono text-[11px] uppercase tracking-widest text-soft">Checking evidence storage…</p>;
-  const k = data.kiosk, p = data.phone;
+  if (!data) return <p className="py-6 text-center font-mono text-[11px] uppercase tracking-widest text-soft">Loading…</p>;
+  const k = data.kiosk, p = data.phone, d = k.detail;
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-[12.5px] text-soft">
-          Last 30 days: <span className="font-medium text-ink tabular-nums">{k.checked}</span> kiosk sittings checked, <span className="tabular-nums text-success">{k.complete}</span> complete,{" "}
-          <span className="tabular-nums">{k.uploading}</span> still uploading, <span className="tabular-nums text-amber">{k.partial}</span> partial, <span className="tabular-nums text-alert">{k.missing}</span> with nothing uploaded.
-        </p>
-        <Button size="sm" onClick={() => void load()} disabled={loading}>{loading ? "Checking…" : "Check again"}</Button>
+        <label className="flex items-center gap-2 text-[12.5px] text-soft">
+          Exam
+          <select
+            className="border border-line bg-paper px-2 py-1 text-[13px] text-ink"
+            value={examId ?? ""}
+            onChange={(e) => pick(e.target.value)}
+            disabled={!k.exams.length || loading || counting !== null}
+          >
+            {!k.exams.length && <option value="">No exam-browser sittings in the last 30 days</option>}
+            {k.exams.map((x) => <option key={x.exam.id} value={x.exam.id}>{x.exam.name} · {x.sittings} sitting{x.sittings === 1 ? "" : "s"}</option>)}
+          </select>
+        </label>
+        <div className="flex gap-2">
+          {d && k.configured && <Button size="sm" onClick={() => void count()} disabled={counting !== null || loading}>{counting !== null ? `Counting… ${counting.toLocaleString("en-IN")} files` : d.countedAt ? "Recount files" : "Count files"}</Button>}
+          <Button size="sm" onClick={() => void load(examId)} disabled={loading || counting !== null}>{loading ? "Loading…" : "Refresh"}</Button>
+        </div>
       </div>
 
-      <Section note={<>Submitted exam-browser sittings compared with what reached evidence storage (R2). A sitting is complete once its recording has arrived; the first 30 minutes after submit count as still uploading.{k.truncated ? " Storage listing stopped at 50,000 files, so some sittings may look incomplete." : ""}</>}>
+      <Section note={<>
+        Submitted exam-browser sittings for one exam, compared with the files counted in that exam's evidence folder (R2). A sitting is complete once its recording has arrived; the first 30 minutes after submit count as still uploading.
+        {d?.countedAt && <> Files counted {ago(d.countedAt)}; recount to pick up anything uploaded since.</>}
+      </>}>
         {!k.configured ? <Empty>Evidence storage (R2) is not configured on the server.</Empty>
-          : k.error ? <Empty>{k.error}</Empty>
-          : k.items.length === 0 ? <Empty>Every kiosk sitting from the last 30 days has its recording.</Empty> : (
+          : !d ? <Empty>No exam-browser sittings in the last 30 days.</Empty>
+          : !d.countedAt ? <Empty>This exam's files haven't been counted yet. Press Count files to check its {d.sittings} sitting{d.sittings === 1 ? "" : "s"}.</Empty>
+          : (
+            <>
+              <p className="mb-3 text-[12.5px] text-soft">
+                <span className="font-medium text-ink tabular-nums">{d.checked}</span> sittings checked, <span className="tabular-nums text-success">{d.complete}</span> complete,{" "}
+                <span className="tabular-nums">{d.uploading}</span> still uploading, <span className="tabular-nums text-amber">{d.partial}</span> partial, <span className="tabular-nums text-alert">{d.missing}</span> with nothing uploaded.
+              </p>
+              {d.items.length === 0 ? <Empty>Every sitting of this exam has its recording.</Empty> : (
             <Table head={["Student", "Exam", "Submitted", "Received", "Status"]}>
-              {k.items.map((i) => (
+              {d.items.map((i) => (
                 <tr key={i.attemptId}>
                   <Td>{studentLabel(i.student)}</Td>
                   <Td>{examLabel(i.exam)}<span className="block font-mono text-[10px] text-soft">v{i.version}</span></Td>
@@ -53,6 +93,8 @@ function UploadsTab() {
                 </tr>
               ))}
             </Table>
+              )}
+            </>
           )}
       </Section>
 

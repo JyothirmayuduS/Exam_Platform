@@ -54,7 +54,7 @@ export default function AdminSystem() {
         </Panel>
 
         <Panel title="Scheduled jobs" count={data?.jobs.length}>
-          {!data ? <Empty>…</Empty> : data.jobs.length === 0 ? <Empty>No scheduled jobs.</Empty> : (
+          {!data ? <Empty>…</Empty> : !data.cronInstalled ? <Empty>The pg_cron extension isn't installed in this database, so nothing runs on a schedule (Moodle grade retries included).</Empty> : data.jobs.length === 0 ? <Empty>No scheduled jobs.</Empty> : (
             <Table head={["Job", "Schedule", "Last run", "Failures (24 h)"]}>
               {data.jobs.map((j) => (
                 <tr key={j.name}>

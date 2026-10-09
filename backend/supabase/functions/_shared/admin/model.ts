@@ -167,67 +167,105 @@ export function gradePostState(t: GradeTarget): GradePostState {
 }
 
 export type StorageObject = { key: string; size: number; lastModified: string | null };
-export type ExamStorage = {
-  folder: string;
-  examIds: string[];
-  examName: string | null;
-  bytes: number;
-  objects: number;
-  oldest: string | null;
-  /** Objects R2 deletes within `soonDays`, from the bucket's retention rule. */
-  dueSoonObjects: number;
-  dueSoonBytes: number;
-  nextDeletion: string | null;
-};
 
 /** The kiosk names an exam's folder after the exam name; phone uploads use the exam id. */
 export function slugifyFolderSegment(name: string): string {
   return name.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 }
 
-export function storageByExam(objects: StorageObject[], exams: Pick<AdminExam, "id" | "name">[], retentionDays: number, now: number, soonDays = 7): { exams: ExamStorage[]; totalBytes: number; totalObjects: number; dueSoonBytes: number; dueSoonObjects: number } {
-  const owners = new Map<string, Pick<AdminExam, "id" | "name">[]>();
-  const own = (folder: string, e: Pick<AdminExam, "id" | "name">) => {
-    const list = owners.get(folder) ?? [];
-    if (!list.some((x) => x.id === e.id)) list.push(e);
-    owners.set(folder, list);
-  };
-  for (const e of exams) {
-    own(e.id, e);
-    const slug = slugifyFolderSegment(e.name ?? "");
-    if (slug) own(slug, e);
-  }
+/** The R2 folders an exam's evidence can sit in. */
+export function examFolders(exam: Pick<AdminExam, "id" | "name">): string[] {
+  return [...new Set([slugifyFolderSegment(exam.name ?? ""), exam.id].filter(Boolean))];
+}
+
+export type SittingFiles = { student_folder: string; kinds: string[]; files: number; last_upload: string | null };
+export type FolderCount = {
+  bytes: number; objects: number; oldest: string | null;
+  due_soon_bytes: number; due_soon_objects: number; next_deletion: string | null;
+  sittings: SittingFiles[];
+};
+
+/** Adds up one batch of objects listed under a single exam folder. Keys are
+ *  <folder>/<student folder>/<kind>/<file>; R2 deletes each `retentionDays` after upload. */
+export function countObjects(objects: StorageObject[], retentionDays: number, now: number, soonDays = 7): FolderCount {
   const retentionMs = retentionDays * 86_400_000;
   const soon = now + soonDays * 86_400_000;
-  const groups = new Map<string, ExamStorage>();
-  let totalBytes = 0, dueSoonBytes = 0, dueSoonObjects = 0;
+  const c: FolderCount = { bytes: 0, objects: 0, oldest: null, due_soon_bytes: 0, due_soon_objects: 0, next_deletion: null, sittings: [] };
+  const sittings = new Map<string, { kinds: Set<string>; files: number; last: number }>();
+  let oldest = 0, next = 0;
   for (const o of objects) {
-    const folder = o.key.split("/")[0] || "(root)";
-    const owner = owners.get(folder) ?? [];
-    const g = groups.get(folder) ?? {
-      folder, examIds: owner.map((e) => e.id), examName: owner[0]?.name ?? null,
-      bytes: 0, objects: 0, oldest: null, dueSoonObjects: 0, dueSoonBytes: 0, nextDeletion: null,
-    };
-    g.bytes += o.size;
-    g.objects += 1;
-    totalBytes += o.size;
+    c.bytes += o.size;
+    c.objects += 1;
     const modified = ms(o.lastModified);
     if (modified) {
-      if (!g.oldest || modified < ms(g.oldest)) g.oldest = new Date(modified).toISOString();
+      if (!oldest || modified < oldest) oldest = modified;
       const deleteAt = modified + retentionMs;
-      if (deleteAt <= soon) {
-        g.dueSoonObjects += 1;
-        g.dueSoonBytes += o.size;
-        dueSoonObjects += 1;
-        dueSoonBytes += o.size;
-      }
-      if (!g.nextDeletion || deleteAt < ms(g.nextDeletion)) g.nextDeletion = new Date(deleteAt).toISOString();
+      if (deleteAt <= soon) { c.due_soon_objects += 1; c.due_soon_bytes += o.size; }
+      if (!next || deleteAt < next) next = deleteAt;
     }
-    groups.set(folder, g);
+    const p = o.key.split("/");
+    if (p.length < 4 || !p[1]) continue;
+    const g = sittings.get(p[1]) ?? { kinds: new Set<string>(), files: 0, last: 0 };
+    g.kinds.add(p[2]);
+    g.files += 1;
+    g.last = Math.max(g.last, modified);
+    sittings.set(p[1], g);
   }
+  c.oldest = oldest ? new Date(oldest).toISOString() : null;
+  c.next_deletion = next ? new Date(next).toISOString() : null;
+  c.sittings = [...sittings].map(([student_folder, g]) => ({
+    student_folder, kinds: [...g.kinds].sort(), files: g.files, last_upload: g.last ? new Date(g.last).toISOString() : null,
+  }));
+  return c;
+}
+
+export type FolderUsage = {
+  folder: string; bytes: number; objects: number; oldest: string | null;
+  due_soon_bytes: number; due_soon_objects: number; next_deletion: string | null;
+  counted_at: string | null; scan_started_at: string | null;
+};
+export type ExamStorage = {
+  folder: string;
+  examIds: string[];
+  examName: string | null;
+  /** When the folder was last counted; null means it hasn't been yet and has no figures. */
+  countedAt: string | null;
+  bytes: number;
+  objects: number;
+  oldest: string | null;
+  /** Objects R2 deletes within a week, from the bucket's retention rule, as of the count. */
+  dueSoonObjects: number;
+  dueSoonBytes: number;
+  nextDeletion: string | null;
+};
+
+/** Storage per exam folder from the stored counts. `folders` is what R2 holds now; a
+ *  folder never counted is listed with no figures, so the totals say how much they cover. */
+export function storageFromCounts(folders: string[], usage: FolderUsage[], exams: Pick<AdminExam, "id" | "name">[]) {
+  const owners = new Map<string, Pick<AdminExam, "id" | "name">[]>();
+  for (const e of exams) for (const f of examFolders(e)) owners.set(f, [...(owners.get(f) ?? []), e]);
+  const byFolder = new Map(usage.map((u) => [u.folder, u]));
+  const list: ExamStorage[] = folders.map((folder) => {
+    const owner = owners.get(folder) ?? [];
+    const u = byFolder.get(folder);
+    const counted = !!u?.counted_at;
+    return {
+      folder, examIds: owner.map((e) => e.id), examName: owner[0]?.name ?? null,
+      countedAt: counted ? u!.counted_at : null,
+      bytes: counted ? Number(u!.bytes) : 0, objects: counted ? Number(u!.objects) : 0, oldest: counted ? u!.oldest : null,
+      dueSoonObjects: counted ? Number(u!.due_soon_objects) : 0, dueSoonBytes: counted ? Number(u!.due_soon_bytes) : 0,
+      nextDeletion: counted ? u!.next_deletion : null,
+    };
+  });
+  const counted = list.filter((e) => e.countedAt);
+  const sum = (k: "bytes" | "objects" | "dueSoonBytes" | "dueSoonObjects") => counted.reduce((s, e) => s + e[k], 0);
   return {
-    exams: [...groups.values()].sort((a, b) => b.bytes - a.bytes),
-    totalBytes, totalObjects: objects.length, dueSoonBytes, dueSoonObjects,
+    exams: list.sort((a, b) => b.bytes - a.bytes || a.folder.localeCompare(b.folder)),
+    folders: list.length,
+    countedFolders: counted.length,
+    uncounted: list.filter((e) => !e.countedAt).map((e) => e.folder),
+    oldestCount: counted.reduce<string | null>((o, e) => (!o || e.countedAt! < o ? e.countedAt : o), null),
+    totalBytes: sum("bytes"), totalObjects: sum("objects"), dueSoonBytes: sum("dueSoonBytes"), dueSoonObjects: sum("dueSoonObjects"),
   };
 }
 
@@ -237,27 +275,24 @@ export const UPLOAD_GRACE_MS = 30 * 60_000;
 
 export type KioskUpload = { attempt: AdminAttempt; version: string; kinds: string[]; files: number; lastUpload: string | null; state: UploadState };
 
-/** What each submitted kiosk sitting has in R2 under <exam folder>/<student folder>/<kind>/…
- *  The exam folder is the slugged exam name (or the exam id); the student folder is the roll
- *  (or the student id). A sitting is complete once a recording has arrived. */
+/** A sitting with kiosk evidence: it was taken in the exam browser and submitted. */
+export function isKioskSitting(a: AdminAttempt): boolean {
+  const v = kioskVersion(a.user_agent);
+  return a.state === "submitted" && !!v && v !== "web";
+}
+
+/** What each submitted kiosk sitting has in R2, from the counted student folders
+ *  (`sittings`, keyed "<exam folder>/<student folder>"). The exam folder is the
+ *  slugged exam name (or the exam id); the student folder is the roll (or the
+ *  student id). A sitting is complete once a recording has arrived. */
 export function kioskUploads(
   attempts: AdminAttempt[],
   exams: Pick<AdminExam, "id" | "name">[],
   rolls: Map<string, string>,
-  objects: StorageObject[],
+  sittings: Map<string, { kinds: string[]; files: number; last_upload: string | null }>,
   now: number,
 ): KioskUpload[] {
-  const index = new Map<string, { kinds: Set<string>; files: number; last: number }>();
-  for (const o of objects) {
-    const p = o.key.split("/");
-    if (p.length < 4) continue;
-    const k = `${p[0]}/${p[1]}`;
-    const g = index.get(k) ?? { kinds: new Set<string>(), files: 0, last: 0 };
-    g.kinds.add(p[2]);
-    g.files += 1;
-    g.last = Math.max(g.last, ms(o.lastModified));
-    index.set(k, g);
-  }
+  const index = new Map([...sittings].map(([k, s]) => [k, { kinds: new Set(s.kinds), files: Number(s.files), last: ms(s.last_upload) }]));
   const nameOf = new Map(exams.map((e) => [e.id, e.name]));
   const out: KioskUpload[] = [];
   for (const a of attempts) {

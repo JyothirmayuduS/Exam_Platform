@@ -36,6 +36,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
+    "@electric-sql/pglite": "^0.5.8",
     "@playwright/test": "^1.62.1",
     "@tauri-apps/api": "^2.12.1",
     "@tauri-apps/cli": "^2.12.1",

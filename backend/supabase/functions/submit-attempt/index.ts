@@ -187,9 +187,12 @@ Deno.serve(async (req) => {
     else await passback;
   }
 
+  const { data: hold } = await admin.from("result_holds").select("attempt_id")
+    .eq("exam_id", examId).eq("student_id", studentId).limit(1).maybeSingle();
   const visibility = visibilityFor(settings as ReleaseSettings, {
     examClosed: examClosed(exam),
     graded: grade.score !== null,
+    held: !!hold,
   });
   return json({ ok: true, submitted: true, late, grade: visibility.score ? grade : null });
 });

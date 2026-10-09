@@ -4,6 +4,8 @@ import { loadPhotoStatus, uploadRegistrationPhoto } from "@/shared/data/api/regi
 import { useAuth } from "@/features/auth/auth";
 
 const MAX_WIDTH = 640;
+/** A status check slower than this counts as unreachable, so the student goes on. */
+export const PHOTO_STATUS_TIMEOUT_MS = 4000;
 
 /** Signed-in users already known to have a photo (or to need none) in this tab. */
 const cleared = new Set<string>();
@@ -23,8 +25,9 @@ function frameToJpeg(video: HTMLVideoElement): string | null {
 
 /**
  * Before a student reaches their exams they take one registration photo.
- * If the server can't be reached the student is let through, so a network
- * problem never blocks an exam; the admin console lists who is missing one.
+ * If the server can't be reached, or doesn't answer within a few seconds, the
+ * student is let through, so a network problem never blocks an exam; the
+ * admin console lists who is missing one.
  */
 export default function RegistrationPhotoGate({ children }: { children: ReactNode }) {
   const userId = useAuth().user?.id ?? null;
@@ -33,13 +36,17 @@ export default function RegistrationPhotoGate({ children }: { children: ReactNod
   useEffect(() => {
     if (!userId || cleared.has(userId)) { setState("done"); return; }
     let alive = true;
-    void loadPhotoStatus().then((res) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unreachable = { ok: false as const, error: "timeout" };
+    const timeout = new Promise<typeof unreachable>((resolve) => { timer = setTimeout(() => resolve(unreachable), PHOTO_STATUS_TIMEOUT_MS); });
+    void Promise.race([loadPhotoStatus().catch(() => unreachable), timeout]).then((res) => {
+      clearTimeout(timer);
       if (!alive) return;
       const needed = res.ok && res.data.required && !res.data.hasPhoto;
       if (res.ok && !needed) cleared.add(userId);
       setState(needed ? "needed" : "done");
     });
-    return () => { alive = false; };
+    return () => { alive = false; clearTimeout(timer); };
   }, [userId]);
 
   const finish = () => { if (userId) cleared.add(userId); setState("done"); };

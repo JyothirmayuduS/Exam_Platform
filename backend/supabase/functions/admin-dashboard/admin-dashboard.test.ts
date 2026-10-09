@@ -2,11 +2,13 @@
 // Admin console: connection state, live counts, readiness, exam browser
 // versions, Moodle grade posts, storage per exam, flags, and who may call it.
 import { describe, expect, it } from "vitest";
-import { createAdminHandler, type AdminProbes, type AdminStore, type AuditRow, type SystemStatus } from "../_shared/admin/handler.ts";
+import { createAdminHandler, RECOUNT_PAGES, type AdminProbes, type AdminStore, type AuditRow, type SystemStatus } from "../_shared/admin/handler.ts";
 import {
-  compareVersions, connectionOf, flagsAwaitingReview, gradePostState, kioskUploads, kioskVersion, liveCounts, readiness, releaseVersion,
-  storageByExam, unreleased, versionsInUse, type AdminAttempt, type AdminExam, type Flag, type GradeTarget,
+  compareVersions, connectionOf, countObjects, flagsAwaitingReview, gradePostState, kioskUploads, kioskVersion, liveCounts, readiness, releaseVersion,
+  storageFromCounts, unreleased, versionsInUse, type AdminAttempt, type AdminExam, type Flag, type FolderUsage, type GradeTarget, type SittingFiles,
+  type StorageObject,
 } from "../_shared/admin/model.ts";
+import { listQuery, parseListPage } from "../_shared/admin/r2List.ts";
 
 const NOW = Date.parse("2026-10-10T06:00:00Z");
 const ago = (s: number) => new Date(NOW - s * 1000).toISOString();
@@ -126,33 +128,67 @@ describe("Moodle grade posts", () => {
   });
 });
 
-describe("storage per exam", () => {
-  const exams = [{ id: "EXAM-2026-AAA", name: "Test 3" }, { id: "EXAM-2026-BBB", name: "DS Mid (Sem 3)" }];
-  it("groups kiosk folders by exam name and phone folders by exam id", () => {
-    const s = storageByExam([
+const usageRow = (folder: string, over: Partial<FolderUsage> = {}): FolderUsage => ({
+  folder, bytes: 0, objects: 0, oldest: null, due_soon_bytes: 0, due_soon_objects: 0, next_deletion: null,
+  counted_at: ago(600), scan_started_at: null, ...over,
+});
+
+describe("counting one exam folder", () => {
+  it("adds up bytes and objects and what each student folder holds", () => {
+    const c = countObjects([
       { key: "Test-3/21BQ1/screenshots/1.jpg", size: 100, lastModified: ago(86400 * 10) },
-      { key: "EXAM-2026-AAA/uuid/subjective/q1.jpg", size: 50, lastModified: ago(86400) },
-      { key: "DS-Mid-Sem-3/21BQ2/report/r.pdf", size: 400, lastModified: ago(86400 * 2) },
-      { key: "Old-Exam/21BQ3/recordings/parts/exam_1.webm", size: 1000, lastModified: ago(86400 * 86) },
-    ], exams, 90, NOW);
-    expect(s.totalBytes).toBe(1550);
-    expect(s.totalObjects).toBe(4);
-    const byFolder = Object.fromEntries(s.exams.map((g) => [g.folder, g]));
-    expect(byFolder["Test-3"].examIds).toEqual(["EXAM-2026-AAA"]);
-    expect(byFolder["EXAM-2026-AAA"].examIds).toEqual(["EXAM-2026-AAA"]);
-    expect(byFolder["DS-Mid-Sem-3"].examName).toBe("DS Mid (Sem 3)");
-    expect(byFolder["Old-Exam"].examIds).toEqual([]);
-    expect(s.exams[0].folder).toBe("Old-Exam");
+      { key: "Test-3/21BQ1/recordings/parts/1.webm", size: 900, lastModified: ago(86400 * 9) },
+      { key: "Test-3/21BQ2/report/r.pdf", size: 400, lastModified: ago(86400 * 2) },
+      { key: "Test-3/stray.txt", size: 5, lastModified: ago(60) },
+    ], 90, NOW);
+    expect(c).toMatchObject({ bytes: 1405, objects: 4, oldest: ago(86400 * 10) });
+    expect(c.sittings).toEqual([
+      { student_folder: "21BQ1", kinds: ["recordings", "screenshots"], files: 2, last_upload: ago(86400 * 9) },
+      { student_folder: "21BQ2", kinds: ["report"], files: 1, last_upload: ago(86400 * 2) },
+    ]);
   });
 
   it("counts what the retention rule deletes within a week", () => {
-    const s = storageByExam([
+    const c = countObjects([
       { key: "Test-3/a/x/1", size: 10, lastModified: ago(86400 * 85) },
       { key: "Test-3/a/x/2", size: 20, lastModified: ago(86400 * 80) },
-    ], exams, 90, NOW);
-    expect(s.dueSoonObjects).toBe(1);
-    expect(s.dueSoonBytes).toBe(10);
-    expect(s.exams[0].nextDeletion).toBe(new Date(NOW + 5 * 86400_000).toISOString());
+    ], 90, NOW);
+    expect(c).toMatchObject({ due_soon_objects: 1, due_soon_bytes: 10, next_deletion: new Date(NOW + 5 * 86400_000).toISOString() });
+  });
+});
+
+describe("storage per exam from stored counts", () => {
+  const exams = [{ id: "EXAM-2026-AAA", name: "Test 3" }, { id: "EXAM-2026-BBB", name: "DS Mid (Sem 3)" }];
+  it("names folders by exam (kiosk by name, phone by id) and totals only what was counted", () => {
+    const s = storageFromCounts(["Test-3", "EXAM-2026-AAA", "DS-Mid-Sem-3", "Old-Exam"], [
+      usageRow("Test-3", { bytes: 100, objects: 1 }),
+      usageRow("EXAM-2026-AAA", { bytes: 50, objects: 1 }),
+      usageRow("Old-Exam", { bytes: 1000, objects: 1, due_soon_bytes: 1000, due_soon_objects: 1, counted_at: ago(86400) }),
+      usageRow("Deleted-Exam", { bytes: 9999, objects: 9 }),
+      usageRow("DS-Mid-Sem-3", { counted_at: null, scan_started_at: ago(5) }),
+    ], exams);
+    expect(s).toMatchObject({ totalBytes: 1150, totalObjects: 3, dueSoonBytes: 1000, folders: 4, countedFolders: 3, uncounted: ["DS-Mid-Sem-3"], oldestCount: ago(86400) });
+    const byFolder = Object.fromEntries(s.exams.map((g) => [g.folder, g]));
+    expect(byFolder["Test-3"].examIds).toEqual(["EXAM-2026-AAA"]);
+    expect(byFolder["EXAM-2026-AAA"].examIds).toEqual(["EXAM-2026-AAA"]);
+    expect(byFolder["DS-Mid-Sem-3"]).toMatchObject({ examName: "DS Mid (Sem 3)", countedAt: null, bytes: 0 });
+    expect(byFolder["Old-Exam"].examIds).toEqual([]);
+    expect(s.exams[0].folder).toBe("Old-Exam");
+  });
+});
+
+describe("R2 listing pages", () => {
+  it("reads objects, folders and the next page token, unescaping XML", () => {
+    const page = parseListPage(`<ListBucketResult><IsTruncated>true</IsTruncated>
+      <Contents><Key>A&amp;B/r1/report/x.pdf</Key><Size>12</Size><LastModified>2026-10-01T00:00:00.000Z</LastModified></Contents>
+      <CommonPrefixes><Prefix>Test-3/</Prefix></CommonPrefixes><NextContinuationToken>tok&amp;1</NextContinuationToken></ListBucketResult>`);
+    expect(page).toEqual({ objects: [{ key: "A&B/r1/report/x.pdf", size: 12, lastModified: "2026-10-01T00:00:00.000Z" }], prefixes: ["Test-3/"], next: "tok&1" });
+    expect(parseListPage("<IsTruncated>false</IsTruncated>").next).toBeNull();
+  });
+
+  it("lists one exam folder by prefix, never the whole bucket", () => {
+    expect(new URLSearchParams(listQuery({ prefix: "Test 3/", token: "t" })).get("prefix")).toBe("Test 3/");
+    expect(new URLSearchParams(listQuery({ delimiter: "/" })).get("delimiter")).toBe("/");
   });
 });
 
@@ -162,12 +198,15 @@ describe("kiosk uploads", () => {
   const sub = (id: string, student: string, submittedSecondsAgo: number, ua: string | null = kiosk) =>
     att({ id, exam_id: "EXAM-2026-AAA", student_id: student, state: "submitted", submitted_at: ago(submittedSecondsAgo), user_agent: ua });
   const rolls = new Map([["s1", "21BQ1"], ["s2", "21BQ2"], ["s3", "21BQ3"], ["s4", "21BQ4"]]);
-  const objects = [
-    { key: "Test-3/21BQ1/recordings/parts/1.webm", size: 10, lastModified: ago(3000) },
-    { key: "Test-3/21BQ1/screenshots/1.jpg", size: 10, lastModified: ago(3000) },
-    { key: "Test-3/21BQ2/screenshots/1.jpg", size: 10, lastModified: ago(3000) },
-    { key: "EXAM-2026-AAA/s4/recordings/a.webm", size: 10, lastModified: ago(100) },
-  ];
+  const index = (folder: string, objects: StorageObject[]) => countObjects(objects, 90, NOW).sittings.map((s) => [`${folder}/${s.student_folder}`, s] as const);
+  const objects = new Map([
+    ...index("Test-3", [
+      { key: "Test-3/21BQ1/recordings/parts/1.webm", size: 10, lastModified: ago(3000) },
+      { key: "Test-3/21BQ1/screenshots/1.jpg", size: 10, lastModified: ago(3000) },
+      { key: "Test-3/21BQ2/screenshots/1.jpg", size: 10, lastModified: ago(3000) },
+    ]),
+    ...index("EXAM-2026-AAA", [{ key: "EXAM-2026-AAA/s4/recordings/a.webm", size: 10, lastModified: ago(100) }]),
+  ]);
 
   it("marks a sitting complete once a recording arrives, partial or missing otherwise", () => {
     const out = kioskUploads([sub("a1", "s1", 3600), sub("a2", "s2", 3600), sub("a3", "s3", 3600), sub("a4", "s4", 3600)], exams, rolls, objects, NOW);
@@ -202,11 +241,17 @@ const STATUS: SystemStatus = {
   missing_app_role: [{ id: "u9", email: "x@vignan.ac.in", kind: "student" }],
 };
 
+type Scan = { id: string; bytes: number; objects: number; sittings: Map<string, SittingFiles> };
+
 function makeStore(over: Partial<AdminStore> = {}) {
   const audits: { action: string; targetId: string; meta: Record<string, unknown> }[] = [];
   const resends: (string | null)[] = [];
   const reviews: string[] = [];
   const photoResets: string[] = [];
+  // evidence_usage / evidence_sittings, as the SQL functions keep them
+  const usage = new Map<string, FolderUsage>();
+  const sittings = new Map<string, SittingFiles & { folder: string }>();
+  const scans = new Map<string, Scan>();
   const live = exam({ id: "EX-LIVE", name: "Live exam", scheduled_at: ago(1800), duration_minutes: 120 });
   const soon = exam({ id: "EX-SOON", name: "Tomorrow", scheduled_at: ago(-86400) });
   const done = exam({ id: "EX-DONE", name: "Finished", scheduled_at: ago(86400), duration_minutes: 60 });
@@ -225,7 +270,11 @@ function makeStore(over: Partial<AdminStore> = {}) {
     studentNamesByAuth: async (ids) => new Map(ids.filter((id) => id.startsWith("stu-")).map((id) => [id, `21BQ · ${id}`])),
     studentCounts: async () => ({ total: 25, withoutLogin: 2 }),
     staff: async () => [{ auth_id: "teacher-A", name: "Teacher A", email: "t@v", role: "teacher", admin: false }, { auth_id: "admin-1", name: "Admin", email: "a@v", role: "teacher", admin: true }],
-    flags: async () => [{ id: "f1", exam_id: "EX-LIVE", attempt_id: "w1", student_id: "s1", violation_type: "Face not visible", severity: "critical", source: "ai", created_at: ago(300) }],
+    flags: async (since, severities) => ([
+      { id: "f1", exam_id: "EX-LIVE", attempt_id: "w1", student_id: "s1", violation_type: "Face not visible", severity: "critical", source: "ai", created_at: ago(300) },
+      { id: "f2", exam_id: "EX-LIVE", attempt_id: "w1", student_id: "s1", violation_type: "Tab switch", severity: "warning", source: "system", created_at: ago(200) },
+      { id: "f3", exam_id: "EX-DONE", attempt_id: "d1", student_id: "s2", violation_type: "Phone", severity: "high", source: "ai", created_at: ago(86400 * 3) },
+    ] as Flag[]).filter((f) => f.created_at >= since && (!severities || severities.includes(f.severity))),
     reviewedFlags: async () => new Set(),
     gradeTargets: async () => [{ link_id: "L1", student_id: "s2", exam_id: "EX-DONE", lineitem: "https://m/li", last_score: null, last_posted_at: null, last_error: "HTTP 503", pending_score: 7, post_attempts: 12, next_attempt_at: null }],
     pendingMoodleUsers: async () => [],
@@ -248,21 +297,66 @@ function makeStore(over: Partial<AdminStore> = {}) {
     registrationPhotos: async () => [{ student_id: "s3", storage_path: "s3/p.jpg", captured_at: ago(100) }],
     photoUrls: async (paths) => new Map(paths.map((p) => [p, `https://signed/${p}`])),
     resetPhoto: async (id) => { photoResets.push(id); return id === "00000000-0000-4000-8000-000000000003"; },
+    evidenceUsage: async () => [...usage.values()],
+    evidenceSittings: async (folders) => [...sittings.values()].filter((s) => folders.includes(s.folder)),
+    scanBegin: async (folder, id) => {
+      usage.set(folder, usage.get(folder) ?? usageRow(folder, { counted_at: null }));
+      scans.set(folder, { id, bytes: 0, objects: 0, sittings: new Map() });
+    },
+    scanAdd: async (folder, id, part, done) => {
+      const scan = scans.get(folder);
+      if (scan?.id !== id) return false;
+      scan.bytes += part.bytes;
+      scan.objects += part.objects;
+      for (const s of part.sittings) {
+        const prev = scan.sittings.get(s.student_folder);
+        scan.sittings.set(s.student_folder, prev
+          ? { ...prev, kinds: [...new Set([...prev.kinds, ...s.kinds])].sort(), files: prev.files + s.files }
+          : s);
+      }
+      if (done) {
+        usage.set(folder, usageRow(folder, { bytes: scan.bytes, objects: scan.objects, counted_at: new Date(NOW).toISOString() }));
+        for (const [k, s] of sittings) if (s.folder === folder) sittings.delete(k);
+        for (const s of scan.sittings.values()) sittings.set(`${folder}/${s.student_folder}`, { ...s, folder });
+        scans.delete(folder);
+      }
+      return true;
+    },
     ...over,
   };
-  return { store, audits, resends, reviews, photoResets };
+  return { store, audits, resends, reviews, photoResets, usage, sittings, scans };
 }
 
-const probes: AdminProbes = {
-  health: async () => [{ key: "database", label: "Database", ok: true, detail: "ok", ms: 4 }],
-  latestRelease: async () => ({ tag: "lockdown-v0.2.60", version: "0.2.60", publishedAt: ago(3600), url: "https://gh/rel" }),
-  storageObjects: async () => ({ configured: true, truncated: false, objects: [{ key: "Live-exam/R-s1/screenshots/1.jpg", size: 500, lastModified: ago(60) }] }),
-  retentionDays: () => 90,
-  backups: async () => ({ available: false, reason: "not_connected" }),
-};
+/** R2 holding `objects`; listFolder serves 1,000-key pages and records every prefix asked for. */
+function makeProbes(objects: StorageObject[] = [{ key: "Live-exam/R-s1/screenshots/1.jpg", size: 500, lastModified: ago(60) }], over: Partial<AdminProbes> = {}) {
+  const listed: { folder: string; pages: number }[] = [];
+  const probes: AdminProbes = {
+    health: async () => [{ key: "database", label: "Database", ok: true, detail: "ok", ms: 4 }],
+    latestRelease: async () => ({ tag: "lockdown-v0.2.60", version: "0.2.60", publishedAt: ago(3600), url: "https://gh/rel" }),
+    storageConfigured: () => true,
+    storageFolders: async () => ({ configured: true, folders: [...new Set(objects.map((o) => o.key.split("/")[0]))].sort() }),
+    listFolder: async (folder, token, maxPages) => {
+      const mine = objects.filter((o) => o.key.startsWith(`${folder}/`));
+      let from = token ? Number(token) : 0;
+      const out: StorageObject[] = [];
+      let pages = 0;
+      while (pages < maxPages && from < mine.length) {
+        out.push(...mine.slice(from, from + 1000));
+        from += 1000;
+        pages += 1;
+      }
+      listed.push({ folder, pages });
+      return { objects: out, next: from < mine.length ? String(from) : null };
+    },
+    retentionDays: () => 90,
+    ...over,
+  };
+  return { probes, listed };
+}
+const { probes } = makeProbes();
 
-const call = async (store: AdminStore, body: unknown, who: string | null = "admin-1") => {
-  const handler = createAdminHandler({ store, probes, actor: async () => (who ? { authId: who } : null), now: () => NOW });
+const call = async (store: AdminStore, body: unknown, who: string | null = "admin-1", withProbes: AdminProbes = probes) => {
+  const handler = createAdminHandler({ store, probes: withProbes, actor: async () => (who ? { authId: who } : null), now: () => NOW });
   const res = await handler(new Request("https://x/admin-dashboard", { method: "POST", body: JSON.stringify(body) }));
   return { status: res.status, body: await res.json() };
 };
@@ -293,29 +387,95 @@ describe("admin-dashboard endpoint", () => {
     expect(body.proctorAssignments.find((p: { exam: { id: string } }) => p.exam.id === "EX-LIVE").assignees).toHaveLength(1);
   });
 
-  it("reports storage per exam with the retention schedule", async () => {
+  it("waits on serious flags from the last 30 days and lists the last day's warnings", async () => {
     const { store } = makeStore();
-    const { body } = await call(store, { op: "storage" });
-    expect(body.r2).toMatchObject({ configured: true, totalBytes: 500, retentionDays: 90 });
-    expect(body.r2.exams[0]).toMatchObject({ folder: "Live-exam", examIds: ["EX-LIVE"] });
+    const { body } = await call(store, { op: "overview" });
+    expect(body.flagsWaiting.map((f: Flag) => f.id)).toEqual(["f1", "f3"]);
+    expect(body.recentFlags.map((f: Flag) => f.id)).toEqual(["f2", "f1"]);
+  });
+
+  it("reports storage per exam from the stored counts and says which folders are not counted", async () => {
+    const { store, usage } = makeStore();
+    usage.set("Live-exam", usageRow("Live-exam", { bytes: 500, objects: 1 }));
+    const { probes } = makeProbes([
+      { key: "Live-exam/R-s1/screenshots/1.jpg", size: 500, lastModified: ago(60) },
+      { key: "Finished/R-s2/report/r.pdf", size: 70, lastModified: ago(60) },
+    ]);
+    const { body } = await call(store, { op: "storage" }, "admin-1", probes);
+    expect(body.r2).toMatchObject({ configured: true, totalBytes: 500, totalObjects: 1, retentionDays: 90, folders: 2, countedFolders: 1, uncounted: ["Finished"] });
+    expect(body.r2.exams.find((e: { folder: string }) => e.folder === "Live-exam")).toMatchObject({ examIds: ["EX-LIVE"], countedAt: ago(600) });
     expect(body.buckets[0].bucket).toBe("exam-records");
   });
 
-  it("reports kiosk sittings missing evidence and unfinished phone uploads", async () => {
-    const { store } = makeStore({
-      attempts: async () => [
-        att({ id: "k1", exam_id: "EX-LIVE", student_id: "s1", state: "submitted", submitted_at: ago(3600), user_agent: "VignanExam/0.2.60" }),
-        att({ id: "k2", exam_id: "EX-LIVE", student_id: "s2", state: "submitted", submitted_at: ago(7200), user_agent: "VignanExam/0.2.60" }),
-        att({ id: "old", exam_id: "EX-LIVE", student_id: "s2", state: "submitted", started_at: ago(86400 * 40), submitted_at: ago(86400 * 40), user_agent: "VignanExam/0.2.60" }),
-      ],
-    });
-    const { body } = await call(store, { op: "uploads" });
-    expect(body.kiosk).toMatchObject({ configured: true, checked: 2, complete: 0, partial: 1, missing: 1 });
-    expect(body.kiosk.items.map((i: { attemptId: string; state: string }) => [i.attemptId, i.state])).toEqual([["k1", "partial"], ["k2", "missing"]]);
-    expect(body.kiosk.items[0]).toMatchObject({ student: { roll: "R-s1" }, exam: { name: "Live exam", owner: "Teacher A" }, kinds: ["screenshots"] });
+  it("counts a folder of 25,500 files in batches, listing only that folder, with nothing cut off", async () => {
+    const big: StorageObject[] = Array.from({ length: 25_500 }, (_, i) => ({ key: `Live-exam/R-s${i % 600}/screenshots/${i}.jpg`, size: 2, lastModified: ago(3600) }));
+    const { store } = makeStore();
+    const { probes, listed } = makeProbes([...big, { key: "Other/R-x/report/r.pdf", size: 9, lastModified: ago(60) }]);
+    let res = await call(store, { op: "recount_storage", folder: "Live-exam" }, "admin-1", probes);
+    let calls = 1;
+    while (!res.body.done) {
+      expect(res.status).toBe(200);
+      res = await call(store, { op: "recount_storage", folder: "Live-exam", scanId: res.body.scanId, token: res.body.token }, "admin-1", probes);
+      calls += 1;
+    }
+    expect(calls).toBe(Math.ceil(25_500 / (1000 * RECOUNT_PAGES)));
+    expect(listed.every((l) => l.folder === "Live-exam" && l.pages <= RECOUNT_PAGES)).toBe(true);
+    const { body } = await call(store, { op: "storage" }, "admin-1", probes);
+    expect(body.r2.exams.find((e: { folder: string }) => e.folder === "Live-exam")).toMatchObject({ objects: 25_500, bytes: 51_000 });
+    expect(body.r2.uncounted).toEqual(["Other"]);
+  });
+
+  it("stops a count that a newer one replaced, and rejects bad folders", async () => {
+    const { store } = makeStore();
+    const { probes } = makeProbes(Array.from({ length: 12_000 }, (_, i) => ({ key: `Live-exam/R/x/${i}`, size: 1, lastModified: ago(60) })));
+    const first = await call(store, { op: "recount_storage", folder: "Live-exam" }, "admin-1", probes);
+    await call(store, { op: "recount_storage", folder: "Live-exam" }, "admin-1", probes);
+    const stale = await call(store, { op: "recount_storage", folder: "Live-exam", scanId: first.body.scanId, token: first.body.token }, "admin-1", probes);
+    expect(stale).toMatchObject({ status: 409, body: { error: "count_superseded" } });
+    expect((await call(store, { op: "recount_storage", folder: "a/b" })).status).toBe(400);
+    expect((await call(store, { op: "recount_storage", folder: "x", token: "t" })).status).toBe(400);
+    expect((await call(store, { op: "recount_storage", folder: "x" }, "teacher-A")).status).toBe(403);
+  });
+
+  const kioskAttempts = async () => [
+    att({ id: "k1", exam_id: "EX-LIVE", student_id: "s1", state: "submitted", submitted_at: ago(3600), user_agent: "VignanExam/0.2.60" }),
+    att({ id: "k2", exam_id: "EX-LIVE", student_id: "s2", state: "submitted", submitted_at: ago(7200), user_agent: "VignanExam/0.2.60" }),
+    att({ id: "old", exam_id: "EX-LIVE", student_id: "s2", state: "submitted", started_at: ago(86400 * 40), submitted_at: ago(86400 * 40), user_agent: "VignanExam/0.2.60" }),
+  ];
+
+  it("lists exams with kiosk sittings, and checks one exam against its counted files", async () => {
+    const { store, usage, sittings } = makeStore({ attempts: kioskAttempts });
+    usage.set("Live-exam", usageRow("Live-exam", { bytes: 500, objects: 1 }));
+    sittings.set("Live-exam/R-s1", { folder: "Live-exam", student_folder: "R-s1", kinds: ["screenshots"], files: 1, last_upload: ago(3000) });
+
+    const list = await call(store, { op: "uploads" });
+    expect(list.body.kiosk.exams).toEqual([expect.objectContaining({ exam: expect.objectContaining({ id: "EX-LIVE" }), sittings: 2, countedAt: ago(600) })]);
+    expect(list.body.kiosk.detail).toBeNull();
+
+    const { body } = await call(store, { op: "uploads", examId: "EX-LIVE" });
+    expect(body.kiosk.detail).toMatchObject({ countedAt: ago(600), sittings: 2, checked: 2, complete: 0, partial: 1, missing: 1 });
+    expect(body.kiosk.detail.items.map((i: { attemptId: string; state: string }) => [i.attemptId, i.state])).toEqual([["k1", "partial"], ["k2", "missing"]]);
+    expect(body.kiosk.detail.items[0]).toMatchObject({ student: { roll: "R-s1" }, exam: { name: "Live exam", owner: "Teacher A" }, kinds: ["screenshots"] });
     expect(body.phone).toMatchObject({ completed: 4, open: 1, abandoned: 1 });
     expect(body.phone.items[0]).toMatchObject({ id: "m1", open: false, question: "Q3", student: { roll: "R-s2" }, exam: { id: "EX-DONE" } });
     expect(body.phone.items[1]).toMatchObject({ id: "m2", open: true, question: "Q-7582" });
+  });
+
+  it("says when an exam's files have not been counted yet instead of calling sittings missing", async () => {
+    const { store } = makeStore({ attempts: kioskAttempts });
+    const { body } = await call(store, { op: "uploads", examId: "EX-LIVE" });
+    expect(body.kiosk.detail).toMatchObject({ countedAt: null, sittings: 2, checked: 0, items: [] });
+    expect(body.kiosk.detail.folders).toEqual([{ folder: "Live-exam", countedAt: null }, { folder: "EX-LIVE", countedAt: null }]);
+    expect((await call(store, { op: "uploads", examId: "x),or(" })).status).toBe(400);
+  });
+
+  it("reads backup status from backup_runs and works without pg_cron", async () => {
+    const run = { id: 7, status: "succeeded" as const, kind: "database", started_at: ago(7200), finished_at: ago(7000), location: "s3://bk/x", size_bytes: 1234, message: null };
+    const { store } = makeStore({ systemStatus: async () => ({ ...STATUS, jobs: [], cron_installed: false, backups: { latest: run, last_success: run, failures_7d: 0 } }) });
+    const { body } = await call(store, { op: "system" });
+    expect(body).toMatchObject({ cronInstalled: false, jobs: [], backups: { latest: { id: 7, status: "succeeded" }, failures_7d: 0 } });
+    const none = await call(makeStore().store, { op: "system" });
+    expect(none.body.backups).toEqual({ latest: null, last_success: null, failures_7d: 0 });
   });
 
   it("queues failed Moodle grades for the retry job and logs it", async () => {

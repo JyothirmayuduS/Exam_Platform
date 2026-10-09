@@ -1,13 +1,29 @@
 import { useEffect, useState } from "react";
-import { loadAdminStorage, loadAdminSystem, type AdminOverview, type AdminStorage, type AdminSystem } from "@/shared/data/api/admin";
+import { loadAdminStorage, loadAdminSystem, recountStorageFolder, type AdminOverview, type AdminStorage, type Backups, type BackupRun } from "@/shared/data/api/admin";
 import { Button } from "@/features/teacher/components/PageChrome";
 import { Empty, NotTracked, Panel, Stat, Table, Td, ago, bytes, examLabel, studentLabel, when } from "@/features/admin/components/AdminUI";
 
+const backupStale = (run: BackupRun) => Date.now() - Date.parse(run.finished_at ?? run.started_at) > 2 * 86_400_000;
+
+function BackupLine({ label, run }: { label: string; run: BackupRun }) {
+  const at = run.finished_at ?? run.started_at;
+  const tone = run.status === "failed" ? "text-alert" : run.status === "running" ? "text-amber" : "text-forest";
+  return (
+    <p>
+      <span className="text-soft">{label}:</span> {when(at)} ({ago(at)}) · <span className={`font-mono text-[11px] uppercase ${tone}`}>{run.status}</span>
+      {run.size_bytes !== null && <> · {bytes(run.size_bytes)}</>}
+      {run.location && <> · <span className="font-mono text-[11px]">{run.location}</span></>}
+      {run.message && <span className="block text-[12px] text-soft">{run.message}</span>}
+    </p>
+  );
+}
+
 export default function AdminData({ data }: { data: AdminOverview }) {
   const [storage, setStorage] = useState<AdminStorage | null>(null);
-  const [backups, setBackups] = useState<AdminSystem["backups"] | null>(null);
+  const [backups, setBackups] = useState<Backups | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [counting, setCounting] = useState<{ folder: string; listed: number; left: number } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -18,15 +34,30 @@ export default function AdminData({ data }: { data: AdminOverview }) {
   };
   useEffect(() => { void load(); }, []);
 
+  const count = async (folders: string[]) => {
+    setError(null);
+    for (let i = 0; i < folders.length; i++) {
+      const folder = folders[i];
+      setCounting({ folder, listed: 0, left: folders.length - i - 1 });
+      const res = await recountStorageFolder(folder, (listed) => setCounting({ folder, listed, left: folders.length - i - 1 }));
+      if (!res.ok) { setError(`${folder}: ${res.error}`); break; }
+    }
+    setCounting(null);
+    const s = await loadAdminStorage();
+    if (s.ok) setStorage(s.data);
+  };
+
   const r2 = storage?.r2;
   const bucketBytes = storage?.buckets.reduce((t, b) => t + b.bytes, 0) ?? 0;
   const due = r2?.exams.filter((g) => g.dueSoonObjects > 0) ?? [];
+  const partial = !!r2 && r2.uncounted.length > 0;
+  const coverage = r2 ? (partial ? ` · ${r2.countedFolders} of ${r2.folders} folders counted` : "") : "";
 
   return (
     <>
       {error && <p role="alert" className="border-l-2 border-alert bg-alert/5 px-4 py-3 text-[13px] text-alert">{error}</p>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Evidence storage (R2)" value={r2 ? bytes(r2.totalBytes) : "…"} detail={r2 ? `${r2.totalObjects.toLocaleString("en-IN")} files${r2.truncated ? " (first 50,000)" : ""}` : undefined} />
+        <Stat label="Evidence storage (R2)" value={r2 ? bytes(r2.totalBytes) : "…"} detail={r2 ? `${r2.totalObjects.toLocaleString("en-IN")} files${coverage}` : undefined} tone={partial ? "text-amber" : ""} />
         <Stat label="File storage (Supabase)" value={storage ? bytes(bucketBytes) : "…"} detail={storage ? `${storage.buckets.length} bucket(s)` : undefined} />
         <Stat label="Database" value={storage ? bytes(storage.databaseBytes) : "…"} />
         <Stat label="Deleted within 7 days" value={r2 ? bytes(r2.dueSoonBytes) : "…"} detail={r2 ? `${r2.dueSoonObjects} files, ${r2.retentionDays}-day retention` : undefined} tone={r2?.dueSoonObjects ? "text-amber" : ""} />
@@ -35,21 +66,42 @@ export default function AdminData({ data }: { data: AdminOverview }) {
       <Panel
         title="Storage per exam"
         count={r2?.exams.length}
-        note={r2 ? `Recordings, snapshots, reports and phone uploads in R2. Everything is deleted ${r2.retentionDays} days after upload by the bucket's retention rule.` : undefined}
-        action={<Button size="sm" onClick={() => void load()} disabled={loading}>{loading ? "Counting…" : "Recount"}</Button>}
+        tone={partial ? "amber" : undefined}
+        note={r2 ? <>
+          Recordings, snapshots, reports and phone uploads in R2, deleted {r2.retentionDays} days after upload by the bucket's retention rule.
+          Each exam folder is counted on request and the figures are kept, so this page never lists the whole bucket.
+          {partial && <> <strong>{r2.uncounted.length} folder(s) have not been counted yet, so the totals leave them out.</strong></>}
+        </> : undefined}
+        action={
+          <div className="flex gap-2">
+            {partial && <Button size="sm" onClick={() => void count(r2!.uncounted)} disabled={!!counting}>Count {r2!.uncounted.length} not counted</Button>}
+            <Button size="sm" onClick={() => void load()} disabled={loading || !!counting}>{loading ? "Loading…" : "Refresh"}</Button>
+          </div>
+        }
       >
-        {!r2 ? <Empty>{loading ? "Listing the bucket…" : "Not loaded."}</Empty>
+        {counting && (
+          <p role="status" className="mb-2 text-[12px] text-soft">
+            Counting <span className="font-mono">{counting.folder}</span>: {counting.listed.toLocaleString("en-IN")} files so far{counting.left ? `, ${counting.left} more folder(s) after this` : ""}…
+          </p>
+        )}
+        {!r2 ? <Empty>{loading ? "Loading…" : "Not loaded."}</Empty>
           : !r2.configured ? <Empty>R2 isn't configured for the server functions.</Empty>
           : r2.exams.length === 0 ? <Empty>The evidence bucket is empty.</Empty> : (
-            <Table head={["Folder", "Exam", "Size", "Files", "Oldest file", "Next deletion"]}>
+            <Table head={["Folder", "Exam", "Size", "Files", "Oldest file", "Next deletion", "Counted", ""]}>
               {r2.exams.map((g) => (
                 <tr key={g.folder}>
                   <Td className="font-mono text-[11px]">{g.folder}</Td>
                   <Td>{g.examName ?? <span className="text-soft">No matching exam</span>}{g.examIds.length > 1 && <span className="text-soft"> (+{g.examIds.length - 1} with the same name)</span>}</Td>
-                  <Td className="tabular-nums">{bytes(g.bytes)}</Td>
-                  <Td className="tabular-nums">{g.objects}</Td>
+                  <Td className="tabular-nums">{g.countedAt ? bytes(g.bytes) : "—"}</Td>
+                  <Td className="tabular-nums">{g.countedAt ? g.objects.toLocaleString("en-IN") : "—"}</Td>
                   <Td className="text-soft">{when(g.oldest)}</Td>
                   <Td className={g.dueSoonObjects ? "text-amber" : "text-soft"}>{g.nextDeletion ? `${when(g.nextDeletion)} (${ago(g.nextDeletion)})` : "—"}</Td>
+                  <Td className={g.countedAt ? "text-soft" : "text-amber"}>{g.countedAt ? ago(g.countedAt) : "Not counted"}</Td>
+                  <Td>
+                    <button type="button" className="font-mono text-[10px] uppercase tracking-wider text-forest hover:underline disabled:opacity-40" disabled={!!counting} onClick={() => void count([g.folder])}>
+                      {g.countedAt ? "Recount" : "Count"}
+                    </button>
+                  </Td>
                 </tr>
               ))}
             </Table>
@@ -86,19 +138,21 @@ export default function AdminData({ data }: { data: AdminOverview }) {
           )}
         </Panel>
 
-        <Panel title="Last backup" tone={backups?.available ? (backups.latest ? "ok" : "alert") : undefined}>
-          {!backups ? <Empty>…</Empty> : !backups.available ? (
-            <NotTracked>
-              {backups.reason === "not_connected"
-                ? "The console isn't connected to the Supabase management API, so it can't read the backup list. Add a MANAGEMENT_API_TOKEN secret (a Supabase personal access token, starting with sbp_) to show it here."
-                : backups.reason === "http_401" || backups.reason === "http_403"
-                  ? "Supabase refused the MANAGEMENT_API_TOKEN. It must be a personal access token (starting with sbp_) from an account that can manage this project, not a project API key."
-                  : `The backup list couldn't be read (${backups.reason}).`}
-            </NotTracked>
-          ) : backups.latest ? (
-            <p className="text-[13px]">{when(backups.latest.at)} ({ago(backups.latest.at)}) · <span className="font-mono text-[11px] uppercase">{backups.latest.status}</span> · {backups.count} backup(s) kept{backups.pitr ? " · point-in-time recovery on" : ""}</p>
+        <Panel
+          title="Last backup"
+          tone={!backups ? undefined : !backups.last_success || backupStale(backups.last_success) || backups.latest?.status === "failed" ? "alert" : "ok"}
+          note="Reported by the backup job itself, one row per run in the backup_runs table (README, Backups)."
+        >
+          {!backups ? <Empty>…</Empty> : !backups.latest ? (
+            <NotTracked>No backup has reported yet. Have the backup job call record_backup_run after each run; see Backups in the README.</NotTracked>
           ) : (
-            <p className="text-[13px] text-alert">Supabase reports no backups for this project. Daily backups need a paid plan.</p>
+            <div className="space-y-1 text-[13px]">
+              <BackupLine label="Latest run" run={backups.latest} />
+              {backups.last_success && backups.last_success.id !== backups.latest.id && <BackupLine label="Last good backup" run={backups.last_success} />}
+              {!backups.last_success && <p className="text-alert">No backup has succeeded yet.</p>}
+              {backups.last_success && backupStale(backups.last_success) && <p className="text-alert">The last good backup is more than two days old.</p>}
+              {backups.failures_7d > 0 && <p className="text-amber">{backups.failures_7d} failed run(s) in the last 7 days.</p>}
+            </div>
           )}
         </Panel>
       </div>

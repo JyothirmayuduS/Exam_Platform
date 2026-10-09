@@ -117,6 +117,11 @@ describe("result release", () => {
     expect(visibilityFor({ release_timing: "on_close" }, graded).score).toBe(false);
     expect(visibilityFor({ release_timing: "on_close" }, { examClosed: true, graded: true }).answerKey).toBe(true);
   });
+  it("hides a held result even once released, and shows it again when the hold lifts", () => {
+    const released = { answer_key_published: true };
+    expect(visibilityFor(released, { ...graded, held: true })).toEqual({ score: false, answerKey: false, note: "Your result is under review." });
+    expect(visibilityFor(released, { ...graded, held: false })).toMatchObject({ score: true, answerKey: true });
+  });
   it("reads the legacy settings", () => {
     expect(releaseTiming({ showReportToTaker: true })).toBe("on_submit");
     expect(releaseTiming({ release_mode: "auto", release_timing: "submit" })).toBe("on_submit");

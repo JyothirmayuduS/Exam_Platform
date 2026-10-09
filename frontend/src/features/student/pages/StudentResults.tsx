@@ -6,6 +6,7 @@ import { useAuth } from "@/features/auth/auth";
 import { getSupabase } from "@/shared/data/supabase";
 import useCurrentProfile, { profileSubtitle } from "@/features/auth/hooks/useCurrentProfile";
 import { examClosed, visibilityFor, type ReleaseSettings } from "@/shared/domain/exam";
+import { loadResultStates } from "@/shared/data/api/studentResults";
 
 type Result = {
   name: string;
@@ -43,29 +44,35 @@ export default function StudentResults() {
 
       if (!student) return [];
 
-      const { data, error } = await db
-        .from("attempts")
-        .select("state, score, submitted_at, exam:exams(id, name, total_marks, settings, status, scheduled_at, duration_minutes)")
-        .eq("student_id", student.id)
-        .eq("state", "submitted")
-        .order("submitted_at", { ascending: false, nullsFirst: false });
+      const [{ data, error }, states] = await Promise.all([
+        db
+          .from("attempts")
+          .select("state, submitted_at, exam:exams(id, name, total_marks, settings, status, scheduled_at, duration_minutes)")
+          .eq("student_id", student.id)
+          .eq("state", "submitted")
+          .order("submitted_at", { ascending: false, nullsFirst: false }),
+        loadResultStates(),
+      ]);
 
       if (error || !data) return [];
 
       return data.map((a: any) => {
+        const st = a.exam?.id ? states.get(String(a.exam.id)) : undefined;
         const v = visibilityFor((a.exam?.settings ?? {}) as ReleaseSettings, {
           examClosed: a.exam ? examClosed(a.exam) : false,
-          graded: a.score !== null,
+          graded: !!st?.graded,
+          held: !!st?.held,
         });
+        const shown = v.score && st?.score !== null && st?.score !== undefined;
         return {
         name: a.exam?.name || "Unknown Exam",
         code: a.exam?.id || "N/A",
         date: a.submitted_at
           ? new Date(a.submitted_at).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" })
           : "N/A",
-        score: a.score ?? 0,
+        score: shown ? st!.score! : 0,
         outOf: a.exam?.total_marks ?? 100,
-        status: v.score ? "published" : a.score === null ? "under-review" : "withheld",
+        status: shown ? "published" : !st?.graded && !st?.held ? "under-review" : "withheld",
         note: v.note,
       };
       }) as Result[];
