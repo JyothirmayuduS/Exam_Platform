@@ -16,7 +16,9 @@ export type AuditAction =
   | "attempt.time_extended"
   | "attempt.paused"
   | "attempt.resumed"
-  | "enrollment.extra_minutes_changed";
+  | "enrollment.extra_minutes_changed"
+  | "lti.link_mapped"
+  | "lti.link_unmapped";
 
 /** Record one staff action. Resolves the actor from the current session. */
 export async function logAudit(opts: {

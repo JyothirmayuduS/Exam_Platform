@@ -372,6 +372,8 @@ export async function updateAttemptScore(attemptId: string, score: number): Prom
     .eq("id", attemptId);
   if (!error) {
     void logAudit({ action: "attempt.score_changed", targetType: "attempt", targetId: attemptId, meta: { score } });
+    // Resend to Moodle when the student launched from there; no-op otherwise.
+    void Promise.resolve().then(() => db.functions.invoke("lti/score", { body: { attemptId } })).catch(() => {});
   }
   return !error;
 }

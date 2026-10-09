@@ -20,4 +20,5 @@ export * from "@/shared/data/api/assignments";
 export * from "@/shared/data/api/grading";
 export * from "@/shared/data/api/teacher";
 export * from "@/shared/data/api/audit";
+export * from "@/shared/data/api/lti";
 export * from "@/shared/data/api/types";

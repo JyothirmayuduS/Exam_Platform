@@ -10,6 +10,7 @@ import { autoGradeAttempt } from "../_shared/exam/autoGrade.ts";
 import { examClosed, visibilityFor, type ReleaseSettings } from "../_shared/exam/release.ts";
 import type { DBQuestion } from "../_shared/exam/types.ts";
 import type { NegativeSettings } from "../_shared/exam/scoring.ts";
+import { passbackScore } from "../_shared/lti/passback.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -143,6 +144,7 @@ Deno.serve(async (req) => {
   const grade = autoGradeAttempt(pool, attempt.paper, finalAnswers, settings as NegativeSettings);
 
   const nowIso = new Date().toISOString();
+  const newlyGraded = !alreadySubmitted || (attempt.score === null && grade.score !== null);
   if (alreadySubmitted) {
     if (attempt.score === null && grade.score !== null) {
       await admin.from("attempts").update({ score: grade.score }).eq("id", attempt.id).is("score", null);
@@ -175,6 +177,14 @@ Deno.serve(async (req) => {
       target_id: String(attempt.id),
       meta: { exam_id: examId, score: grade.score, late },
     });
+  }
+
+  if (newlyGraded) {
+    const passback = passbackScore(admin, { examId, studentId, score: grade.score, max: grade.max })
+      .catch((err) => console.error("lti passback", err));
+    const edge = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime;
+    if (edge) edge.waitUntil(passback);
+    else await passback;
   }
 
   const visibility = visibilityFor(settings as ReleaseSettings, {

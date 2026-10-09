@@ -18,6 +18,7 @@ import MobileMonitor from "@/features/mobile/pages/MobileMonitor";
 import Login from "@/features/auth/pages/Login";
 import ForgotPassword from "@/features/auth/pages/ForgotPassword";
 import PasswordRecover from "@/features/auth/pages/PasswordRecover";
+import LtiLaunch from "@/features/auth/pages/LtiLaunch";
 import ProtectedRoute from "@/features/auth/components/ProtectedRoute";
 import SystemCheckPage from "@/shared/components/SystemCheckPage";
 import OfflineIndicator from "@/shared/components/OfflineIndicator";
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/forgot" element={inKiosk ? studentOnly : <ForgotPassword />} />
         <Route path="/recover" element={inKiosk ? studentOnly : <PasswordRecover />} />
+        <Route path="/lti/launch" element={inKiosk ? studentOnly : <LtiLaunch />} />
       
       {/* Student Routes */}
       <Route path="/student" element={<ProtectedRoute allowedRole="student"><StudentHome /></ProtectedRoute>} />
