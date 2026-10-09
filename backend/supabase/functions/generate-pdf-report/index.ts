@@ -33,7 +33,7 @@ serve(async (req) => {
 
     const [examRes, attemptsRes, violationsRes] = await Promise.all([
       supabaseClient.from("exams").select("*").eq("id", examId).single(),
-      supabaseClient.from("attempts").select("id,state,score,student:students(roll,full_name)").eq("exam_id", examId),
+      supabaseClient.from("staff_attempts").select("id,state,score,student:students(roll,full_name)").eq("exam_id", examId),
       supabaseClient.from("violation_events").select("id,severity,violation_type").eq("exam_id", examId)
     ]);
 

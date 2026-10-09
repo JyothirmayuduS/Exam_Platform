@@ -30,6 +30,7 @@ type Student = { id: string; roll: string; email: string; authId: string | null 
 type Target = {
   linkId: string; studentId: string; examId: string; sub: string; lineitem: string | null; scoreMaximum: number | null;
   pendingScore: number | null; attempts: number; nextAttemptAt: number | null; lastScore: number | null; claim: string | null; claimedUntil: number | null;
+  clearPending?: boolean; cleared?: boolean;
 };
 
 function memoryStore(clock: () => number) {
@@ -51,6 +52,21 @@ function memoryStore(clock: () => number) {
     targets: new Map<string, Target>(),
     exams: new Map([["EXAM-A", "auth-A"], ["EXAM-B", "auth-Z"]]),
     attempts: [] as { studentId: string; examId: string; score: number }[],
+    holds: new Set<string>(),
+  };
+  const held = (t: Target) => s.holds.has(`${t.examId}:${t.studentId}`);
+  /** Same rules as set_result_hold. */
+  const setHold = (examId: string, studentId: string, on: boolean) => {
+    if (on) s.holds.add(`${examId}:${studentId}`);
+    else s.holds.delete(`${examId}:${studentId}`);
+    for (const t of s.targets.values()) {
+      if (t.examId !== examId || t.studentId !== studentId || !t.lineitem) continue;
+      if (on && t.lastScore !== null && !t.cleared) {
+        Object.assign(t, { pendingScore: t.pendingScore ?? t.lastScore, clearPending: true, attempts: 0, nextAttemptAt: clock() });
+      } else if (!on && t.pendingScore !== null) {
+        Object.assign(t, { clearPending: false, attempts: 0, nextAttemptAt: clock() });
+      }
+    }
   };
   const linkOut = (l: Link & { resourceLinkId: string }): Link => {
     const { resourceLinkId: _drop, ...rest } = l;
@@ -134,20 +150,27 @@ function memoryStore(clock: () => number) {
       [...s.targets.values()]
         .filter((t) => t.pendingScore !== null && t.lineitem && t.nextAttemptAt !== null && t.nextAttemptAt <= nowMs
           && (t.claimedUntil === null || t.claimedUntil < nowMs)
-          && (!o.examId || (t.examId === o.examId && t.studentId === o.studentId)))
+          && (!o.examId || (t.examId === o.examId && t.studentId === o.studentId))
+          && (t.clearPending || !held(t)))
         .sort((a, b) => a.nextAttemptAt! - b.nextAttemptAt!)
         .slice(0, o.limit)
         .map((t) => {
           t.claim = `claim-${++claimSeq}`;
           t.claimedUntil = nowMs + o.leaseMs;
-          return { ...target(t), pendingScore: t.pendingScore!, claim: t.claim };
+          return { ...target(t), pendingScore: t.pendingScore!, claim: t.claim, clear: held(t) };
         }),
-    finishScore: async (c, outcome, _nowMs) => {
+    finishScore: async (c, outcome, nowMs) => {
       const t = s.targets.get(`${c.linkId}:${c.studentId}`);
       if (!t || t.claim !== c.claim) return;
       const same = t.pendingScore === c.pendingScore;
-      if (outcome.ok) {
-        t.lastScore = c.pendingScore;
+      if (c.clear) {
+        if (outcome.ok) Object.assign(t, { cleared: true, clearPending: false, attempts: 0, nextAttemptAt: nowMs });
+        else if (held(t)) Object.assign(t, { attempts: outcome.attempts, nextAttemptAt: outcome.nextAttemptAt });
+        else Object.assign(t, { attempts: 0, nextAttemptAt: nowMs });
+      } else if (outcome.ok && held(t)) {
+        Object.assign(t, { lastScore: c.pendingScore, pendingScore: t.pendingScore ?? c.pendingScore, cleared: false, clearPending: true, attempts: 0, nextAttemptAt: nowMs });
+      } else if (outcome.ok) {
+        Object.assign(t, { lastScore: c.pendingScore, cleared: false });
         if (same) Object.assign(t, { pendingScore: null, attempts: 0, nextAttemptAt: null });
       } else if (same) {
         Object.assign(t, { attempts: outcome.attempts, nextAttemptAt: outcome.nextAttemptAt });
@@ -157,7 +180,7 @@ function memoryStore(clock: () => number) {
     attemptScore: async () => null,
     examScores: async (examId) => s.attempts.filter((a) => a.examId === examId).map((a) => ({ studentId: a.studentId, score: a.score })),
   };
-  return { s, store };
+  return { s, store, setHold };
 }
 
 async function rsaKey(): Promise<CryptoKeyPair> {
@@ -606,6 +629,54 @@ describe("Moodle grade passback", () => {
     t.claim = "held-by-someone-else";
     await mem.store.finishScore(abandoned, { ok: true }, now);
     expect(t).toMatchObject({ lastScore: 6, claim: "held-by-someone-else" });
+  });
+
+  it("clears a posted grade in Moodle while the result is held, then posts the real score on release", async () => {
+    await launch(ags);
+    fetchMock.mockReset();
+    moodleUp();
+    expect(await postAttemptScore(deps(), { examId: "EXAM-A", studentId: "stu-0501", score: 4, max: 6 })).toEqual({ posted: 1, queued: 0 });
+    const t = mem.s.targets.get("link-rl-1:stu-0501")!;
+
+    mem.setHold("EXAM-A", "stu-0501", true);
+    expect(await retryDueScores(deps())).toEqual({ posted: 1, queued: 0 });
+    const cleared = scoreBodies()[1];
+    expect(cleared).toMatchObject({ userId: "7", activityProgress: "Completed", gradingProgress: "PendingManual" });
+    expect(cleared).not.toHaveProperty("scoreGiven");
+    expect(t).toMatchObject({ cleared: true, clearPending: false, pendingScore: 4, lastScore: 4 });
+
+    // Held and already cleared: a regrade waits, nothing more is sent.
+    expect(await postAttemptScore(deps(), { examId: "EXAM-A", studentId: "stu-0501", score: 5, max: 6 })).toEqual({ posted: 0, queued: 1 });
+    expect(await retryDueScores(deps())).toEqual({ posted: 0, queued: 0 });
+    expect(scoreBodies()).toHaveLength(2);
+
+    mem.setHold("EXAM-A", "stu-0501", false);
+    expect(await retryDueScores(deps())).toEqual({ posted: 1, queued: 0 });
+    expect(scoreBodies()[2]).toMatchObject({ scoreGiven: 5, scoreMaximum: 6, gradingProgress: "FullyGraded" });
+    expect(t).toMatchObject({ cleared: false, pendingScore: null, lastScore: 5 });
+  });
+
+  it("clears the grade again when a hold lands while the score is on its way to Moodle", async () => {
+    await launch(ags);
+    const release = slowMoodle();
+    const post = postAttemptScore(deps(), { examId: "EXAM-A", studentId: "stu-0501", score: 4, max: 6 });
+    await until(() => scorePostsStarted() === 1);
+    mem.setHold("EXAM-A", "stu-0501", true);
+    release();
+    expect(await post).toEqual({ posted: 1, queued: 0 });
+    expect(await retryDueScores(deps())).toEqual({ posted: 1, queued: 0 });
+    expect(scoreBodies()[1]).toMatchObject({ gradingProgress: "PendingManual" });
+    expect(mem.s.targets.get("link-rl-1:stu-0501")).toMatchObject({ cleared: true, pendingScore: 4 });
+  });
+
+  it("does not clear anything in Moodle for a held score that was never posted", async () => {
+    await launch(ags);
+    mem.setHold("EXAM-A", "stu-0501", true);
+    fetchMock.mockReset();
+    moodleUp();
+    expect(await postAttemptScore(deps(), { examId: "EXAM-A", studentId: "stu-0501", score: 4, max: 6 })).toEqual({ posted: 0, queued: 1 });
+    expect(await retryDueScores(deps())).toEqual({ posted: 0, queued: 0 });
+    expect(scoreBodies()).toEqual([]);
   });
 
   it("runs scheduled retries only with the scheduler secret", async () => {

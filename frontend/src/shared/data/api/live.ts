@@ -17,7 +17,7 @@ export async function listLiveAttempts(
   const db = getSupabase();
   if (!db) return [];
   let query = db
-    .from("attempts")
+    .from("staff_attempts")
     .select("id,exam_id,state,answered,total,minutes_used,score,answers,paper,started_at,submitted_at,auto_saved_at,consent_at,user_agent,extra_minutes,student:students(id,roll,full_name,email,auth_id)")
     .order("auto_saved_at", { ascending: false });
   if (examId) query = query.eq("exam_id", examId);

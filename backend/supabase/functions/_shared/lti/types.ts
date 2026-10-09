@@ -61,8 +61,9 @@ export type GradeTarget = {
   platform: Platform;
 };
 
-/** A queued score this sender holds the claim on, with the value to send. */
-export type ClaimedScore = GradeTarget & { claim: string; pendingScore: number };
+/** A queued score this sender holds the claim on, with the value to send.
+ *  `clear`: the result is on hold, so Moodle's grade is cleared instead. */
+export type ClaimedScore = GradeTarget & { claim: string; pendingScore: number; clear?: boolean };
 
 export type ScoreOutcome =
   | { ok: true }

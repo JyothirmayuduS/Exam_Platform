@@ -71,20 +71,25 @@ async function postClaimed(deps: ScoreDeps, claimed: ClaimedScore[]): Promise<Sc
   for (const t of claimed) {
     const { pendingScore: score, scoreMaximum: max } = t;
     try {
-      if (!max || max <= 0) throw new Error("no score maximum");
+      if (!t.clear && (!max || max <= 0)) throw new Error("no score maximum");
       if (!tokens.has(t.platform.id)) tokens.set(t.platform.id, accessToken(t.platform, deps));
       const token = await tokens.get(t.platform.id)!;
-      const res = await fetchWithTimeout(deps.fetch, scoresUrl(t.lineitem), {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/vnd.ims.lis.v1.score+json" },
-        body: JSON.stringify({
+      const timestamp = new Date(deps.now()).toISOString();
+      // No scoreGiven and a progress short of FullyGraded clears Moodle's grade.
+      const body = t.clear
+        ? { userId: t.sub, activityProgress: "Completed", gradingProgress: "PendingManual", timestamp }
+        : {
           userId: t.sub,
-          scoreGiven: Math.min(max, Math.max(0, score)),
+          scoreGiven: Math.min(max!, Math.max(0, score)),
           scoreMaximum: max,
           activityProgress: "Completed",
           gradingProgress: "FullyGraded",
-          timestamp: new Date(deps.now()).toISOString(),
-        }),
+          timestamp,
+        };
+      const res = await fetchWithTimeout(deps.fetch, scoresUrl(t.lineitem), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/vnd.ims.lis.v1.score+json" },
+        body: JSON.stringify(body),
       }, HTTP_TIMEOUT_MS);
       if (!res.ok) throw new Error(`scores ${res.status}`);
       out.posted += 1;

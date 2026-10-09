@@ -370,6 +370,7 @@ export function supabaseLtiStore(db: Db): LtiStore {
           attempts: Number(r.post_attempts ?? 0),
           platform,
           claim: String(r.claim_token),
+          clear: r.clear === true,
         });
       }
       return out;
@@ -386,6 +387,7 @@ export function supabaseLtiStore(db: Db): LtiStore {
         p_attempts: outcome.ok ? 0 : outcome.attempts,
         p_next_attempt_at: outcome.ok || outcome.nextAttemptAt === null ? null : iso(outcome.nextAttemptAt),
         p_now: iso(nowMs),
+        p_clear: c.clear === true,
       }));
     },
 

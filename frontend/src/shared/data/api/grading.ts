@@ -219,7 +219,7 @@ export async function loadExaminerDashboard(): Promise<{
   const [exams, attempts, enrollments, delegations] = await Promise.all([
     listExamsForTeacher(),
     db
-      .from("attempts")
+      .from("staff_attempts")
       .select("exam_id, state, score, submitted_at")
       .in("state", ["in_progress", "submitted", "paused"])
       .then((r: { data?: unknown[] | null }) => r.data ?? []),

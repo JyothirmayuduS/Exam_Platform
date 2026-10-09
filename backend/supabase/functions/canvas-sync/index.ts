@@ -56,7 +56,7 @@ serve(async (req) => {
 
     // 1. Fetch completed attempts and student rolls from Supabase
     const { data: attempts, error } = await supabaseClient
-      .from("attempts")
+      .from("staff_attempts")
       .select("score, state, student:students(roll, email)")
       .eq("exam_id", examId)
       .eq("state", "submitted");
