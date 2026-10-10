@@ -63,6 +63,12 @@ describe("ERP rows: totals", () => {
     });
   });
 
+  it("takes the semester from the exam when it is set, otherwise from Test options", () => {
+    expect(byRoll(build(exam({ semester: 5 })).rows, "21BQ1A0501").semester).toBe("5");
+    expect(byRoll(build(exam({ semester: null })).rows, "21BQ1A0501").semester).toBe("3");
+    expect(byRoll(build(exam({ semester: null }, { semester: "" })).rows, "21BQ1A0501").semester).toBe("");
+  });
+
   it("uses the teacher's final total for an all-MCQ paper, even if it was adjusted", () => {
     const mcqOnly = [POOL[0], POOL[1]];
     const { rows } = buildExamRows({

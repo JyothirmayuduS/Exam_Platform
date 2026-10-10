@@ -7,7 +7,7 @@ import type { ExportAttempt, ExportExam, ExportStudent } from "./rows.ts";
 
 type Db = any;
 
-const EXAM_COLS = "id, name, batch, status, scheduled_at, duration_minutes, total_marks, passing_marks, created_by, settings, academic_type, subject_code, subject_name";
+const EXAM_COLS = "id, name, batch, status, scheduled_at, duration_minutes, total_marks, passing_marks, created_by, settings, academic_type, subject_code, subject_name, semester";
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/\s+/g, "");
 
@@ -25,6 +25,7 @@ const toExam = (r: any): ExportExam => ({
   academic_type: r.academic_type ?? null,
   subject_code: r.subject_code ?? null,
   subject_name: r.subject_name ?? null,
+  semester: r.semester ?? null,
 });
 
 function options(raw: unknown): string[] | null {

@@ -64,6 +64,7 @@ let as: ReturnType<typeof actAs>;
 const rows = async <R = Record<string, unknown>>(sql: string, params: unknown[] = []) => (await db.query<R>(sql, params)).rows;
 const NAMING = migration("20261010210000_exam_naming_and_access.sql");
 const TERM = migration("20261010220000_exam_term_and_staff_privacy.sql");
+const EMAIL_LOCKDOWN = migration("20261010230000_assignment_email_lockdown.sql");
 
 beforeAll(async () => {
   db = new PGlite();
@@ -77,6 +78,7 @@ beforeAll(async () => {
   }
   await db.exec(NAMING);
   await db.exec(TERM);
+  await db.exec(EMAIL_LOCKDOWN);
 }, 60_000);
 
 beforeEach(async () => {
@@ -133,11 +135,11 @@ describe("ai_reports", () => {
     expect(await ids(U.proctor, "select attempt_id::text v from public.ai_reports")).toEqual([A1]);
   });
 
-  it("hides reports created before 10 Oct 2026 from proctors, not from full-access staff", async () => {
-    await db.exec(`update public.ai_reports set created_at = '2026-10-09 23:59:59+05:30' where attempt_id = '${A1}'`);
+  it("hides reports created before 13:30 IST on 10 Oct 2026 from proctors, not from full-access staff", async () => {
+    await db.exec(`update public.ai_reports set created_at = '2026-10-10 13:29:59+05:30' where attempt_id = '${A1}'`);
     expect(await ids(U.proctor, "select attempt_id::text v from public.ai_reports")).toEqual([]);
     expect(await ids(U.owner, "select attempt_id::text v from public.ai_reports")).toEqual([A1, A4]);
-    await db.exec(`update public.ai_reports set created_at = '2026-10-10 00:00:00+05:30' where attempt_id = '${A1}'`);
+    await db.exec(`update public.ai_reports set created_at = '2026-10-10 13:30:00+05:30' where attempt_id = '${A1}'`);
     expect(await ids(U.proctor, "select attempt_id::text v from public.ai_reports")).toEqual([A1]);
   });
 
@@ -394,6 +396,18 @@ describe("academic types", () => {
     expect((await rows<{ name: string }>("select name from public.exams where id = 'EX-N1'"))[0].name).toBe("Mid-Term Exam · MBA101 · Economics · Sem 2 · 2026-27");
     expect((await rows<{ academic_type: string }>("select academic_type from public.exams where id = 'EX-OLD'"))[0].academic_type).toBe("Mid-Term Exam");
     await expect(as(U.admin, () => rows("delete from public.academic_types where name = 'Mid-Term Exam'"))).rejects.toThrow(/foreign key/);
+  });
+});
+
+describe("assignment email log", () => {
+  it("is out of reach of every signed-in user; only the edge functions use it", async () => {
+    await db.exec(`insert into public.assignment_email_log (caller_id, exam_id, kind) values ('${U.owner}', 'EX-1', 'proctor')`);
+    for (const who of [U.owner, U.admin, U.proctor]) {
+      await expect(as(who, () => rows("select * from public.assignment_email_log")), who).rejects.toThrow(/permission denied/);
+      await expect(as(who, () => rows(`delete from public.assignment_email_log`)), who).rejects.toThrow(/permission denied/);
+    }
+    await expect(db.exec(`insert into public.assignment_email_log (caller_id, exam_id, kind) values ('${U.owner}', 'EX-1', 'student')`))
+      .rejects.toThrow(/check constraint/);
   });
 });
 

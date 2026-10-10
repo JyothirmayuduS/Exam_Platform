@@ -74,11 +74,11 @@ describe("proctor-ai-report", () => {
     expect((await (await request({ attemptId: "A1" })).json()).report).toEqual(CLEAN);
   });
 
-  it("hides reports created before 10 Oct 2026 from an assigned proctor", async () => {
+  it("hides reports created before 13:30 IST on 10 Oct 2026 from an assigned proctor", async () => {
     canInvigilate = true;
-    stored = { ...CLEAN, created_at: "2026-10-09T18:29:59Z" };
+    stored = { ...CLEAN, created_at: "2026-10-10T07:59:59Z" };
     expect(await (await request({ attemptId: "A1" })).json()).toEqual({ report: null, cached: false });
-    stored = { ...CLEAN, created_at: "2026-10-09T18:30:00Z" };
+    stored = { ...CLEAN, created_at: "2026-10-10T08:00:00Z" };
     expect((await (await request({ attemptId: "A1" })).json()).report).toEqual(stored);
     canManage = true; stored = { ...CLEAN, created_at: "2026-09-01T00:00:00Z" };
     expect((await (await request({ attemptId: "A1" })).json()).report).toEqual(stored);
