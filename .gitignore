@@ -40,3 +40,6 @@ __pycache__/
 
 # Supabase CLI local cache when run from the repo root
 supabase/.temp/
+
+# Supabase CLI local state
+**/supabase/.temp/
