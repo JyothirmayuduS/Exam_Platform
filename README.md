@@ -164,17 +164,11 @@ select public.record_backup_run('running');                -- returns the run id
 select public.record_backup_run('failed', p_id => 42, p_message => 'pg_dump: connection lost');
 ```
 
-A nightly job that dumps the database and reports the result:
-
-```bash
-id=$(psql "$DATABASE_URL" -Atc "select public.record_backup_run('running')")
-if pg_dump "$DATABASE_URL" -Fc -f "backup-$(date +%F).dump"; then
-  psql "$DATABASE_URL" -c "select public.record_backup_run('succeeded', p_id => $id, \
-    p_size_bytes => $(stat -c%s backup-$(date +%F).dump), p_location => 'backup-$(date +%F).dump')"
-else
-  psql "$DATABASE_URL" -c "select public.record_backup_run('failed', p_id => $id, p_message => 'pg_dump failed')"
-fi
-```
+`backend/backup/backup.sh` is that job: a full Postgres backup plus a copy of
+the R2 and Storage evidence to the backup bucket, reported through
+`record_backup_run`. `backend/backup/restore.sh` rebuilds a fresh project from
+it and checks the result. Schedule, retention, restore steps and the drill log:
+[docs/backup-restore.md](docs/backup-restore.md).
 
 From an HTTP job, call the same function as an RPC with the service role key:
 `POST /rest/v1/rpc/record_backup_run` with `{"p_status": "succeeded", ...}`.
