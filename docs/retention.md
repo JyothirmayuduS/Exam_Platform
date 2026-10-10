@@ -27,10 +27,24 @@ The job skips, and counts as "kept (held)":
 - anything for an **exam or student on a legal hold** (`legal_holds`);
 - an attempt with an **open appeal** (`appeal_requests` or `student_appeals` not yet resolved);
 - an attempt **under review**: a high or critical violation flag nobody has reviewed yet;
-- evidence files whose holds could not be checked in that run, or with no upload date.
+- evidence files whose holds could not be checked in that run, or with no upload date;
+- an evidence folder the job **cannot match**: an exam folder that matches no exam
+  (by id, current name, legacy name or any former name, raw or slugged), or a
+  student folder that does not match exactly one student (by roll or id) with an
+  attempt in that exam. An edited roll leaves its old folder unmatched, and so
+  does a roll reused by another student. These folders are listed in the admin
+  console as **"Unmatched, kept"** so an admin can sort them out by hand.
+
+Every name an exam has had is kept in `exam_former_names`, recorded whenever
+the name changes (including when the naming trigger composes a new one), so
+renamed exams' old folders still match.
+
+The daily `retention-daily-cleanup` job deletes phone upload sessions after 90
+days, except those of a held attempt or of an exam or student on a legal hold.
 
 Admins place and lift legal holds on an exam or a student from the same page (a
-reason is required to place one). Both actions are audited as
+reason is required to place one; if a roll number matches more than one student,
+the console asks which one). Both actions are audited as
 `admin.legal_hold_placed` / `admin.legal_hold_lifted`. Lifting a hold does not
 restart the clock: retention still counts from the original upload or submission
 date, so anything already past the period is deleted on the next run.

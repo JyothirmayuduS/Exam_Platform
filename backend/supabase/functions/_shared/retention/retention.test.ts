@@ -98,6 +98,20 @@ describe("retention job: evidence files", () => {
     expect(runs[0]).toMatchObject({ dry_run: false, trigger: "schedule", retention_days: 1825, status: "succeeded", deleted: 2, skipped: 4, failed: 0 });
   });
 
+  it("keeps folders it cannot match to an exam or a student and reports them as unmatched", async () => {
+    const r2 = memoryStore("r2", {
+      "Deleted-exam/R1/a.jpg": daysAgo(2000), "Deleted-exam/R2/b.jpg": daysAgo(2000), "Deleted-exam/R2/c.jpg": daysAgo(10),
+      "EX-1/OLDROLL/a.jpg": daysAgo(2000), "EX-1/OLDROLL/b.jpg": daysAgo(2000), "EX-1/R1/a.jpg": daysAgo(2000),
+    });
+    const { db } = fakeDb({ holds: { "Deleted-exam/R1": "unmatched_exam", "Deleted-exam/R2": "unmatched_exam", "EX-1/OLDROLL": "unmatched_student" } });
+    const s = await run([r2.store], db);
+    expect([...r2.files.keys()].sort()).toEqual(["Deleted-exam/R1/a.jpg", "Deleted-exam/R2/b.jpg", "Deleted-exam/R2/c.jpg", "EX-1/OLDROLL/a.jpg", "EX-1/OLDROLL/b.jpg"]);
+    expect(s.detail.storage.r2).toMatchObject({
+      deleted: 1, skipped: 4, held: { unmatched_exam: 2, unmatched_student: 2 },
+      unmatched: ["Deleted-exam/", "EX-1/OLDROLL/"], unmatched_total: 2,
+    });
+  });
+
   it("uses the configured period", async () => {
     const r2 = memoryStore("r2", FILES);
     const s = await run([r2.store], fakeDb({ holds: HOLDS, days: 3650 }).db);
@@ -200,8 +214,10 @@ describe("retention job: results, marks, violations and audit logs", () => {
       [daysAgo(1825), 2], [daysAgo(1825), 2], [daysAgo(1825), 2],
     ]);
     expect(batches.filter((b) => b.dry).map((b) => [b.kind, b.cutoff])).toEqual([
-      ["violation_events", daysAgo(1818)], ["attempts", daysAgo(1818)], ["audit_logs", daysAgo(1818)],
+      ["violation_events", daysAgo(1818)], ["violation_events", daysAgo(1825)], ["attempts", daysAgo(1818)], ["attempts", daysAgo(1825)],
+      ["audit_logs", daysAgo(1818)], ["audit_logs", daysAgo(1825)],
     ]);
+    expect(batches.filter((b) => !b.dry).map((b) => b.kind)).toEqual(["attempts", "attempts", "attempts"]);
   });
 
   it("logs a failed kind and carries on with the others and the files", async () => {

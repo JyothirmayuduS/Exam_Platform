@@ -18,6 +18,7 @@ const CUTOFF = "now() - interval '1825 days'";
 const SCHEMA = `
 alter table public.exams add column legacy_name text;
 alter table public.violation_events add column created_at timestamptz not null default now();
+alter table public.mobile_upload_sessions add column created_at timestamptz not null default now();
 create table public.appeal_requests (id uuid primary key default gen_random_uuid(), attempt_id uuid, status text);
 create function public.exam_folder_slug(p_name text) returns text language sql immutable set search_path = '' as
   $$ select left(regexp_replace(regexp_replace(btrim(coalesce(p_name, '')), '[^A-Za-z0-9._-]+', '-', 'g'), '^-+|-+$', '', 'g'), 60) $$;
@@ -39,13 +40,14 @@ beforeAll(async () => {
   await db.exec(EXAM_ROLES_SCHEMA);
   await db.exec(SCHEMA);
   await db.exec(migration("20261011000000_evidence_retention.sql"));
+  await db.exec(migration("20261011010000_retention_unmatched_and_names.sql"));
 }, 60_000);
 
 beforeEach(async () => {
   await db.exec(`
     truncate public.teachers, public.staff_admins, public.students, public.exams, public.attempts, public.result_holds,
       public.violation_events, public.flag_reviews, public.audit_logs, public.appeal_requests, public.student_appeals,
-      public.legal_holds, public.retention_runs restart identity cascade;
+      public.legal_holds, public.retention_runs, public.exam_former_names, public.mobile_upload_sessions restart identity cascade;
     update public.retention_settings set retention_days = 1825, storage_cursor = null;
     insert into public.teachers (auth_id, role) values ('${ADMIN}', 'teacher'), ('${TEACHER}', 'teacher');
     insert into public.staff_admins (auth_id) values ('${ADMIN}');
@@ -134,9 +136,11 @@ describe("results and marks (attempts)", () => {
     expect(await ids("attempts")).toEqual([A(1), A(2), A(3)]);
   });
 
-  it("deletes in batches and reports when more remain", async () => {
-    expect(await batch("attempts", false, 1)).toEqual({ due: 2, skipped: 0, deleted: 1, more: true });
-    expect(await batch("attempts", false, 1)).toEqual({ due: 1, skipped: 0, deleted: 1, more: false });
+  it("deletes in batches, reporting only the batch, until a batch comes up short", async () => {
+    expect(await batch("attempts", false, 1)).toEqual({ due: 1, skipped: 0, deleted: 1, more: true });
+    expect(await batch("attempts", false, 1)).toEqual({ due: 1, skipped: 0, deleted: 1, more: true });
+    expect(await batch("attempts", false, 1)).toEqual({ due: 0, skipped: 0, deleted: 0, more: false });
+    expect(await ids("attempts")).toEqual([A(2)]);
   });
 
   it("follows a changed retention period", async () => {
@@ -172,7 +176,8 @@ describe("results and marks (attempts)", () => {
       [A(14)]: "appeal", [A(15)]: "under_review", [A(16)]: null,
     });
 
-    expect(await batch("attempts")).toEqual({ due: 3, skipped: 6, deleted: 3, more: false });
+    expect(await batch("attempts", true)).toEqual({ due: 3, skipped: 6, deleted: 0, more: false });
+    expect(await batch("attempts")).toEqual({ due: 3, skipped: 0, deleted: 3, more: false });
     expect(await ids("attempts")).toEqual([A(2), A(10), A(11), A(12), A(13), A(14), A(15)]);
   });
 
@@ -203,7 +208,7 @@ describe("violation rows and audit logs", () => {
     `);
     await db.query(`select public.set_legal_hold('exam', 'EX-1', true, null, '${ADMIN}')`);
     expect(await batch("violation_events", true)).toEqual({ due: 1, skipped: 3, deleted: 0, more: false });
-    expect(await batch("violation_events")).toEqual({ due: 1, skipped: 3, deleted: 1, more: false });
+    expect(await batch("violation_events")).toEqual({ due: 1, skipped: 0, deleted: 1, more: false });
     expect(await ids("violation_events")).toEqual([V(2), V(3), V(4), V(5)]);
   });
 
@@ -221,7 +226,8 @@ describe("violation rows and audit logs", () => {
     `);
     await db.query(`select public.set_legal_hold('exam', 'EX-1', true, null, '${ADMIN}')`);
     await db.query(`select public.set_legal_hold('student', '${S1}', true, null, '${ADMIN}')`);
-    expect(await batch("audit_logs")).toEqual({ due: 1, skipped: 4, deleted: 1, more: false });
+    expect(await batch("audit_logs", true)).toEqual({ due: 1, skipped: 4, deleted: 0, more: false });
+    expect(await batch("audit_logs")).toEqual({ due: 1, skipped: 0, deleted: 1, more: false });
     expect((await rows<{ action: string }>("select action from public.audit_logs order by id")).map((r) => r.action))
       .toEqual(["b", "c", "d", "e", "f", "admin.legal_hold_placed", "admin.legal_hold_placed"]);
   });
@@ -242,15 +248,85 @@ describe("evidence folders", () => {
         "select * from public.retention_folder_status($1, $2)", [folder, students])).map((r) => [r.student_folder, r.hold]));
 
     for (const folder of ["EX-1", "Sem Exam CS101", "Sem-Exam-CS101", "Mid-term"]) {
-      expect(await status(folder, ["21BQ1A0501", "21bq1a0502", S2, "UNKNOWN"])).toEqual({
-        "21BQ1A0501": null, "21bq1a0502": "malpractice_hold", [S2]: "malpractice_hold", UNKNOWN: null,
-      });
+      expect(await status(folder, ["21bq1a0502", S2])).toEqual({ "21bq1a0502": "malpractice_hold", [S2]: "malpractice_hold" });
     }
+    await db.exec(`insert into public.attempts (exam_id, student_id, state, submitted_at) values ('EX-2', '${S2}', 'submitted', ${OLD})`);
     expect(await status("EX-2", ["21BQ1A0502"])).toEqual({ "21BQ1A0502": null });
 
     await db.query(`select public.set_legal_hold('student', '${S1}', true, null, '${ADMIN}')`);
     expect(await status("EX-2", ["21BQ1A0501", "21BQ1A0502"])).toEqual({ "21BQ1A0501": "legal_hold", "21BQ1A0502": null });
     await db.query(`select public.set_legal_hold('exam', 'EX-2', true, null, '${ADMIN}')`);
     expect(await status("Other", ["21BQ1A0502", "anyone"])).toEqual({ "21BQ1A0502": "legal_hold", anyone: "legal_hold" });
+  });
+
+  it("keeps a folder it cannot match: an unknown exam folder, an unknown student, or a student without an attempt there", async () => {
+    await db.exec(`insert into public.attempts (exam_id, student_id, state, submitted_at) values ('EX-1', '${S2}', 'submitted', ${OLD})`);
+    expect(Object.fromEntries((await rows<{ student_folder: string; hold: string | null }>(
+      "select * from public.retention_folder_status('Deleted-exam', array['21BQ1A0502', 'x'])")).map((r) => [r.student_folder, r.hold])))
+      .toEqual({ "21BQ1A0502": "unmatched_exam", x: "unmatched_exam" });
+    const st = Object.fromEntries((await rows<{ student_folder: string; hold: string | null }>(
+      "select * from public.retention_folder_status('EX-1', array['21BQ1A0501', '21BQ1A0502', 'UNKNOWN'])")).map((r) => [r.student_folder, r.hold]));
+    expect(st).toEqual({ "21BQ1A0501": "unmatched_student", "21BQ1A0502": null, UNKNOWN: "unmatched_student" });
+  });
+
+  it("matches a renamed exam's old folders by every former name", async () => {
+    await db.exec(`
+      insert into public.attempts (exam_id, student_id, state, submitted_at) values ('EX-2', '${S2}', 'submitted', ${OLD});
+      update public.exams set name = 'Data Structures' where id = 'EX-2';
+      update public.exams set name = 'Data Structures' where id = 'EX-2';
+      update public.exams set name = 'DS · Sem 3' where id = 'EX-2';
+    `);
+    expect((await rows<{ name: string }>("select name from public.exam_former_names where exam_id = 'EX-2'")).map((r) => r.name).sort())
+      .toEqual(["Data Structures", "Other"]);
+    for (const folder of ["Other", "Data-Structures", "Data Structures", "DS-Sem-3"]) {
+      expect(await rows("select * from public.retention_folder_status($1, array['21BQ1A0502'])", [folder])).toEqual([{ student_folder: "21BQ1A0502", hold: null }]);
+    }
+    expect((await rows<{ folder: string }>("select folder from public.legacy_folder_exams() where exam_id = 'EX-2'")).map((r) => r.folder).sort())
+      .toEqual(["DS · Sem 3", "DS-Sem-3", "Data Structures", "Data-Structures", "Other"].sort());
+  });
+
+  it("keeps the old folder of an edited roll and a reused roll", async () => {
+    const S3 = "10000000-0000-0000-0000-000000000003";
+    await db.exec(`
+      insert into public.attempts (exam_id, student_id, state, submitted_at) values ('EX-1', '${S1}', 'submitted', ${OLD});
+      update public.students set roll = '21BQ1A0599' where id = '${S1}';
+    `);
+    const status = async (students: string[]) => Object.fromEntries((await rows<{ student_folder: string; hold: string | null }>(
+      "select * from public.retention_folder_status('EX-1', $1)", [students])).map((r) => [r.student_folder, r.hold]));
+    // Edited: the old roll folder matches nobody; the new roll and the id match.
+    expect(await status(["21BQ1A0501", "21BQ1A0599", S1])).toEqual({ "21BQ1A0501": "unmatched_student", "21BQ1A0599": null, [S1]: null });
+    // Reused by a student with no attempt in this exam: still unmatched.
+    await db.exec(`insert into public.students (id, roll, full_name) values ('${S3}', '21BQ1A0501', 'Three')`);
+    expect(await status(["21BQ1A0501"])).toEqual({ "21BQ1A0501": "unmatched_student" });
+    // A roll shared by two students who both sat this exam is ambiguous.
+    await db.exec(`
+      insert into public.attempts (exam_id, student_id, state, submitted_at) values ('EX-1', '${S3}', 'submitted', ${OLD});
+      update public.students set roll = '21bq1a0501' where id = '${S1}';
+    `);
+    expect(await status(["21BQ1A0501"])).toEqual({ "21BQ1A0501": "unmatched_student" });
+  });
+});
+
+describe("phone upload sessions", () => {
+  it("deletes sessions older than 90 days except those of held attempts, exams or students", async () => {
+    await db.exec(`
+      insert into public.attempts (id, exam_id, student_id, state, submitted_at) values
+        ('${A(50)}', 'EX-2', '${S2}', 'submitted', ${OLD}), ('${A(51)}', 'EX-2', '${S2}', 'submitted', ${OLD});
+      insert into public.result_holds (attempt_id, exam_id, student_id) values ('${A(50)}', 'EX-2', '${S2}');
+      insert into public.mobile_upload_sessions (attempt_id, student_id, exam_id, created_at) values
+        ('${A(50)}', '${S2}', 'EX-2', now() - interval '100 days'),
+        ('${A(51)}', '${S2}', 'EX-2', now() - interval '100 days'),
+        ('${A(51)}', '${S2}', 'EX-2', now() - interval '10 days'),
+        (null, '${S1}', 'EX-2', now() - interval '100 days'),
+        (null, '${S2}', 'EX-1', now() - interval '100 days');
+    `);
+    await db.query(`select public.set_legal_hold('student', '${S1}', true, null, '${ADMIN}')`);
+    await db.query(`select public.set_legal_hold('exam', 'EX-1', true, null, '${ADMIN}')`);
+    expect((await one<{ n: number }>("select public.retention_cleanup_upload_sessions() n")).n).toBe(1);
+    const left = await rows<{ k: string }>(
+      "select concat_ws(' ', coalesce(attempt_id::text, '-'), exam_id, student_id::text, created_at > now() - interval '30 days') k from public.mobile_upload_sessions");
+    expect(left.map((r) => r.k).sort()).toEqual([
+      `${A(50)} EX-2 ${S2} f`, `${A(51)} EX-2 ${S2} t`, `- EX-1 ${S2} f`, `- EX-2 ${S1} f`,
+    ].sort());
   });
 });

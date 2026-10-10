@@ -11,7 +11,10 @@ const KINDS: Record<string, string> = { attempts: "Results and marks", violation
 const HELD: Record<string, string> = {
   malpractice_hold: "malpractice hold", legal_hold: "legal hold", appeal: "open appeal", under_review: "flag not reviewed",
   no_upload_date: "no upload date", unchecked: "holds not checked",
+  unmatched_exam: "unmatched exam folder", unmatched_student: "unmatched student folder",
 };
+type Choice = { id: string; roll: string; full_name: string | null };
+type Failure = { error: string; code?: string; detail?: Record<string, unknown> };
 const n = (v: number) => v.toLocaleString("en-IN");
 
 const fileTotal = (r: RetentionRun, key: "deleted" | "skipped" | "failed") => Object.values(r.files).reduce((t, s) => t + s[key], 0);
@@ -52,6 +55,7 @@ export default function AdminRetention({ data, notify }: { data: AdminOverview; 
   const [days, setDays] = useState("");
   const [dry, setDry] = useState<RetentionRun | null>(null);
   const [hold, setHold] = useState<{ type: "exam" | "student"; examId: string; roll: string; reason: string }>({ type: "exam", examId: "", roll: "", reason: "" });
+  const [choices, setChoices] = useState<Choice[] | null>(null);
 
   const load = async () => {
     const res = await loadAdminRetention();
@@ -59,12 +63,14 @@ export default function AdminRetention({ data, notify }: { data: AdminOverview; 
   };
   useEffect(() => { void load(); }, []);
 
-  const act = async <T,>(key: string, run: () => Promise<{ ok: true; data: T } | { ok: false; error: string }>, done: (data: T) => void) => {
+  const act = async <T,>(
+    key: string, run: () => Promise<{ ok: true; data: T } | ({ ok: false } & Failure)>, done: (data: T) => void, failed?: (f: Failure) => boolean,
+  ) => {
     setBusy(key);
     setError(null);
     const res = await run();
     setBusy(null);
-    if (!res.ok) { setError(res.error); return; }
+    if (!res.ok) { if (!failed?.(res)) setError(res.error); return; }
     done(res.data);
     await load();
   };
@@ -86,14 +92,19 @@ export default function AdminRetention({ data, notify }: { data: AdminOverview; 
     void act("real", () => runRetention(false, dry.id), (d) => { setDry(null); notify(`Retention run finished: ${n(d.run.deleted)} deleted, ${n(d.run.skipped)} kept on hold, ${n(d.run.failed)} failed.`); });
   };
 
-  const placeHold = () => {
+  const placeHold = (studentId?: string) => {
     const reason = hold.reason.trim();
     if (!reason) { setError("Give a reason for the legal hold."); return; }
-    const target = hold.type === "exam" ? { targetId: hold.examId } : { roll: hold.roll.trim() };
-    if (!(target.targetId || target.roll)) { setError(hold.type === "exam" ? "Choose an exam to hold." : "Enter the student's roll number."); return; }
+    const target = hold.type === "exam" ? { targetId: hold.examId } : studentId ? { targetId: studentId } : { roll: hold.roll.trim() };
+    if (!("targetId" in target ? target.targetId : target.roll)) { setError(hold.type === "exam" ? "Choose an exam to hold." : "Enter the student's roll number."); return; }
+    setChoices(null);
     void act("hold", () => setLegalHold({ targetType: hold.type, on: true, reason, ...target }), (d) => {
       setHold({ ...hold, examId: "", roll: "", reason: "" });
       notify(d.changed ? "Legal hold placed." : "That legal hold was already in place.");
+    }, (f) => {
+      if (f.code !== "roll_ambiguous" || !Array.isArray(f.detail?.students)) return false;
+      setChoices(f.detail.students as Choice[]);
+      return true;
     });
   };
   const liftHold = (h: Retention["holds"][number]) => {
@@ -128,7 +139,7 @@ export default function AdminRetention({ data, notify }: { data: AdminOverview; 
         <Panel
           title="Retention"
           note={<>Recordings, snapshots, answer sheets, violation frames, results, marks and audit logs are kept for this period, then deleted by the daily job.
-            Nothing is deleted for an attempt on a malpractice hold, an exam or student on a legal hold, an open appeal, or a serious flag not yet reviewed.</>}
+            Nothing is deleted for an attempt on a malpractice hold, an exam or student on a legal hold, an open appeal, a serious flag not yet reviewed, or a folder the job cannot match to an exam and student.</>}
         >
           {!info ? <Empty>Loading…</Empty> : (
             <div className="space-y-4 text-[13px]">
@@ -174,14 +185,29 @@ export default function AdminRetention({ data, notify }: { data: AdminOverview; 
               </label>
             ) : (
               <label>Roll number
-                <input value={hold.roll} onChange={(e) => setHold({ ...hold, roll: e.target.value })} maxLength={40} className={`mt-1 block w-40 ${inputCls}`} />
+                <input value={hold.roll} onChange={(e) => { setHold({ ...hold, roll: e.target.value }); setChoices(null); }} maxLength={40} className={`mt-1 block w-40 ${inputCls}`} />
               </label>
             )}
             <label className="min-w-48 flex-1">Reason
               <input value={hold.reason} onChange={(e) => setHold({ ...hold, reason: e.target.value })} maxLength={500} placeholder="e.g. University inquiry ref." className={`mt-1 block w-full ${inputCls}`} />
             </label>
-            <Button size="sm" onClick={placeHold} disabled={!!busy}>{busy === "hold" ? "Placing…" : "Place hold"}</Button>
+            <Button size="sm" onClick={() => placeHold()} disabled={!!busy}>{busy === "hold" ? "Placing…" : "Place hold"}</Button>
           </div>
+          {choices && hold.type === "student" && (
+            <div role="group" aria-label="Choose the student" className="mb-3 border-l-2 border-amber bg-amber/5 px-4 py-3 text-[13px]">
+              <p className="mb-2">More than one student has the roll number <span className="font-mono">{hold.roll.trim()}</span>. Choose which one to hold:</p>
+              <ul className="space-y-1">
+                {choices.map((c) => (
+                  <li key={c.id}>
+                    <button type="button" className="text-forest hover:underline disabled:opacity-40" disabled={!!busy} onClick={() => placeHold(c.id)}>
+                      {studentLabel(c)}
+                    </button>
+                    <span className="ml-2 font-mono text-[10px] text-soft">{c.id}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {!info ? <Empty>…</Empty> : info.holds.length === 0 ? <Empty>No legal holds.</Empty> : (
             <Table head={["On", "Reason", "Placed", ""]}>
               {info.holds.map((h) => (
@@ -200,6 +226,28 @@ export default function AdminRetention({ data, notify }: { data: AdminOverview; 
           )}
         </Panel>
       </div>
+
+      <Panel
+        title="Unmatched, kept"
+        count={info?.unmatched?.total}
+        tone={info?.unmatched?.total ? "amber" : undefined}
+        note="Evidence folders the job could not match to an exam, or to exactly one student with an attempt in that exam (for example a deleted exam or an edited roll number). They are never deleted; move or remove them by hand once you know whose they are."
+      >
+        {!info ? <Empty>…</Empty> : !info.unmatched ? <Empty>Run a dry run to check the evidence folders.</Empty>
+          : info.unmatched.total === 0 ? <Empty>Every evidence folder matched an exam and a student.</Empty> : (
+            <>
+              <Table head={["Storage", "Folder"]}>
+                {info.unmatched.folders.map((u) => (
+                  <tr key={`${u.store}:${u.folder}`}><Td className="font-mono text-[11px]">{u.store}</Td><Td className="font-mono text-[11px]">{u.folder}</Td></tr>
+                ))}
+              </Table>
+              <p className="mt-2 text-[11px] text-soft">
+                From run {info.unmatched.runId}{info.unmatched.countedAt ? `, ${ago(info.unmatched.countedAt)}` : ""}.
+                {info.unmatched.total > info.unmatched.folders.length && ` Showing ${info.unmatched.folders.length} of ${info.unmatched.total}.`}
+              </p>
+            </>
+          )}
+      </Panel>
 
       <Panel title="Retention runs" count={info?.runs.length} note="The last ten runs of the deletion job, scheduled or started here. Failures are logged and the job carries on.">
         {!info ? <Empty>…</Empty> : info.runs.length === 0 ? <Empty>The deletion job hasn't run yet.</Empty> : (
