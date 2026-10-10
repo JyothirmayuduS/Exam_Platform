@@ -7,6 +7,8 @@
 //     under "<exam folder>/<student folder>/…" in every evidence store.
 // Held items are never deleted: an attempt on a malpractice hold, an exam or
 // student on a legal hold, an open appeal, or a serious flag not yet reviewed.
+// Nor is anything in a folder that matches no exam, or no single student with
+// an attempt in that exam: those are kept and reported as unmatched.
 // Age always counts from the original upload (or submission) time.
 
 export const DAY = 86_400_000;
@@ -32,7 +34,12 @@ export type DbBatch = { due: number; skipped: number; deleted: number; more: boo
 
 export type RunStatus = "running" | "succeeded" | "partial" | "failed";
 export type RunTotals = { deleted: number; skipped: number; failed: number; due_week: number };
-export type StoreDetail = RunTotals & { folders_total: number; folders_done: number; held: Record<string, number> };
+export type StoreDetail = RunTotals & {
+  folders_total: number; folders_done: number; held: Record<string, number>;
+  /** Folders matching no exam ("<exam folder>/") or no single student with an attempt ("<exam folder>/<student folder>/"); kept. */
+  unmatched: string[]; unmatched_total: number;
+};
+export const UNMATCHED = ["unmatched_exam", "unmatched_student"];
 export type RunDetail = {
   db: Record<string, RunTotals>;
   storage: Record<string, StoreDetail>;
@@ -47,7 +54,7 @@ export interface RetentionDb {
   setCursor(cursor: string | null): Promise<void>;
   /** Hold reason per student folder of one exam folder; null when nothing is held. */
   folderStatus(folder: string, students: string[]): Promise<Map<string, string | null>>;
-  /** Rows of one kind older than `cutoffIso`, not held. `limit` 0 only counts. */
+  /** A dry run or `limit` 0 counts every row past `cutoffIso` (due and held); otherwise deletes one batch and reports only it. */
   dbBatch(kind: DbKind, cutoffIso: string, limit: number, dryRun: boolean): Promise<DbBatch>;
   startRun(run: { dry_run: boolean; trigger: "schedule" | "admin"; requested_by: string | null; retention_days: number; cutoff: string }): Promise<number>;
   finishRun(id: number, patch: RunTotals & { status: RunStatus; complete: boolean; finished_at: string; detail: RunDetail }): Promise<void>;
@@ -73,6 +80,7 @@ export type RunSummary = RunTotals & {
 };
 
 const MAX_ERRORS = 50;
+const MAX_UNMATCHED = 200;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 300);
 const totals = (): RunTotals => ({ deleted: 0, skipped: 0, failed: 0, due_week: 0 });
 
@@ -116,6 +124,7 @@ export async function runRetention(
     if (detail.errors.length < MAX_ERRORS) detail.errors.push(`${where}: ${message(e)}`);
   };
   const outOfTime = () => deps.now() - start >= opts.budgetMs;
+  const unmatchedSeen = new Map<string, Set<string>>();
   let complete = true;
   let crashed = false;
 
@@ -128,16 +137,15 @@ export async function runRetention(
         note(`${kind} (due this week)`, e);
       }
       try {
+        const count = await db.dbBatch(kind, cutoffIso, 0, true);
+        d.skipped = count.skipped;
         if (dry) {
-          const r = await db.dbBatch(kind, cutoffIso, 0, true);
-          d.deleted = r.due;
-          d.skipped = r.skipped;
+          d.deleted = count.due;
           continue;
         }
-        for (;;) {
+        while (count.due > 0) {
           const r = await db.dbBatch(kind, cutoffIso, dbBatchSize, false);
           d.deleted += r.deleted;
-          d.skipped = r.skipped;
           if (!r.more) break;
           if (outOfTime()) { complete = false; break; }
         }
@@ -153,7 +161,7 @@ export async function runRetention(
     const cIndex = cStore ? stores.findIndex((s) => s.name === cStore) : -1;
 
     stores: for (const [index, store] of stores.entries()) {
-      const s: StoreDetail = (detail.storage[store.name] = { ...totals(), folders_total: 0, folders_done: 0, held: {} });
+      const s: StoreDetail = (detail.storage[store.name] = { ...totals(), folders_total: 0, folders_done: 0, held: {}, unmatched: [], unmatched_total: 0 });
       if (index < cIndex) continue;
       let folders: string[];
       try {
@@ -211,6 +219,16 @@ export async function runRetention(
 
   async function sweepStudent(store: EvidenceStore, folder: string, student: string, hold: string | null, s: StoreDetail) {
     const prefix = `${folder}/${student}/`;
+    if (hold && UNMATCHED.includes(hold)) {
+      const path = hold === "unmatched_exam" ? `${folder}/` : prefix;
+      const seen = unmatchedSeen.get(store.name) ?? new Set<string>();
+      unmatchedSeen.set(store.name, seen);
+      if (!seen.has(path)) {
+        seen.add(path);
+        s.unmatched_total += 1;
+        if (s.unmatched.length < MAX_UNMATCHED) s.unmatched.push(path);
+      }
+    }
     const pending: string[] = [];
     const flush = async () => {
       if (!pending.length) return;

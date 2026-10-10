@@ -542,7 +542,7 @@ describe("admin-dashboard endpoint", () => {
 });
 
 /** retention_settings, legal_holds and retention_runs in memory; one old evidence file in R2. */
-function makeRetention(opts: { lifecycleDays?: number | null } = {}) {
+function makeRetention(opts: { lifecycleDays?: number | null; folderHold?: string } = {}) {
   const state = { days: 1825, cursor: null as string | null };
   const runs: RunRow[] = [];
   const holds: (LegalHold & { lifted: boolean })[] = [];
@@ -558,7 +558,7 @@ function makeRetention(opts: { lifecycleDays?: number | null } = {}) {
     retentionDays: async () => state.days,
     cursor: async () => state.cursor,
     setCursor: async (c) => { state.cursor = c; },
-    folderStatus: async (_f, students) => new Map(students.map((s) => [s, null])),
+    folderStatus: async (_f, students) => new Map(students.map((s) => [s, opts.folderHold ?? null])),
     dbBatch: async (kind, _c, _l, dry) => { calls.batches.push({ kind, dry }); return { due: kind === "attempts" ? 2 : 0, skipped: 1, deleted: dry ? 0 : kind === "attempts" ? 2 : 0, more: false }; },
     startRun: async (r) => {
       runs.unshift({ ...r, id: runs.length + 1, started_at: new Date(NOW).toISOString(), finished_at: null, status: "running", complete: false, deleted: 0, skipped: 0, failed: 0, due_week: null, detail: null });
@@ -680,6 +680,30 @@ describe("admin-dashboard retention", () => {
     expect(audits).toEqual([{ actorId: "admin-1", action: "admin.retention_run", targetType: "retention", targetId: "2",
       meta: { confirmed_dry_run: 1, status: "succeeded", complete: true, deleted: 3, skipped: 3, failed: 0 } }]);
     expect((await callR(store, r.retention, { op: "retention_run", dryRun: false, confirmRunId: 2 })).body.error).toBe("dry_run_required");
+  });
+
+  it("asks the admin to choose when a roll matches more than one student", async () => {
+    const A1 = "00000000-0000-4000-8000-0000000000a1", A2 = "00000000-0000-4000-8000-0000000000a2";
+    const { store } = makeStore({ allStudents: async () => [
+      { id: A1, roll: "21BQ9", full_name: "First" }, { id: A2, roll: "21bq9", full_name: "Second" }, { id: "s1", roll: "21BQ1", full_name: "A" },
+    ] });
+    const r = makeRetention();
+    const res = await callR(store, r.retention, { op: "legal_hold", targetType: "student", roll: "21Bq9", on: true, reason: "Inquiry" });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: "roll_ambiguous", students: [{ id: A1, roll: "21BQ9", full_name: "First" }, { id: A2, roll: "21bq9", full_name: "Second" }] });
+    expect(r.calls.holds).toEqual([]);
+    expect((await callR(store, r.retention, { op: "legal_hold", targetType: "student", targetId: A2, on: true, reason: "Inquiry" })).body).toEqual({ ok: true, changed: true });
+    expect(r.calls.holds).toEqual([{ type: "student", target: A2, on: true, reason: "Inquiry", actor: "admin-1" }]);
+  });
+
+  it("reports unmatched folders as kept", async () => {
+    const { store } = makeStore();
+    const r = makeRetention({ folderHold: "unmatched_exam" });
+    expect((await callR(store, r.retention, { op: "retention_run", dryRun: true })).body.run.files.r2).toMatchObject({ deleted: 0, skipped: 1, unmatched: ["Finished/"] });
+    const { body } = await callR(store, r.retention, { op: "retention" });
+    expect(body.unmatched).toEqual({ runId: 1, countedAt: expect.any(String), total: 1, folders: [{ store: "r2", folder: "Finished/" }] });
+    expect(body.dueWeek.files).toBe(0);
+    expect(r.files.size).toBe(1);
   });
 
   it("does not start a run while another is running", async () => {

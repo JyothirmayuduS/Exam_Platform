@@ -110,7 +110,11 @@ export type AdminUploads = {
 };
 
 export type RetentionTotals = { deleted: number; skipped: number; failed: number; due_week: number };
-export type RetentionFiles = RetentionTotals & { folders_total: number; folders_done: number; held: Record<string, number> };
+export type RetentionFiles = RetentionTotals & {
+  folders_total: number; folders_done: number; held: Record<string, number>;
+  /** Folders matching no exam, or no single student with an attempt there; kept. */
+  unmatched: string[]; unmatched_total: number;
+};
 export type RetentionRun = {
   id: number; dryRun: boolean; status: "running" | "succeeded" | "partial" | "failed" | "interrupted"; complete: boolean;
   retentionDays: number; cutoff: string; deleted: number; skipped: number; failed: number; dueWeek: number | null;
@@ -130,6 +134,8 @@ export type AdminRetention = {
   days: number; min: number; max: number; updatedAt: string | null; updatedBy: string | null;
   /** Due by the end of the next 7 days, holds excluded. Files come from the last complete run. */
   dueWeek: { database: Record<string, number>; files: number | null; filesCountedAt: string | null; filesRunId: number | null };
+  /** From the last complete run; null before one. */
+  unmatched: { runId: number; countedAt: string | null; total: number; folders: { store: string; folder: string }[] } | null;
   runs: RetentionRunRow[];
   holds: LegalHoldView[];
   job: CronJob | null;
@@ -155,10 +161,11 @@ const ERRORS: Record<string, string> = {
   target_not_found: "That exam or student doesn't exist.",
   dry_run_required: "Run a dry run first, then confirm it within 30 minutes.",
   run_in_progress: "A retention run is already in progress. Try again when it finishes.",
+  roll_ambiguous: "More than one student has that roll number. Choose which one to hold.",
   server_error: "The admin service failed. Try again.",
 };
 
-type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+type Result<T> = { ok: true; data: T } | { ok: false; error: string; code?: string; detail?: Record<string, unknown> };
 
 async function call<T>(body: Record<string, unknown>): Promise<Result<T>> {
   const db = getSupabase();
@@ -166,8 +173,11 @@ async function call<T>(body: Record<string, unknown>): Promise<Result<T>> {
   const { data, error } = await db.functions.invoke("admin-dashboard", { body });
   if (error) {
     const ctx = (error as { context?: Response }).context;
-    const payload = ctx && typeof ctx.json === "function" ? ((await ctx.json().catch(() => null)) as { error?: string } | null) : null;
-    return { ok: false, error: payload?.error ? ERRORS[payload.error] ?? payload.error : "Could not reach the admin service." };
+    const payload = ctx && typeof ctx.json === "function" ? ((await ctx.json().catch(() => null)) as ({ error?: string } & Record<string, unknown>) | null) : null;
+    return {
+      ok: false, error: payload?.error ? ERRORS[payload.error] ?? payload.error : "Could not reach the admin service.",
+      code: payload?.error, detail: payload ?? undefined,
+    };
   }
   return { ok: true, data: data as T };
 }

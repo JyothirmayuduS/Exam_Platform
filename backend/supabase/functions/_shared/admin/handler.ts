@@ -15,7 +15,8 @@
 // POST { op: "retention" }                      retention period, due this week (holds excluded), runs, legal holds
 // POST { op: "set_retention", days }            change the site retention period (audited in SQL)
 // POST { op: "legal_hold", targetType: "exam"|"student", targetId? | roll?, on, reason? }
-//                                               place or lift a legal hold (audited in SQL)
+//                                               place or lift a legal hold (audited in SQL); a roll
+//                                               shared by several students returns them to choose from
 // POST { op: "retention_run", dryRun: true }    count what would be deleted now
 // POST { op: "retention_run", dryRun: false, confirmRunId }
 //                                               delete, confirming the caller's own dry run from the last 30 minutes
@@ -419,6 +420,11 @@ export function createAdminHandler(deps: {
     return {
       days, min: MIN_DAYS, max: MAX_DAYS, updatedAt: settings.updated_at, updatedBy: settings.updated_by ? names.get(settings.updated_by) ?? null : null,
       dueWeek: { database, files, filesCountedAt: scan?.finished_at ?? null, filesRunId: scan?.id ?? null },
+      unmatched: scan ? {
+        runId: scan.id, countedAt: scan.finished_at,
+        total: Object.values(scan.detail!.storage).reduce((t, s) => t + (s.unmatched_total ?? 0), 0),
+        folders: Object.entries(scan.detail!.storage).flatMap(([name, s]) => (s.unmatched ?? []).map((folder) => ({ store: name, folder }))),
+      } : null,
       runs: runs.map((x) => runView(x, names, now)),
       holds: holds.map((h) => ({
         id: h.id, targetType: h.target_type, targetId: h.target_id, reason: h.reason, placedAt: h.placed_at,
@@ -451,9 +457,10 @@ export function createAdminHandler(deps: {
       let target = text(body.targetId);
       const roll = text(body.roll);
       if (type === "student" && !target && roll) {
-        const hit = (await store.allStudents()).find((s) => s.roll.toUpperCase() === roll.toUpperCase());
-        if (!hit) return json({ error: "target_not_found" }, 404);
-        target = hit.id;
+        const hits = (await store.allStudents()).filter((s) => s.roll.toUpperCase() === roll.toUpperCase());
+        if (!hits.length) return json({ error: "target_not_found" }, 404);
+        if (hits.length > 1) return json({ error: "roll_ambiguous", students: hits.map((s) => ({ id: s.id, roll: s.roll, full_name: s.full_name })) }, 409);
+        target = hits[0].id;
       }
       if (!target || !SAFE_ID.test(target) || (type === "student" && !UUID.test(target))) return json({ error: "bad_target" }, 400);
       const reason = text(body.reason)?.slice(0, 500) ?? null;
