@@ -89,5 +89,13 @@ appeals or reviews.
 
 ### Current rule
 
-Checked on 2026-10-10 through the admin console's lifecycle read: see the PR
-that added this file for the result.
+Checked on 2026-10-10 through the admin console's lifecycle read:
+
+| Rule ID | Status | Prefix | Expires after |
+| --- | --- | --- | --- |
+| `exam-artifacts-retention` | Enabled | (whole bucket) | 90 days |
+
+This rule was created by the removed `r2-retention` function. It is shorter than
+the 1825-day app period and ignores holds, so **it must be deleted** (or set to
+more than 1825 days). The oldest evidence in R2 was uploaded in early September
+2026, so the rule starts deleting it around 2 December 2026 if left in place.
