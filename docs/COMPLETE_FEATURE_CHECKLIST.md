@@ -27,7 +27,8 @@
 >
 > **Still open (needs action outside code):** code-signing certificates,
 > enable leaked-password protection in Supabase Auth, rotate shared API keys,
-> full-cohort load test, backup/restore drill, DPDP consent/legal review.
+> full-cohort load test, DPDP consent/legal review. (Backup/restore drill done
+> 2026-10-11; see docs/backup-restore.md.)
 
 > ## ⚠️ STATUS UPDATE (September 5, 2026)
 > This document is the original Sept 1 roadmap. The sections below marked ❌
