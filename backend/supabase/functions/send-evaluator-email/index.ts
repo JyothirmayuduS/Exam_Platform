@@ -1,7 +1,7 @@
 // Supabase Edge Function: notify evaluators when test reports are assigned to
 // them (the Examiner dashboard "Auto-assign Test Reports" flow). Mirrors
 // send-exam-email / send-proctor-email (Gmail SMTP via nodemailer). Env needed:
-//   GMAIL_USER, GMAIL_APP_PASSWORD, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
+//   GMAIL_USER, GMAIL_APP_PASSWORD, APP_BASE_URL, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
 // Request: { examId, evaluators: [{ id, count }], dueDate, reportCount } — only
 // staff delegated on the exam are emailed.
 // Response: { sent, skipped, failed, refused, results: [{ id, status }] }
@@ -31,15 +31,17 @@ Deno.serve(async (req: Request) => {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !anonKey || !serviceRole) return json({ error: "Missing Supabase secrets" }, 500);
+  const baseUrl = (Deno.env.get("APP_BASE_URL") ?? "").trim().replace(/\/+$/, "");
+  if (!baseUrl) return json({ error: "APP_BASE_URL is not configured" }, 500);
 
   const db = createClient(supabaseUrl, serviceRole, { auth: { autoRefreshToken: false, persistSession: false } });
   const authHeader = req.headers.get("Authorization") ?? "";
   const user = authHeader
     ? createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } }, auth: { autoRefreshToken: false, persistSession: false } })
     : null;
-  const { examId, evaluators = [], dueDate = null, reportCount = 0, appBaseUrl: reqBase } = await req
+  const { examId, evaluators = [], dueDate = null, reportCount = 0 } = await req
     .json()
-    .catch(() => ({ examId: null, evaluators: [], dueDate: null, reportCount: 0, appBaseUrl: null }));
+    .catch(() => ({ examId: null, evaluators: [], dueDate: null, reportCount: 0 }));
   const gate = await gateAssignmentEmail({ user, admin: db, kind: "evaluator", examId, requested: evaluators });
   if (!gate.ok) return json({ error: gate.error }, gate.status);
 
@@ -50,7 +52,6 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
   if (!exam) return json({ error: "Exam not found" }, 404);
 
-  const baseUrl = (reqBase || Deno.env.get("APP_BASE_URL") || "http://localhost:5173").replace(/\/$/, "");
   const gradeLink = `${baseUrl}/teacher/evaluate?exam=${encodeURIComponent(exam.id)}`;
   const due = dueDate ? new Date(dueDate) : null;
 
@@ -117,8 +118,8 @@ function evaluatorTemplate(p: {
             <td style="padding:14px 18px;font-size:15px;font-weight:700">${p.dueDate ? escapeHtml(p.dueDate) : "Not set"}</td>
           </tr>
         </table>
-        <a href="${p.gradeLink}" style="display:block;margin-top:26px;padding:15px 20px;background:#1a3a2a;color:#ffffff;text-decoration:none;font-weight:700;text-align:center;border-radius:8px;font-size:15px">→ &nbsp; Open Grading Queue</a>
-        <p style="margin:18px 0 0;color:#687180;font-size:12px">If the button does not work, copy this link into your browser:<br><span style="color:#1a3a2a;word-break:break-all">${p.gradeLink}</span></p>
+        <a href="${escapeHtml(p.gradeLink)}" style="display:block;margin-top:26px;padding:15px 20px;background:#1a3a2a;color:#ffffff;text-decoration:none;font-weight:700;text-align:center;border-radius:8px;font-size:15px">→ &nbsp; Open Grading Queue</a>
+        <p style="margin:18px 0 0;color:#687180;font-size:12px">If the button does not work, copy this link into your browser:<br><span style="color:#1a3a2a;word-break:break-all">${escapeHtml(p.gradeLink)}</span></p>
       </div>
       <div style="padding:20px 24px;background:#272b31;color:#ffffff;text-align:center;font-size:11px">© 2026 Vignan Exam Platform · Automated assignment notification — please do not reply.</div>
     </div>

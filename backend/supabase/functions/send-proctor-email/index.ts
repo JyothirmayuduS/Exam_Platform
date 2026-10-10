@@ -1,6 +1,6 @@
 // Supabase Edge Function: notify proctors when they are assigned to monitor an exam.
 // Mirrors send-exam-email (Gmail SMTP via nodemailer). Env needed:
-//   GMAIL_USER, GMAIL_APP_PASSWORD, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
+//   GMAIL_USER, GMAIL_APP_PASSWORD, APP_BASE_URL, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
 // Request: { examId, proctors: [{ id }] } — only staff assigned to the exam are emailed.
 // Response: { sent, skipped, failed, refused, results: [{ id, status }] }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -29,13 +29,15 @@ Deno.serve(async (req: Request) => {
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !anonKey || !serviceRole) return json({ error: "Missing Supabase secrets" }, 500);
+  const baseUrl = (Deno.env.get("APP_BASE_URL") ?? "").trim().replace(/\/+$/, "");
+  if (!baseUrl) return json({ error: "APP_BASE_URL is not configured" }, 500);
 
   const db = createClient(supabaseUrl, serviceRole, { auth: { autoRefreshToken: false, persistSession: false } });
   const authHeader = req.headers.get("Authorization") ?? "";
   const user = authHeader
     ? createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } }, auth: { autoRefreshToken: false, persistSession: false } })
     : null;
-  const { examId, proctors = [], appBaseUrl: reqBase } = await req.json().catch(() => ({ examId: null, proctors: [], appBaseUrl: null }));
+  const { examId, proctors = [] } = await req.json().catch(() => ({ examId: null, proctors: [] }));
   const gate = await gateAssignmentEmail({ user, admin: db, kind: "proctor", examId, requested: proctors });
   if (!gate.ok) return json({ error: gate.error }, gate.status);
 
@@ -46,7 +48,6 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
   if (!exam) return json({ error: "Exam not found" }, 404);
 
-  const baseUrl = (reqBase || Deno.env.get("APP_BASE_URL") || "http://localhost:5173").replace(/\/$/, "");
   const monitorLink = `${baseUrl}/proctor?exam=${encodeURIComponent(exam.id)}`;
   const dateObj = exam.scheduled_at ? new Date(exam.scheduled_at) : null;
 
@@ -116,8 +117,8 @@ function proctorTemplate(p: {
           </tr>
         </table>
         <p style="margin:26px 0 0;font-size:14px;color:#444">You will see live camera &amp; screen feeds, real-time violation flags, and can warn, pause, or escalate candidates straight from the proctor console.</p>
-        <a href="${p.monitorLink}" style="display:block;margin-top:26px;padding:15px 20px;background:#8b1e2d;color:#ffffff;text-decoration:none;font-weight:700;text-align:center;border-radius:8px;font-size:15px">→ &nbsp; Open Proctor Console</a>
-        <p style="margin:18px 0 0;color:#687180;font-size:12px">If the button does not work, copy this link into your browser:<br><span style="color:#8b1e2d;word-break:break-all">${p.monitorLink}</span></p>
+        <a href="${escapeHtml(p.monitorLink)}" style="display:block;margin-top:26px;padding:15px 20px;background:#8b1e2d;color:#ffffff;text-decoration:none;font-weight:700;text-align:center;border-radius:8px;font-size:15px">→ &nbsp; Open Proctor Console</a>
+        <p style="margin:18px 0 0;color:#687180;font-size:12px">If the button does not work, copy this link into your browser:<br><span style="color:#8b1e2d;word-break:break-all">${escapeHtml(p.monitorLink)}</span></p>
       </div>
       <div style="padding:20px 24px;background:#272b31;color:#ffffff;text-align:center;font-size:11px;color:#aeb4bd">© 2026 Vignan Exam Platform · Automated proctoring notification — please do not reply.</div>
     </div>
