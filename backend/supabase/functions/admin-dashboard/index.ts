@@ -2,25 +2,24 @@
 // Deploy WITH JWT verification. Optional secrets:
 //   SITE_URL                    public site checked by the health panel
 //   LOCKDOWN_RELEASE_REPO       GitHub repo whose lockdown-v* releases are the exam browser
-//   R2_*, RETENTION_DAYS        evidence bucket, counted one exam folder at a time
+//   R2_*                        evidence bucket, counted one exam folder at a time
+//   EVIDENCE_STORAGE_BUCKET     Supabase Storage evidence bucket swept by retention (default exam-records)
+// The retention period lives in retention_settings (docs/retention.md).
 // Backup status comes from public.backup_runs, written by the backup job (README, "Backups").
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { createAdminHandler, type AdminProbes, type HealthCheck, type Release } from "../_shared/admin/handler.ts";
 import { supabaseAdminStore } from "../_shared/admin/supabaseStore.ts";
 import { releaseVersion, type StorageObject } from "../_shared/admin/model.ts";
 import { listQuery, parseListPage, type ListPage } from "../_shared/admin/r2List.ts";
+import { evidenceStores, r2Config } from "../_shared/retention/env.ts";
+import { r2Lifecycle } from "../_shared/retention/stores.ts";
+import { supabaseRetentionDb } from "../_shared/retention/supabaseDb.ts";
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 const SUPABASE_URL = env("SUPABASE_URL").replace(/\/+$/, "");
 const db = createClient(SUPABASE_URL, env("SUPABASE_SERVICE_ROLE_KEY"), { auth: { autoRefreshToken: false, persistSession: false } });
 
-const r2 = (() => {
-  const accessKeyId = env("R2_ACCESS_KEY_ID"), secretAccessKey = env("R2_SECRET_ACCESS_KEY");
-  const endpoint = env("R2_S3_ENDPOINT").replace(/\/+$/, ""), bucket = env("R2_BUCKET");
-  if (!accessKeyId || !secretAccessKey || !endpoint || !bucket) return null;
-  return { aws: new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region: "auto" }), endpoint, bucket };
-})();
+const r2 = r2Config();
 
 async function timed(key: string, label: string, run: () => Promise<{ ok: boolean; detail: string }>): Promise<HealthCheck> {
   const t0 = performance.now();
@@ -130,10 +129,6 @@ const probes: AdminProbes = {
     }
     return { objects, next };
   },
-
-  retentionDays() {
-    return Math.max(1, Math.min(3650, Number(env("RETENTION_DAYS") || 90)));
-  },
 };
 
 async function listPage(opts: { prefix?: string; delimiter?: string; token: string | null }): Promise<ListPage | { error: string }> {
@@ -150,4 +145,7 @@ async function actor(req: Request) {
   return data?.user?.id ? { authId: String(data.user.id) } : null;
 }
 
-Deno.serve(createAdminHandler({ store: supabaseAdminStore(db), probes, actor, now: Date.now }));
+Deno.serve(createAdminHandler({
+  store: supabaseAdminStore(db), probes, actor, now: Date.now,
+  retention: { db: supabaseRetentionDb(db), stores: () => evidenceStores(db, r2), lifecycle: () => r2Lifecycle(r2) },
+}));

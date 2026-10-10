@@ -12,6 +12,16 @@
 // POST { op: "review_flag", violationId, note? }
 // POST { op: "photos" }                         registration photos taken, with short-lived view links
 // POST { op: "reset_photo", studentId }         clear a registration photo so the student retakes it
+// POST { op: "retention" }                      retention period, due this week (holds excluded), runs, legal holds
+// POST { op: "set_retention", days }            change the site retention period (audited in SQL)
+// POST { op: "legal_hold", targetType: "exam"|"student", targetId? | roll?, on, reason? }
+//                                               place or lift a legal hold (audited in SQL)
+// POST { op: "retention_run", dryRun: true }    count what would be deleted now
+// POST { op: "retention_run", dryRun: false, confirmRunId }
+//                                               delete, confirming the caller's own dry run from the last 30 minutes
+import { conflictingRules, type Lifecycle } from "../retention/stores.ts";
+import { DB_KINDS, MAX_DAYS, MIN_DAYS, runRetention, type EvidenceStore } from "../retention/job.ts";
+import type { RetentionAdminDb, RunRow } from "../retention/supabaseDb.ts";
 import {
   connectionOf, countObjects, examFolders, flagsAwaitingReview, gradePostState, isKioskSitting, kioskUploads, liveCounts, phaseOf, readiness,
   storageFromCounts, unreleased, versionsInUse,
@@ -38,6 +48,8 @@ export type SystemStatus = {
 
 export interface AdminStore {
   isAdmin(authId: string): Promise<boolean>;
+  /** The site retention period (retention_settings). */
+  retentionDays(): Promise<number>;
   exams(): Promise<AdminExam[]>;
   enrollments(examIds: string[]): Promise<{ exam_id: string; student_id: string }[]>;
   /** Attempts started since `sinceIso`, plus any still being written or awaiting marks. */
@@ -97,11 +109,17 @@ export interface AdminProbes {
   storageFolders(): Promise<{ configured: boolean; folders: string[]; error?: string }>;
   /** Up to `maxPages` listing pages under "<folder>/", from `token`; `next` is null at the end. */
   listFolder(folder: string, token: string | null, maxPages: number): Promise<{ objects: StorageObject[]; next: string | null; error?: string }>;
-  retentionDays(): number;
 }
+
+export type RetentionDeps = { db: RetentionAdminDb; stores: () => EvidenceStore[]; lifecycle: () => Promise<Lifecycle> };
 
 /** Listing pages (1,000 keys each) counted per recount request. */
 export const RECOUNT_PAGES = 10;
+/** A real retention run must confirm the caller's own dry run from this recently. */
+export const CONFIRM_WITHIN_MS = 30 * 60_000;
+/** A run still marked running after this long was cut off (function timeout). */
+const RUN_STALE_MS = 15 * 60_000;
+const ADMIN_RUN_BUDGET_MS = 60_000;
 const NO_BACKUPS: Backups = { latest: null, last_success: null, failures_7d: 0 };
 
 const cors = {
@@ -127,7 +145,9 @@ const examRef = (e: AdminExam, owner: string | null): ExamRef => ({
   semester: e.semester ?? null, academic_year: e.academic_year ?? null, attempt_label: e.attempt_label ?? null,
 });
 
-export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbes; actor: (req: Request) => Promise<Actor | null>; now: () => number }) {
+export function createAdminHandler(deps: {
+  store: AdminStore; probes: AdminProbes; actor: (req: Request) => Promise<Actor | null>; now: () => number; retention?: RetentionDeps;
+}) {
   const { store, probes } = deps;
 
   async function overview(now: number) {
@@ -274,9 +294,11 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
   }
 
   async function storage() {
-    const [listing, exams, status, usage] = await Promise.all([probes.storageFolders(), store.exams(), store.systemStatus(), store.evidenceUsage()]);
+    const [listing, exams, status, usage, days] = await Promise.all([
+      probes.storageFolders(), store.exams(), store.systemStatus(), store.evidenceUsage(), store.retentionDays(),
+    ]);
     return {
-      r2: { configured: listing.configured, error: listing.error ?? null, retentionDays: probes.retentionDays(), ...storageFromCounts(listing.folders, usage, exams) },
+      r2: { configured: listing.configured, error: listing.error ?? null, retentionDays: days, ...storageFromCounts(listing.folders, usage, exams) },
       buckets: status.buckets,
       databaseBytes: status.database_bytes,
     };
@@ -296,7 +318,7 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
     }
     const page = await probes.listFolder(folder, token, RECOUNT_PAGES);
     if (page.error) return json({ error: "storage_unreachable", detail: page.error }, 502);
-    const days = probes.retentionDays();
+    const days = await store.retentionDays();
     const done = !page.next;
     if (!(await store.scanAdd(folder, scanId, countObjects(page.objects, days, now), done, days))) return json({ error: "count_superseded" }, 409);
     return json({ done, scanId, token: page.next, listed: page.objects.length });
@@ -371,6 +393,111 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
     };
   }
 
+  const runView = (r: RunRow, names: Map<string, string>, now: number) => ({
+    id: r.id, startedAt: r.started_at, finishedAt: r.finished_at, dryRun: r.dry_run, trigger: r.trigger,
+    by: r.requested_by ? names.get(r.requested_by) ?? null : null,
+    retentionDays: r.retention_days, cutoff: r.cutoff,
+    status: r.status === "running" && now - Date.parse(r.started_at) > RUN_STALE_MS ? "interrupted" : r.status,
+    complete: r.complete, deleted: r.deleted, skipped: r.skipped, failed: r.failed, dueWeek: r.due_week,
+    database: r.detail?.db ?? {}, files: r.detail?.storage ?? {}, errors: (r.detail?.errors ?? []).slice(0, 10),
+  });
+
+  async function retentionStatus(r: RetentionDeps, now: number) {
+    const [settings, runs, holds, status, lifecycle, exams, staff] = await Promise.all([
+      r.db.settings(), r.db.runs(10), r.db.legalHolds(), store.systemStatus(), r.lifecycle(), store.exams(), store.staff(),
+    ]);
+    const days = settings.retention_days;
+    const weekIso = new Date(now - days * DAY + 7 * DAY).toISOString();
+    const database: Record<string, number> = {};
+    for (const kind of DB_KINDS) database[kind] = (await r.db.dbBatch(kind, weekIso, 0, true)).due;
+    const scan = runs.find((x) => x.complete && x.status !== "running" && x.status !== "failed" && Object.keys(x.detail?.storage ?? {}).length);
+    const files = scan ? Object.values(scan.detail!.storage).reduce((n, s) => n + s.due_week, 0) : null;
+
+    const names = new Map(staff.map((s) => [s.auth_id, s.name]));
+    const byId = new Map(exams.map((e) => [e.id, e]));
+    const students = await store.students(holds.filter((h) => h.target_type === "student").map((h) => h.target_id));
+    return {
+      days, min: MIN_DAYS, max: MAX_DAYS, updatedAt: settings.updated_at, updatedBy: settings.updated_by ? names.get(settings.updated_by) ?? null : null,
+      dueWeek: { database, files, filesCountedAt: scan?.finished_at ?? null, filesRunId: scan?.id ?? null },
+      runs: runs.map((x) => runView(x, names, now)),
+      holds: holds.map((h) => ({
+        id: h.id, targetType: h.target_type, targetId: h.target_id, reason: h.reason, placedAt: h.placed_at,
+        placedBy: h.placed_by ? names.get(h.placed_by) ?? null : null,
+        exam: h.target_type === "exam" && byId.get(h.target_id) ? examRef(byId.get(h.target_id)!, null) : null,
+        student: h.target_type === "student" ? students.get(h.target_id) ?? { id: h.target_id, roll: "", full_name: null } : null,
+      })),
+      job: status.jobs.find((j) => j.name === "evidence-retention") ?? null,
+      cronInstalled: status.cron_installed ?? true,
+      lifecycle: { ...lifecycle, conflicts: conflictingRules(lifecycle.rules, days) },
+    };
+  }
+
+  async function retentionOp(op: string, body: Record<string, unknown>, actor: Actor, now: number): Promise<Response> {
+    const r = deps.retention;
+    if (!r) return json({ error: "retention_not_configured" }, 503);
+    if (op === "retention") return json(await retentionStatus(r, now));
+
+    if (op === "set_retention") {
+      const days = Number(body.days);
+      if (!Number.isInteger(days) || days < MIN_DAYS || days > MAX_DAYS) return json({ error: "bad_retention_days", min: MIN_DAYS, max: MAX_DAYS }, 400);
+      await r.db.setRetentionDays(days, actor.authId);
+      return json({ ok: true, days });
+    }
+
+    if (op === "legal_hold") {
+      const type = body.targetType;
+      if (type !== "exam" && type !== "student") return json({ error: "bad_target" }, 400);
+      if (typeof body.on !== "boolean") return json({ error: "bad_hold" }, 400);
+      let target = text(body.targetId);
+      const roll = text(body.roll);
+      if (type === "student" && !target && roll) {
+        const hit = (await store.allStudents()).find((s) => s.roll.toUpperCase() === roll.toUpperCase());
+        if (!hit) return json({ error: "target_not_found" }, 404);
+        target = hit.id;
+      }
+      if (!target || !SAFE_ID.test(target) || (type === "student" && !UUID.test(target))) return json({ error: "bad_target" }, 400);
+      const reason = text(body.reason)?.slice(0, 500) ?? null;
+      if (body.on && !reason) return json({ error: "reason_required" }, 400);
+      try {
+        const changed = await r.db.setLegalHold(type, target, body.on, reason, actor.authId);
+        return json({ ok: true, changed });
+      } catch (e) {
+        if ((e as { code?: string }).code === "P0002") return json({ error: "target_not_found" }, 404);
+        throw e;
+      }
+    }
+
+    if (op === "retention_run") {
+      const dryRun = body.dryRun !== false;
+      const confirmRunId = Number(body.confirmRunId);
+      if (!dryRun) {
+        const [dry, days] = await Promise.all([Number.isInteger(confirmRunId) && confirmRunId > 0 ? r.db.run(confirmRunId) : null, r.db.retentionDays()]);
+        const fresh = !!dry?.finished_at && now - Date.parse(dry.finished_at) <= CONFIRM_WITHIN_MS;
+        if (!dry || !dry.dry_run || dry.requested_by !== actor.authId || dry.status === "running" || !fresh || dry.retention_days !== days) {
+          return json({ error: "dry_run_required" }, 409);
+        }
+      }
+      if ((await r.db.runs(5)).some((x) => x.status === "running" && now - Date.parse(x.started_at) <= RUN_STALE_MS)) {
+        return json({ error: "run_in_progress" }, 409);
+      }
+      const s = await runRetention({ stores: r.stores(), db: r.db, now: deps.now }, { dryRun, trigger: "admin", requestedBy: actor.authId, budgetMs: ADMIN_RUN_BUDGET_MS });
+      if (!dryRun) {
+        await store.writeAudit({
+          actorId: actor.authId, action: "admin.retention_run", targetType: "retention", targetId: String(s.id),
+          meta: { confirmed_dry_run: confirmRunId, status: s.status, complete: s.complete, deleted: s.deleted, skipped: s.skipped, failed: s.failed },
+        });
+      }
+      return json({
+        run: {
+          id: s.id, dryRun: s.dryRun, status: s.status, complete: s.complete, retentionDays: s.retentionDays, cutoff: s.cutoff,
+          deleted: s.deleted, skipped: s.skipped, failed: s.failed, dueWeek: s.due_week,
+          database: s.detail.db, files: s.detail.storage, errors: s.detail.errors.slice(0, 10),
+        },
+      });
+    }
+    return json({ error: "unknown_op" }, 400);
+  }
+
   return async (req: Request): Promise<Response> => {
     if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
     if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -386,6 +513,7 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
       if (op === "system") return json(await system());
       if (op === "storage") return json(await storage());
       if (op === "recount_storage") return await recount(body, now);
+      if (op === "retention" || op === "set_retention" || op === "legal_hold" || op === "retention_run") return await retentionOp(op, body, actor, now);
       if (op === "uploads") {
         const examId = text(body.examId);
         if (examId && !SAFE_ID.test(examId)) return json({ error: "bad_exam" }, 400);

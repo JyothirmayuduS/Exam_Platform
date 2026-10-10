@@ -21,7 +21,7 @@ const SECTIONS: Record<string, { title: string; detail: string }> = {
   moodle: { title: "Moodle", detail: "Grades that failed to reach Moodle, students waiting for confirmation, and the retry job." },
   exams: { title: "Exam names", detail: "The academic types teachers choose from, and exams still missing a type, semester, academic year, subject code or subject name." },
   accounts: { title: "Students & devices", detail: "Accounts without a role, registration photos and exam browser versions." },
-  storage: { title: "Storage & data", detail: "Evidence storage per exam, what is due for deletion, holds and backups." },
+  storage: { title: "Storage & data", detail: "Retention period, what is due for deletion, deletion runs, legal holds, evidence storage per exam and backups." },
   system: { title: "System", detail: "Health of the site and services, the latest exam browser and scheduled jobs." },
   audit: { title: "Audit log", detail: "Every recorded action, filterable by person and exam." },
 };
@@ -90,7 +90,7 @@ export default function AdminDashboard() {
             {section === "moodle" && <AdminMoodle data={d} notify={notify} onChanged={refresh} />}
             {section === "exams" && <AdminExamNames data={d} notify={notify} onChanged={refresh} />}
             {section === "accounts" && <AdminAccounts data={d} notify={notify} onChanged={refresh} />}
-            {section === "storage" && <AdminData data={d} />}
+            {section === "storage" && <AdminData data={d} notify={notify} />}
             {section === "system" && <AdminSystem />}
             {section === "audit" && <AdminAudit data={d} />}
           </div>

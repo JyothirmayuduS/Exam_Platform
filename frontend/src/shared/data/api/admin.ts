@@ -109,6 +109,34 @@ export type AdminUploads = {
   };
 };
 
+export type RetentionTotals = { deleted: number; skipped: number; failed: number; due_week: number };
+export type RetentionFiles = RetentionTotals & { folders_total: number; folders_done: number; held: Record<string, number> };
+export type RetentionRun = {
+  id: number; dryRun: boolean; status: "running" | "succeeded" | "partial" | "failed" | "interrupted"; complete: boolean;
+  retentionDays: number; cutoff: string; deleted: number; skipped: number; failed: number; dueWeek: number | null;
+  /** Per kind: violation_events, attempts (results and marks), audit_logs. On a dry run, "deleted" is what would be deleted. */
+  database: Record<string, RetentionTotals>;
+  /** Per evidence store: r2, storage:<bucket>. */
+  files: Record<string, RetentionFiles>;
+  errors: string[];
+};
+export type RetentionRunRow = RetentionRun & { startedAt: string; finishedAt: string | null; trigger: "schedule" | "admin"; by: string | null };
+export type LegalHoldView = {
+  id: string; targetType: "exam" | "student"; targetId: string; reason: string | null; placedAt: string; placedBy: string | null;
+  exam: ExamRef | null; student: StudentRef | null;
+};
+export type LifecycleRule = { id: string; enabled: boolean; prefix: string; days: number | null };
+export type AdminRetention = {
+  days: number; min: number; max: number; updatedAt: string | null; updatedBy: string | null;
+  /** Due by the end of the next 7 days, holds excluded. Files come from the last complete run. */
+  dueWeek: { database: Record<string, number>; files: number | null; filesCountedAt: string | null; filesRunId: number | null };
+  runs: RetentionRunRow[];
+  holds: LegalHoldView[];
+  job: CronJob | null;
+  cronInstalled: boolean;
+  lifecycle: { configured: boolean; rules: LifecycleRule[]; conflicts: LifecycleRule[]; error: string | null };
+};
+
 export type AdminAuditEntry = { id: string; actor_id: string | null; actor_name: string | null; actor_role: string | null; action: string; target_type: string | null; target_id: string | null; meta: Record<string, unknown> | null; created_at: string };
 
 const ERRORS: Record<string, string> = {
@@ -119,6 +147,14 @@ const ERRORS: Record<string, string> = {
   count_superseded: "Someone else started counting this folder. Their count will finish it.",
   storage_not_configured: "R2 isn't configured for the server functions.",
   storage_unreachable: "Evidence storage (R2) didn't answer. Try again.",
+  retention_not_configured: "Retention isn't set up for the admin service.",
+  bad_retention_days: "Choose a retention period between 30 and 3650 days.",
+  bad_target: "Choose an exam or a student to hold.",
+  bad_hold: "Say whether to place or lift the hold.",
+  reason_required: "Give a reason for the legal hold.",
+  target_not_found: "That exam or student doesn't exist.",
+  dry_run_required: "Run a dry run first, then confirm it within 30 minutes.",
+  run_in_progress: "A retention run is already in progress. Try again when it finishes.",
   server_error: "The admin service failed. Try again.",
 };
 
@@ -163,3 +199,9 @@ export const resendMoodleGrades = (examId?: string) => call<{ ok: true; queued: 
 export const loadRegistrationPhotos = () => call<{ photos: { student: StudentRef; capturedAt: string; url: string | null }[] }>({ op: "photos" });
 export const resetRegistrationPhoto = (studentId: string) => call<{ ok: true }>({ op: "reset_photo", studentId });
 export const reviewFlag = (violationId: string, note?: string) => call<{ ok: true }>({ op: "review_flag", violationId, note });
+export const loadAdminRetention = () => call<AdminRetention>({ op: "retention" });
+export const setRetentionDays = (days: number) => call<{ ok: true; days: number }>({ op: "set_retention", days });
+export const setLegalHold = (hold: { targetType: "exam" | "student"; targetId?: string; roll?: string; on: boolean; reason?: string }) =>
+  call<{ ok: true; changed: boolean }>({ op: "legal_hold", ...hold });
+export const runRetention = (dryRun: boolean, confirmRunId?: number) =>
+  call<{ run: RetentionRun }>({ op: "retention_run", dryRun, confirmRunId });

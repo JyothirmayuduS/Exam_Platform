@@ -432,3 +432,9 @@ enabled = true
 # Moodle calls the LTI endpoints without a Supabase JWT.
 verify_jwt = false
 entrypoint = "./functions/lti/index.ts"
+
+[functions.evidence-retention]
+enabled = true
+# pg_cron calls it with x-retention-cron-secret instead of a Supabase JWT.
+verify_jwt = false
+entrypoint = "./functions/evidence-retention/index.ts"
