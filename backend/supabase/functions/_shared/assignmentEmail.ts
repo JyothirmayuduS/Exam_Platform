@@ -1,8 +1,10 @@
 // Who the proctor and evaluator assignment emails may go to. The caller must be
 // signed in and able to manage the exam (checked on their own session); only
-// staff ids already assigned (proctor) or delegated (evaluator) on that exam
-// are emailed, at the address on their staff record. Raw addresses in the
-// request are ignored, and no address is ever returned to the caller.
+// staff ids already assigned (proctor) or delegated (evaluator, by exam or by
+// one of its attempts) on that exam are emailed, at the address on their staff
+// record. Raw addresses in the request are ignored, and no address is ever
+// returned to the caller. A request that would email someone takes a
+// rate-limit slot once its recipients are known.
 // deno-lint-ignore-file no-explicit-any
 
 export type AssignmentKind = "proctor" | "evaluator";
@@ -12,7 +14,7 @@ export type Gate =
   | { ok: true; recipients: Recipient[]; outcomes: Outcome[] }
   | { ok: false; status: number; error: string };
 
-/** At most this many email requests per caller, exam and kind in the window. */
+/** At most this many emailing requests per caller, exam and kind in the window. */
 export const EMAIL_RATE_LIMIT = { max: 5, windowMs: 10 * 60 * 1000 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -23,7 +25,6 @@ export async function gateAssignmentEmail(opts: {
   kind: AssignmentKind;
   examId: unknown;
   requested: unknown;
-  now?: number;
 }): Promise<Gate> {
   const { user, admin, kind } = opts;
   const { data: auth } = user ? await user.auth.getUser() : { data: null };
@@ -39,16 +40,6 @@ export async function gateAssignmentEmail(opts: {
     return { ok: false, status: 403, error: "forbidden: only the exam's owner, a delegated teacher or an admin can send these emails" };
   }
 
-  const since = new Date((opts.now ?? Date.now()) - EMAIL_RATE_LIMIT.windowMs).toISOString();
-  const recent = await admin.from("assignment_email_log").select("id", { count: "exact", head: true })
-    .eq("caller_id", callerId).eq("exam_id", examId).eq("kind", kind).gte("created_at", since);
-  if (recent.error) return { ok: false, status: 500, error: "could not check the email rate limit" };
-  if ((recent.count ?? 0) >= EMAIL_RATE_LIMIT.max) {
-    return { ok: false, status: 429, error: "too many assignment emails for this exam; try again in a few minutes" };
-  }
-  const logged = await admin.from("assignment_email_log").insert({ caller_id: callerId, exam_id: examId, kind });
-  if (logged.error) return { ok: false, status: 500, error: "could not record this email request" };
-
   const entries = (Array.isArray(opts.requested) ? opts.requested : []) as Record<string, unknown>[];
   const outcomes: Outcome[] = [];
   const wanted = new Map<string, Record<string, unknown>>();
@@ -60,12 +51,9 @@ export async function gateAssignmentEmail(opts: {
   if (wanted.size === 0) return { ok: true, recipients: [], outcomes };
 
   const ids = [...wanted.keys()];
-  const assigned = kind === "proctor"
-    ? await admin.from("proctor_assignments").select("assignee_id").eq("exam_id", examId).in("assignee_id", ids)
-    : await admin.from("grading_delegations").select("delegate_id").eq("exam_id", examId).in("delegate_id", ids);
+  const assigned = await admin.rpc("assignment_email_staff", { p_exam: examId, p_kind: kind, p_ids: ids });
   if (assigned.error) return { ok: false, status: 500, error: "could not read the exam's assignments" };
-  const onExam = new Set<string>((assigned.data ?? []).map((r: { assignee_id?: string | null; delegate_id?: string | null }) =>
-    String(r.assignee_id ?? r.delegate_id ?? "").toLowerCase()));
+  const onExam = new Set<string>((assigned.data ?? []).map((id: unknown) => String(id).toLowerCase()));
 
   const allowed = ids.filter((id) => onExam.has(id));
   const staff = allowed.length
@@ -88,6 +76,17 @@ export async function gateAssignmentEmail(opts: {
         email,
         ...(Number.isFinite(count) ? { count } : {}),
       });
+    }
+  }
+
+  if (recipients.length > 0) {
+    const slot = await admin.rpc("take_assignment_email_slot", {
+      p_caller: callerId, p_exam: examId, p_kind: kind,
+      p_max: EMAIL_RATE_LIMIT.max, p_window_seconds: Math.round(EMAIL_RATE_LIMIT.windowMs / 1000),
+    });
+    if (slot.error) return { ok: false, status: 500, error: "could not check the email rate limit" };
+    if (slot.data !== true) {
+      return { ok: false, status: 429, error: "too many assignment emails for this exam; try again in a few minutes" };
     }
   }
   return { ok: true, recipients, outcomes };

@@ -23,6 +23,7 @@ type Row = Record<string, unknown>;
 let tables: Record<string, Row[]>;
 let session: string | null;
 let manages: Record<string, string[]>;
+let env: Record<string, string | undefined> = {};
 const sendMail = vi.fn();
 
 function table(name: string) {
@@ -43,8 +44,29 @@ function table(name: string) {
   return chain;
 }
 
+// Mirrors the SQL helpers; their real behaviour is covered in exam-naming-access.sql.test.ts.
+const slotCalls = vi.fn();
+async function adminRpc(fn: string, a: Record<string, unknown>) {
+  if (fn === "assignment_email_staff") {
+    const ids = a.p_ids as string[];
+    const examOf = (r: Row) => r.exam_id ?? tables.attempts.find((t) => t.id === r.attempt_id)?.exam_id;
+    const rows = a.p_kind === "proctor"
+      ? tables.proctor_assignments.filter((r) => r.exam_id === a.p_exam && ids.includes(String(r.assignee_id))).map((r) => r.assignee_id)
+      : tables.grading_delegations.filter((r) => examOf(r) === a.p_exam && ids.includes(String(r.delegate_id))).map((r) => r.delegate_id);
+    return { data: [...new Set(rows)], error: null };
+  }
+  if (fn === "take_assignment_email_slot") {
+    slotCalls(a);
+    const mine = tables.assignment_email_log.filter((r) => r.caller_id === a.p_caller && r.exam_id === a.p_exam && r.kind === a.p_kind);
+    if (mine.length >= Number(a.p_max)) return { data: false, error: null };
+    tables.assignment_email_log.push({ caller_id: a.p_caller, exam_id: a.p_exam, kind: a.p_kind });
+    return { data: true, error: null };
+  }
+  throw new Error(`unexpected rpc ${fn}`);
+}
+
 function createClient(_url: string, _key: string, opts?: { global?: { headers?: { Authorization?: string } } }) {
-  if (!opts?.global?.headers?.Authorization) return { from: table };
+  if (!opts?.global?.headers?.Authorization) return { from: table, rpc: adminRpc };
   return {
     auth: { getUser: async () => ({ data: { user: session ? { id: session } : null } }) },
     rpc: async (fn: string, args: { p_exam: string }) =>
@@ -58,7 +80,7 @@ for (const kind of Object.keys(FUNCTIONS) as Kind[]) {
   runInNewContext(GATE, { exports: gate.exports, Date, Number, String, Map, Set, Array });
   runInNewContext(FUNCTIONS[kind], {
     exports: {}, Request, Response, JSON, Date, console: { log: () => {}, error: () => {} },
-    Deno: { env: { get: () => "placeholder" }, serve: (fn: (r: Request) => Promise<Response>) => { handlers[kind] = fn; } },
+    Deno: { env: { get: (k: string) => k in env ? env[k] : "placeholder" }, serve: (fn: (r: Request) => Promise<Response>) => { handlers[kind] = fn; } },
     require: (spec: string) => spec.includes("assignmentEmail") ? gate.exports
       : spec.includes("nodemailer") ? { __esModule: true, default: { createTransport: () => ({ sendMail }) } }
       : { createClient },
@@ -66,11 +88,11 @@ for (const kind of Object.keys(FUNCTIONS) as Kind[]) {
 }
 
 const LIST = { proctor: "proctors", evaluator: "evaluators" } as const;
-function send(kind: Kind, staff: unknown[], opts: { examId?: string; auth?: string | null } = {}) {
+function send(kind: Kind, staff: unknown[], opts: { examId?: string; auth?: string | null; extra?: Row } = {}) {
   const headers: Record<string, string> = {};
   if (opts.auth !== null) headers.Authorization = opts.auth ?? "Bearer user-session";
   return handlers[kind](new Request("https://example.invalid/function", {
-    method: "POST", headers, body: JSON.stringify({ examId: opts.examId ?? "EX-1", [LIST[kind]]: staff }),
+    method: "POST", headers, body: JSON.stringify({ examId: opts.examId ?? "EX-1", [LIST[kind]]: staff, ...opts.extra }),
   }));
 }
 const mailedTo = () => sendMail.mock.calls.map(([m]) => (m as { to: string }).to).sort();
@@ -78,6 +100,8 @@ const mailedTo = () => sendMail.mock.calls.map(([m]) => (m as { to: string }).to
 beforeEach(() => {
   sendMail.mockReset();
   sendMail.mockResolvedValue({});
+  slotCalls.mockReset();
+  env = { APP_BASE_URL: "https://exams.example.invalid/" };
   session = OWNER;
   manages = { [OWNER]: ["EX-1", "EX-2"] };
   tables = {
@@ -93,6 +117,7 @@ beforeEach(() => {
       { id: NO_EMAIL, email: null, full_name: "No Mail" },
       { id: OTHER_EXAM, email: "other.exam@staff.invalid", full_name: "Elsewhere" },
     ],
+    attempts: [{ id: "AT-1", exam_id: "EX-1" }, { id: "AT-2", exam_id: "EX-2" }],
     assignment_email_log: [],
     email_notifications: [],
   };
@@ -150,5 +175,55 @@ describe.each(Object.keys(FUNCTIONS) as Kind[])("send-%s-email", (kind) => {
     expect((await send(kind, [{ id: ON_EXAM }])).status).toBe(429);
     expect((await send(kind, [{ id: OTHER_EXAM }], { examId: "EX-2" })).status).toBe(200);
     expect(sendMail).toHaveBeenCalledTimes(6);
+  });
+
+  it("takes a rate-limit slot only once there is someone to email", async () => {
+    session = STRANGER;
+    await send(kind, [{ id: ON_EXAM }]);
+    session = OWNER;
+    for (let i = 0; i < 7; i++) await send(kind, [{ id: OTHER_EXAM }, { id: NO_EMAIL }, { email: "outsider@evil.invalid" }]);
+    expect(slotCalls).not.toHaveBeenCalled();
+    expect(tables.assignment_email_log).toEqual([]);
+    expect((await send(kind, [{ id: ON_EXAM }])).status).toBe(200);
+    expect(slotCalls).toHaveBeenCalledOnce();
+    expect(slotCalls.mock.calls[0][0]).toEqual({ p_caller: OWNER, p_exam: "EX-1", p_kind: kind, p_max: 5, p_window_seconds: 600 });
+  });
+
+  it("builds the link from APP_BASE_URL only, escaped, ignoring appBaseUrl in the request", async () => {
+    env.APP_BASE_URL = 'https://exams.example.invalid/?a=1&b="x"/';
+    await send(kind, [{ id: ON_EXAM }], { extra: { appBaseUrl: "https://evil.invalid" } });
+    const html = String((sendMail.mock.calls[0][0] as { html: string }).html);
+    expect(html).not.toContain("evil.invalid");
+    expect(html).not.toContain('b="x"');
+    const path = kind === "proctor" ? "/proctor?exam=EX-1" : "/teacher/evaluate?exam=EX-1";
+    const link = `https://exams.example.invalid/?a=1&amp;b=&quot;x&quot;${path}`;
+    expect(html).toContain(`href="${link}"`);
+    expect(html.split(link)).toHaveLength(3);
+  });
+
+  it("refuses to send without APP_BASE_URL", async () => {
+    env.APP_BASE_URL = undefined;
+    const res = await send(kind, [{ id: ON_EXAM }], { extra: { appBaseUrl: "https://evil.invalid" } });
+    expect(res.status).toBe(500);
+    expect(sendMail).not.toHaveBeenCalled();
+    expect(slotCalls).not.toHaveBeenCalled();
+  });
+});
+
+describe("send-evaluator-email delegations by attempt", () => {
+  it("accepts a delegation that has only an attempt id when the attempt belongs to the exam", async () => {
+    const BY_ATTEMPT = "50000000-0000-0000-0000-000000000004";
+    const WRONG_ATTEMPT = "50000000-0000-0000-0000-000000000005";
+    tables.grading_delegations.push(
+      { exam_id: null, attempt_id: "AT-1", delegate_id: BY_ATTEMPT },
+      { exam_id: null, attempt_id: "AT-2", delegate_id: WRONG_ATTEMPT },
+    );
+    tables.teachers.push(
+      { id: BY_ATTEMPT, email: "by.attempt@staff.invalid", full_name: "By Attempt" },
+      { id: WRONG_ATTEMPT, email: "wrong.attempt@staff.invalid", full_name: "Wrong Attempt" },
+    );
+    const body = await (await send("evaluator", [{ id: BY_ATTEMPT }, { id: WRONG_ATTEMPT }])).json();
+    expect(mailedTo()).toEqual(["by.attempt@staff.invalid"]);
+    expect(body.results).toEqual([{ id: WRONG_ATTEMPT, status: "refused" }, { id: BY_ATTEMPT, status: "sent" }]);
   });
 });

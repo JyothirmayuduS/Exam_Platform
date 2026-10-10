@@ -65,6 +65,7 @@ const rows = async <R = Record<string, unknown>>(sql: string, params: unknown[] 
 const NAMING = migration("20261010210000_exam_naming_and_access.sql");
 const TERM = migration("20261010220000_exam_term_and_staff_privacy.sql");
 const EMAIL_LOCKDOWN = migration("20261010230000_assignment_email_lockdown.sql");
+const EMAIL_LIMITS = migration("20261010240000_assignment_email_limits.sql");
 
 beforeAll(async () => {
   db = new PGlite();
@@ -79,6 +80,7 @@ beforeAll(async () => {
   await db.exec(NAMING);
   await db.exec(TERM);
   await db.exec(EMAIL_LOCKDOWN);
+  await db.exec(EMAIL_LIMITS);
 }, 60_000);
 
 beforeEach(async () => {
@@ -408,6 +410,50 @@ describe("assignment email log", () => {
     }
     await expect(db.exec(`insert into public.assignment_email_log (caller_id, exam_id, kind) values ('${U.owner}', 'EX-1', 'student')`))
       .rejects.toThrow(/check constraint/);
+  });
+
+  const staff = async (exam: string, kind: string, idList: string[]) =>
+    (await rows<{ v: string }>("select v::text from public.assignment_email_staff($1, $2, $3::uuid[]) v", [exam, kind, idList])).map((r) => r.v).sort();
+  const slot = async (exam = "EX-1", kind = "proctor") =>
+    (await rows<{ ok: boolean }>("select public.take_assignment_email_slot($1, $2, $3, 5, 600) ok", [U.owner, exam, kind]))[0].ok;
+
+  it("finds proctors assigned to the exam and evaluators delegated by exam or by one of its attempts", async () => {
+    const all = Object.values(T);
+    expect(await staff("EX-1", "proctor", all)).toEqual([T.proctor, T.assigned].sort());
+    expect(await staff("EX-1", "proctor", [T.owner, T.delegate])).toEqual([]);
+    await db.exec(`insert into public.grading_delegations (exam_id, delegate_id) values ('EX-1', '${T.other}'), ('EX-2', '${T.loose}');
+      insert into public.grading_delegations (attempt_id, delegate_id) values ('${A2}', '${T.admin}')`);
+    expect(await staff("EX-1", "evaluator", all)).toEqual([T.delegate, T.other].sort());
+    expect(await staff("EX-NULL", "evaluator", all)).toEqual([T.admin]);
+    expect(await staff("EX-1", "student", all)).toEqual([]);
+  });
+
+  it("counts and records a send in one step, up to the limit per caller, exam and kind", async () => {
+    await db.exec("truncate public.assignment_email_log");
+    for (let i = 0; i < 5; i++) expect(await slot(), `send ${i + 1}`).toBe(true);
+    expect(await slot()).toBe(false);
+    expect(await slot("EX-1", "evaluator")).toBe(true);
+    expect(await slot("EX-2")).toBe(true);
+    expect(Number((await rows<{ n: number }>("select count(*)::int n from public.assignment_email_log"))[0].n)).toBe(7);
+    await db.exec("update public.assignment_email_log set created_at = now() - interval '11 minutes'");
+    expect(await slot()).toBe(true);
+  });
+
+  it("drops log rows older than 30 days", async () => {
+    await db.exec(`truncate public.assignment_email_log;
+      insert into public.assignment_email_log (caller_id, exam_id, kind, created_at) values
+        ('${U.other}', 'EX-2', 'proctor', now() - interval '31 days'),
+        ('${U.other}', 'EX-2', 'evaluator', now() - interval '29 days')`);
+    await slot();
+    expect((await rows<{ kind: string; caller_id: string }>("select kind, caller_id::text from public.assignment_email_log order by kind"))
+      .map((r) => `${r.caller_id === U.other ? "other" : "owner"}:${r.kind}`)).toEqual(["other:evaluator", "owner:proctor"]);
+  });
+
+  it("lets only the edge functions call the helpers", async () => {
+    for (const who of [U.owner, U.admin]) {
+      await expect(as(who, () => staff("EX-1", "proctor", [T.proctor])), who).rejects.toThrow(/permission denied/);
+      await expect(as(who, () => slot()), who).rejects.toThrow(/permission denied/);
+    }
   });
 });
 
