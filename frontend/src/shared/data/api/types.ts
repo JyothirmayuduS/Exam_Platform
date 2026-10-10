@@ -13,11 +13,15 @@ export type ExamMode = "practice" | "lockdown";
 
 export type ExamRecord = {
   id: string;
-  /** Set by the database to "Type · CODE · Subject" once the three fields below are filled. */
+  /** Set by the database to "Type · CODE · Subject · Sem N · YYYY-YY" once the naming fields below are filled. */
   name: string;
   academic_type?: string | null;
   subject_code?: string | null;
   subject_name?: string | null;
+  semester?: number | null;
+  /** e.g. "2026-27". */
+  academic_year?: string | null;
+  attempt_label?: "Regular" | "Supplementary" | null;
   batch: string;
   mode: ExamMode;
   status: ExamStatus;
@@ -174,12 +178,11 @@ export type ProctorAssignment = {
 };
 
 /** A teacher/proctor row: used by the Assign Proctors modal + delegate pickers. */
+/** A staff member in the assign and delegate pickers: no contact details. */
 export type FacultyMember = {
   id: string | null;
   name: string;
   role: string;
-  department: string | null;
-  email: string | null;
 };
 
 export type GradingComment = {

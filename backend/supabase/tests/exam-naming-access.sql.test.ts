@@ -1,7 +1,7 @@
 // @vitest-environment node
 // The access gaps closed after exam roles (AI reports, students, teachers,
-// student evidence folders) and exams named by academic type, subject code
-// and subject name.
+// student evidence folders) and exams named by academic type, semester,
+// academic year, attempt, subject code and subject name.
 import { PGlite } from "@electric-sql/pglite";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { actAs, BASE, EXAM_ROLES_SCHEMA, migration } from "./pgliteBase";
@@ -44,6 +44,8 @@ alter table public.students alter column id set default gen_random_uuid();
 alter table public.students add constraint students_roll_key unique (roll);
 alter table public.exams add column created_at timestamptz default now();
 alter table public.ai_reports alter column summary type jsonb using summary::jsonb;
+alter table public.ai_reports add column created_at timestamptz not null default now();
+alter table public.proctor_assignments add column email text;
 alter table public.students enable row level security;
 alter table public.teachers enable row level security;
 grant select, insert, update, delete on public.students to authenticated;
@@ -61,6 +63,7 @@ let db: PGlite;
 let as: ReturnType<typeof actAs>;
 const rows = async <R = Record<string, unknown>>(sql: string, params: unknown[] = []) => (await db.query<R>(sql, params)).rows;
 const NAMING = migration("20261010210000_exam_naming_and_access.sql");
+const TERM = migration("20261010220000_exam_term_and_staff_privacy.sql");
 
 beforeAll(async () => {
   db = new PGlite();
@@ -73,6 +76,7 @@ beforeAll(async () => {
     await db.exec(migration(m));
   }
   await db.exec(NAMING);
+  await db.exec(TERM);
 }, 60_000);
 
 beforeEach(async () => {
@@ -126,6 +130,14 @@ describe("ai_reports", () => {
   });
 
   it("an assigned proctor reads only reports without marks or answers", async () => {
+    expect(await ids(U.proctor, "select attempt_id::text v from public.ai_reports")).toEqual([A1]);
+  });
+
+  it("hides reports created before 10 Oct 2026 from proctors, not from full-access staff", async () => {
+    await db.exec(`update public.ai_reports set created_at = '2026-10-09 23:59:59+05:30' where attempt_id = '${A1}'`);
+    expect(await ids(U.proctor, "select attempt_id::text v from public.ai_reports")).toEqual([]);
+    expect(await ids(U.owner, "select attempt_id::text v from public.ai_reports")).toEqual([A1, A4]);
+    await db.exec(`update public.ai_reports set created_at = '2026-10-10 00:00:00+05:30' where attempt_id = '${A1}'`);
     expect(await ids(U.proctor, "select attempt_id::text v from public.ai_reports")).toEqual([A1]);
   });
 
@@ -235,11 +247,19 @@ describe("teachers", () => {
     expect(await seen(U.admin)).toHaveLength(7);
   });
 
-  it("the assignment picker lists staff names for teachers only, without settings or logins", async () => {
+  it("the assignment picker lists staff names and roles for teachers only", async () => {
     const staff = await as(U.other, () => rows<Record<string, unknown>>("select * from public.list_assignable_staff()"));
     expect(staff).toHaveLength(7);
-    expect(Object.keys(staff[0]).sort()).toEqual(["department", "email", "full_name", "id", "name", "role"]);
+    expect(Object.keys(staff[0]).sort()).toEqual(["id", "name", "role"]);
+    expect(staff.find((r) => r.id === T.proctor)).toEqual({ id: T.proctor, name: "Proctor", role: "proctor" });
     expect(await as(U.proctor, async () => (await rows("select * from public.list_assignable_staff()")).length)).toBe(0);
+  });
+
+  it("an assignment stores the assignee's own address, whatever the browser sent", async () => {
+    await as(U.owner, () => rows("insert into public.proctor_assignments (exam_id, assignee_id, assignee_name, email) values ('EX-1', $1, 'Loose', 'wrong@x.invalid')", [T.loose]));
+    await as(U.owner, () => rows("insert into public.proctor_assignments (exam_id, assignee_name, email) values ('EX-1', 'Guest', 'guest@x.invalid')"));
+    expect(await rows("select assignee_name, email from public.proctor_assignments where exam_id = 'EX-1' and assignee_name in ('Loose', 'Guest') order by 1"))
+      .toEqual([{ assignee_name: "Guest", email: "guest@x.invalid" }, { assignee_name: "Loose", email: "loose@x.invalid" }]);
   });
 });
 
@@ -272,45 +292,67 @@ describe("student evidence folders", () => {
 });
 
 describe("exam naming", () => {
-  const create = (who: string, id: string, type: string | null, code: string | null, subject: string | null) =>
-    as(who, () => rows("insert into public.exams (id, name, status, created_by, academic_type, subject_code, subject_name) values ($1, 'x', 'draft', $2, $3, $4, $5)",
-      [id, who, type, code, subject]));
-  const exam = async (id: string) => (await rows<Record<string, string | null>>(
-    "select name, academic_type, subject_code, subject_name from public.exams where id = $1", [id]))[0];
+  type Naming = { type?: string | null; sem?: number | null; year?: string | null; attempt?: string | null; code?: string | null; subject?: string | null };
+  const MBA = { type: "Mid Term", sem: 1, year: "2026-27", code: "MBA101", subject: "Business Economics" };
+  const create = (who: string, id: string, n: Naming) =>
+    as(who, () => rows(
+      `insert into public.exams (id, name, status, created_by, academic_type, semester, academic_year, attempt_label, subject_code, subject_name)
+       values ($1, 'x', 'draft', $2, $3, $4, $5, coalesce($6, 'Regular'), $7, $8)`,
+      [id, who, n.type ?? null, n.sem ?? null, n.year ?? null, n.attempt ?? null, n.code ?? null, n.subject ?? null]));
+  const exam = async (id: string) => (await rows<Record<string, unknown>>(
+    "select name, academic_type, semester, academic_year, attempt_label, subject_code, subject_name from public.exams where id = $1", [id]))[0];
 
-  it("needs the academic type, subject code and subject name, and names the exam after them", async () => {
-    await expect(create(U.owner, "EX-N1", null, "MBA101", "Economics")).rejects.toThrow(/exam_naming_required/);
-    await expect(create(U.owner, "EX-N1", "Mid Term", " ", "Economics")).rejects.toThrow(/exam_naming_required/);
-    await create(U.owner, "EX-N1", "Mid Term", " mba 101 ", "Business   Economics ");
+  it("needs the type, semester, academic year, subject code and subject name, and names the exam after them", async () => {
+    await expect(create(U.owner, "EX-N1", { ...MBA, type: null })).rejects.toThrow(/exam_naming_required/);
+    await expect(create(U.owner, "EX-N1", { ...MBA, sem: null })).rejects.toThrow(/exam_naming_required/);
+    await expect(create(U.owner, "EX-N1", { ...MBA, year: null })).rejects.toThrow(/exam_naming_required/);
+    await expect(create(U.owner, "EX-N1", { ...MBA, code: " " })).rejects.toThrow(/exam_naming_required/);
+    await expect(create(U.owner, "EX-N1", { ...MBA, year: "2026-28" })).rejects.toThrow(/exam_term_invalid/);
+    await expect(create(U.owner, "EX-N1", { ...MBA, sem: 13 })).rejects.toThrow(/exam_term_invalid/);
+    await create(U.owner, "EX-N1", { ...MBA, code: " mba 101 ", subject: "Business   Economics " });
     expect(await exam("EX-N1")).toEqual({
-      name: "Mid Term · MBA101 · Business Economics", academic_type: "Mid Term", subject_code: "MBA101", subject_name: "Business Economics",
+      name: "Mid Term · MBA101 · Business Economics · Sem 1 · 2026-27", academic_type: "Mid Term", semester: 1, academic_year: "2026-27",
+      attempt_label: "Regular", subject_code: "MBA101", subject_name: "Business Economics",
     });
+    await create(U.owner, "EX-N2", { ...MBA, attempt: "supplementary" });
+    expect(await exam("EX-N2")).toMatchObject({ name: "Mid Term · MBA101 · Business Economics · Sem 1 · 2026-27 · Supplementary", attempt_label: "Supplementary" });
+    await expect(create(U.owner, "EX-N3", { ...MBA, attempt: "Re-sit" })).rejects.toThrow(/exams_attempt_label_valid/);
   });
 
-  it("lets any number of exams share a type, and a code or name repeat under another type", async () => {
-    await create(U.owner, "EX-N1", "Mid Term", "MBA101", "Business Economics");
-    await create(U.owner, "EX-N2", "Mid Term", "MBA102", "Accounting");
-    await create(U.other, "EX-N3", "Sem Exam", "MBA101", "Business Economics");
-    expect((await exam("EX-N3")).name).toBe("Sem Exam · MBA101 · Business Economics");
+  it("lets a subject run again under another type, semester or year, or as a supplementary attempt", async () => {
+    await create(U.owner, "EX-N1", MBA);
+    await create(U.other, "EX-N2", { ...MBA, type: "Sem Exam" });
+    await create(U.other, "EX-N3", { ...MBA, sem: 2 });
+    await create(U.other, "EX-N4", { ...MBA, year: "2027-28" });
+    await create(U.other, "EX-N5", { ...MBA, attempt: "Supplementary" });
+    await create(U.owner, "EX-N6", { ...MBA, code: "MBA102", subject: "Accounting" });
+    expect(await rows("select count(*)::int n from public.exams where subject_code = 'MBA101'")).toEqual([{ n: 5 }]);
   });
 
-  it("refuses a subject code or subject name already used under the same type", async () => {
-    await create(U.owner, "EX-N1", "Mid Term", "MBA101", "Business Economics");
-    await expect(create(U.other, "EX-N2", "Mid Term", "mba101", "Marketing")).rejects.toThrow(/exams_type_code_unique/);
-    await expect(create(U.other, "EX-N2", "Mid Term", "MBA109", "business economics")).rejects.toThrow(/exams_type_subject_unique/);
-    await as(U.owner, () => rows("update public.exams set subject_name = 'Accounting' where id = 'EX-N1'"));
-    expect((await exam("EX-N1")).name).toBe("Mid Term · MBA101 · Accounting");
+  it("refuses a subject code or subject name already used under the same type, semester, year and attempt", async () => {
+    await create(U.owner, "EX-N1", MBA);
+    await expect(create(U.other, "EX-N2", { ...MBA, code: "mba101", subject: "Marketing" })).rejects.toThrow(/exams_type_code_unique/);
+    await expect(create(U.other, "EX-N2", { ...MBA, code: "MBA109", subject: "business economics" })).rejects.toThrow(/exams_type_subject_unique/);
+    await create(U.other, "EX-N2", { ...MBA, attempt: "Supplementary" });
+    await expect(create(U.other, "EX-N3", { ...MBA, attempt: "Supplementary", subject: "Other" })).rejects.toThrow(/exams_type_code_unique/);
+    await expect(as(U.owner, () => rows("update public.exams set attempt_label = 'Supplementary' where id = 'EX-N1'"))).rejects.toThrow(/exams_type_code_unique/);
+    await as(U.owner, () => rows("update public.exams set subject_name = 'Accounting', semester = 3 where id = 'EX-N1'"));
+    expect((await exam("EX-N1")).name).toBe("Mid Term · MBA101 · Accounting · Sem 3 · 2026-27");
   });
 
   it("tells the form which field clashes, even for another teacher's exam", async () => {
-    await create(U.owner, "EX-N1", "Mid Term", "MBA101", "Business Economics");
-    const clash = (who: string, type: string, code: string, subject: string, exclude: string | null = null) =>
-      as(who, async () => (await rows<{ v: string | null }>("select public.exam_naming_conflict($1, $2, $3, $4) v", [type, code, subject, exclude]))[0].v);
-    expect(await clash(U.other, "Mid Term", "mba 101", "New")).toBe("subject_code");
-    expect(await clash(U.other, "mid term", "MBA555", "BUSINESS  economics")).toBe("subject_name");
-    expect(await clash(U.other, "Sem Exam", "MBA101", "Business Economics")).toBeNull();
-    expect(await clash(U.owner, "Mid Term", "MBA101", "Business Economics", "EX-N1")).toBeNull();
-    expect(await clash(U.proctor, "Mid Term", "MBA101", "Business Economics")).toBeNull();
+    await create(U.owner, "EX-N1", MBA);
+    const clash = (who: string, n: Naming, exclude: string | null = null) =>
+      as(who, async () => (await rows<{ v: string | null }>("select public.exam_naming_conflict($1, $2, $3, $4, $5, $6, $7) v",
+        [n.type, n.sem, n.year, n.attempt ?? "Regular", n.code, n.subject, exclude]))[0].v);
+    expect(await clash(U.other, { ...MBA, code: "mba 101", subject: "New" })).toBe("subject_code");
+    expect(await clash(U.other, { ...MBA, type: "mid term", code: "MBA555", subject: "BUSINESS  economics" })).toBe("subject_name");
+    expect(await clash(U.other, { ...MBA, type: "Sem Exam" })).toBeNull();
+    expect(await clash(U.other, { ...MBA, sem: 2 })).toBeNull();
+    expect(await clash(U.other, { ...MBA, year: "2027-28" })).toBeNull();
+    expect(await clash(U.other, { ...MBA, attempt: "supplementary" })).toBeNull();
+    expect(await clash(U.owner, MBA, "EX-N1")).toBeNull();
+    expect(await clash(U.proctor, MBA)).toBeNull();
   });
 
   it("allows two exams with the same plain name now, and leaves unnamed old exams editable", async () => {
@@ -323,9 +365,17 @@ describe("exam naming", () => {
     expect(await rows("select status from public.exams where id = 'EX-1'")).toEqual([{ status: "published" }]);
   });
 
-  it("refuses a type an admin has retired", async () => {
+  it("refuses a type an admin has retired for new exams, but still saves an existing one", async () => {
+    await create(U.owner, "EX-N1", { ...MBA, type: "Test Exam" });
     await as(U.admin, () => rows("update public.academic_types set active = false where name = 'Test Exam'"));
-    await expect(create(U.owner, "EX-N1", "Test Exam", "CS1", "Intro")).rejects.toThrow(/exam_type_inactive/);
+    await expect(create(U.owner, "EX-N2", { ...MBA, type: "Test Exam", code: "CS1", subject: "Intro" })).rejects.toThrow(/exam_type_inactive/);
+    await as(U.owner, () => rows(
+      `insert into public.exams (id, name, status, created_by, academic_type, semester, academic_year, attempt_label, subject_code, subject_name)
+       values ('EX-N1', 'x', 'published', $1, 'Test Exam', 1, '2026-27', 'Regular', 'MBA101', 'Business Economics')
+       on conflict (id) do update set status = excluded.status, academic_type = excluded.academic_type, semester = excluded.semester,
+         academic_year = excluded.academic_year, attempt_label = excluded.attempt_label, subject_code = excluded.subject_code, subject_name = excluded.subject_name`,
+      [U.owner]));
+    expect((await exam("EX-N1")).name).toBe("Test Exam · MBA101 · Business Economics · Sem 1 · 2026-27");
   });
 });
 
@@ -338,10 +388,10 @@ describe("academic types", () => {
   });
 
   it("a rename reaches every exam of that type; a type in use cannot be deleted", async () => {
-    await as(U.owner, () => rows("insert into public.exams (id, name, status, created_by, academic_type, subject_code, subject_name) values ('EX-N1', 'x', 'draft', $1, 'Mid Term', 'MBA101', 'Economics')", [U.owner]));
+    await as(U.owner, () => rows("insert into public.exams (id, name, status, created_by, academic_type, semester, academic_year, subject_code, subject_name) values ('EX-N1', 'x', 'draft', $1, 'Mid Term', 2, '2026-27', 'MBA101', 'Economics')", [U.owner]));
     await db.exec("insert into public.exams (id, name, academic_type) values ('EX-OLD', 'Mid term old', 'Mid Term')");
     await as(U.admin, () => rows("update public.academic_types set name = 'Mid-Term Exam' where name = 'Mid Term'"));
-    expect((await rows<{ name: string }>("select name from public.exams where id = 'EX-N1'"))[0].name).toBe("Mid-Term Exam · MBA101 · Economics");
+    expect((await rows<{ name: string }>("select name from public.exams where id = 'EX-N1'"))[0].name).toBe("Mid-Term Exam · MBA101 · Economics · Sem 2 · 2026-27");
     expect((await rows<{ academic_type: string }>("select academic_type from public.exams where id = 'EX-OLD'"))[0].academic_type).toBe("Mid-Term Exam");
     await expect(as(U.admin, () => rows("delete from public.academic_types where name = 'Mid-Term Exam'"))).rejects.toThrow(/foreign key/);
   });
@@ -359,7 +409,9 @@ describe("filling in existing exams", () => {
         ('OLD-5', 'Digital Electronics', now()),
         ('OLD-6', 'test 1', now() + interval '1 day');
     `);
+    await db.exec("drop function public.list_assignable_staff()");
     await db.exec(NAMING);
+    await db.exec(TERM);
     const got = Object.fromEntries((await rows<{ id: string; name: string; academic_type: string | null; subject_code: string | null; subject_name: string | null; legacy_name: string }>(
       "select id, name, academic_type, subject_code, subject_name, legacy_name from public.exams order by id")).map((r) => [r.id, r]));
     expect(got["OLD-1"]).toMatchObject({ name: "Mid Term CS301 Data Structures", academic_type: "Mid Term", subject_code: "CS301", subject_name: "Mid Term Data Structures", legacy_name: "Mid Term CS301 Data Structures" });

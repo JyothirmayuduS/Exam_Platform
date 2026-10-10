@@ -469,7 +469,7 @@ function AutoAssignPanel({
   const assign = async () => {
     if (totalCount === 0) return;
     setBusy(true);
-    const evaluators = selected.map((f) => ({ id: f.id, name: f.name, email: f.email, count: counts[f.id] ?? 0 }));
+    const evaluators = selected.map((f) => ({ id: f.id, name: f.name, count: counts[f.id] ?? 0 }));
     const res = await assignEvaluators({ examId: exam.id, role, dueDate: dueDate || null, evaluators });
     if (res.ok) {
       notify(`Assigned ${res.assigned ?? 0} report(s) to ${evaluators.filter((e) => e.count > 0).length} evaluator(s) for ${exam.name}`);
@@ -532,7 +532,7 @@ function AutoAssignPanel({
                     <button key={f.id} onClick={() => toggle(f)} className={`flex w-full items-center justify-between gap-3 border px-3 py-2.5 text-left text-[13px] transition ${on ? "border-forest bg-success/5 text-ink" : "border-line text-soft hover:border-line"}`}>
                       <span className="min-w-0">
                         <span className="block font-medium">{f.name}</span>
-                        <span className="block truncate font-mono text-[10px] text-soft">{f.email ?? "no email on file"}</span>
+                        <span className="block truncate font-mono text-[10px] text-soft">{f.role}</span>
                       </span>
                       <span className={`font-mono text-[11px] ${on ? "text-forest" : "text-soft"}`}>{on ? <FiCheck /> : <FiPlus />}</span>
                     </button>
@@ -570,7 +570,7 @@ function AutoAssignPanel({
                 <div key={f.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
                     <p className="text-[13px] font-medium">{f.name}</p>
-                    <p className="truncate font-mono text-[10px] text-soft">{f.email ?? ""}</p>
+                    <p className="truncate font-mono text-[10px] text-soft">{f.role}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <input

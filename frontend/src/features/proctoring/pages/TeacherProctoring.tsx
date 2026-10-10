@@ -868,7 +868,6 @@ export default function TeacherProctoring() {
                         if (e.target.checked) next[key] = {
                           role: "proctor",
                           id: p.id,
-                          email: p.email,
                         };
                         else delete next[key];
                         return next;
@@ -878,7 +877,7 @@ export default function TeacherProctoring() {
                   <span className="min-w-0">
                     <span className="block text-[13px] font-medium text-ink">{p.name}</span>
                     <span className="block font-mono text-[10px] text-ink-soft truncate mt-0.5">
-                      {p.role === "proctor" ? "Proctor" : "Faculty"}{p.department ? ` · ${p.department}` : ""}{p.email ? ` · ${p.email}` : " · no email"}
+                      {p.role === "proctor" ? "Proctor" : "Faculty"}
                     </span>
                   </span>
                 </label>

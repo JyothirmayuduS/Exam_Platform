@@ -42,10 +42,8 @@ export async function listFaculty(): Promise<FacultyMember[]> {
     const r = raw as Record<string, unknown>;
     return {
       id: r.id ? String(r.id) : null,
-      name: String(r.full_name ?? r.name ?? "Faculty"),
+      name: String(r.name ?? "Staff"),
       role: String(r.role ?? "teacher"),
-      department: r.department ? String(r.department) : null,
-      email: r.email ? String(r.email) : null,
     };
   });
 }
