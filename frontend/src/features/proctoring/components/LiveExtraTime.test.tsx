@@ -16,7 +16,7 @@ vi.mock("@/shared/data/supabase", () => ({
   getSupabase: () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
       db.calls.push({ fn, args });
-      if (fn === "owns_exam") return { data: db.caller === "owner", error: null };
+      if (fn === "can_manage_exam") return { data: db.caller === "owner", error: null };
       if (fn !== "add_attempt_extra_minutes") return { data: null, error: { code: "42883", message: "no such function" } };
       if (db.caller !== "owner") return { data: null, error: { code: "42501", message: "forbidden" } };
       if (db.state !== "in_progress" && db.state !== "paused") return { data: null, error: { code: "P0001", message: "not_live" } };
@@ -26,7 +26,7 @@ vi.mock("@/shared/data/supabase", () => ({
   }),
 }));
 
-import { extendAttemptTime, ownsExam } from "@/shared/data/examApi";
+import { extendAttemptTime, canManageExam } from "@/shared/data/examApi";
 import { extraTimeLabel, LiveExtraTimeControl } from "@/features/proctoring/components/LiveExtraTime";
 
 beforeEach(() => {
@@ -63,10 +63,10 @@ describe("extendAttemptTime", () => {
     expect(db.calls).toHaveLength(0);
   });
 
-  it("ownsExam reflects the database check", async () => {
-    expect(await ownsExam("EX-1")).toBe(true);
+  it("canManageExam reflects the database check", async () => {
+    expect(await canManageExam("EX-1")).toBe(true);
     db.caller = "proctor";
-    expect(await ownsExam("EX-1")).toBe(false);
+    expect(await canManageExam("EX-1")).toBe(false);
   });
 });
 
@@ -85,7 +85,7 @@ describe("LiveExtraTimeControl", () => {
     expect(screen.getByText("+7 min extra · +10 min accommodation")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /add minutes/i })).toBeNull();
     expect(screen.queryByLabelText(/minutes to add/i)).toBeNull();
-    expect(screen.getByText(/only the teacher who owns this exam/i)).toBeTruthy();
+    expect(screen.getByText(/only the exam.s owner, a delegated teacher or an admin/i)).toBeTruthy();
   });
 
   it("lets the owning teacher add minutes during a live attempt", async () => {

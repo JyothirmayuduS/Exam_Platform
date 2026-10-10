@@ -363,19 +363,33 @@ export async function upsertProctorSession(opts: {
 }
 
 
-export async function updateAttemptScore(attemptId: string, score: number): Promise<boolean> {
+export type ScoreSaveResult = { ok: true } | { ok: false; error: string };
+
+/** Save a mark. A refusal (no access to this exam's marks) is an error, never
+ *  a silent success: an update that matched no row did not save anything. */
+export async function updateAttemptScore(attemptId: string, score: number): Promise<ScoreSaveResult> {
   const db = getSupabase();
-  if (!db) return false;
-  const { error } = await db
+  if (!db) return { ok: false, error: "Not connected — the mark was not saved." };
+  const { data, error } = await db
     .from("attempts")
     .update({ score })
-    .eq("id", attemptId);
-  if (!error) {
-    void logAudit({ action: "attempt.score_changed", targetType: "attempt", targetId: attemptId, meta: { score } });
-    // Resend to Moodle when the student launched from there; no-op otherwise.
-    void Promise.resolve().then(() => db.functions.invoke("lti/score", { body: { attemptId } })).catch(() => {});
+    .eq("id", attemptId)
+    .select("id");
+  if (error) {
+    return {
+      ok: false,
+      error: error.code === "42501"
+        ? "Only the exam's owner, a delegated teacher or an admin can change marks."
+        : `The mark was not saved: ${error.message}`,
+    };
   }
-  return !error;
+  if (!data || data.length === 0) {
+    return { ok: false, error: "The mark was not saved: you cannot change marks for this exam." };
+  }
+  void logAudit({ action: "attempt.score_changed", targetType: "attempt", targetId: attemptId, meta: { score } });
+  // Resend to Moodle when the student launched from there; no-op otherwise.
+  void Promise.resolve().then(() => db.functions.invoke("lti/score", { body: { attemptId } })).catch(() => {});
+  return { ok: true };
 }
 
 // Severity + source implied by the violation type, so proctor actions and AI

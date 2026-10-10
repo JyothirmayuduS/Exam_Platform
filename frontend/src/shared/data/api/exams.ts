@@ -18,6 +18,9 @@ export async function publishExam(
   if (!error && record.status === "published") {
     void logAudit({ action: "exam.published", targetType: "exam", targetId: record.id });
   }
+  if (error?.code === "23505" && /exams_(name|folder_slug)_unique/.test(error.message ?? "")) {
+    return { ok: false, error: "Another exam already has this name. Choose a different exam name." };
+  }
   return error ? { ok: false, error: String(error.message ?? error) } : { ok: true };
 }
 

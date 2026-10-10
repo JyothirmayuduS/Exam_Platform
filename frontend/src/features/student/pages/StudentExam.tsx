@@ -329,7 +329,7 @@ function StudentExamSession() {
     if (!supabaseConfigured || !EXAM_ID || !STUDENT_ROLL) return null;
     if (!partUploaderRef.current) {
       partUploaderRef.current = startPartUploads({
-        folder: storageFolderSegment(EXAM_ID, examNameRef.current),
+        folder: storageFolderSegment(EXAM_ID),
         owner: STUDENT_ROLL,
         family: "exam",
       });
@@ -1598,7 +1598,7 @@ function StudentExamSession() {
       try {
         const camera = partUploader();
         const screen = supabaseConfigured && EXAM_ID && STUDENT_ROLL
-          ? openPartUploads({ folder: storageFolderSegment(EXAM_ID, examNameRef.current), owner: STUDENT_ROLL, family: "screen" })
+          ? openPartUploads({ folder: storageFolderSegment(EXAM_ID), owner: STUDENT_ROLL, family: "screen" })
           : null;
         const outcome = await secureExamEvidence({
           camera,

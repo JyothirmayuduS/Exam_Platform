@@ -291,9 +291,14 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
   const navigateReview = (cid: string) => { markInReview(cid); setReviewParam(cid, true); };
   const closeReview = () =>
     setSearchParams((prev) => { const p = new URLSearchParams(prev); p.delete("review"); return p; }, { replace: true });
-  const finalizeGrade = async (cid: string, awarded: number) => {
-    await updateAttemptScore(cid, awarded);
+  const finalizeGrade = async (cid: string, awarded: number): Promise<boolean> => {
+    const saved = await updateAttemptScore(cid, awarded);
+    if (!saved.ok) {
+      notify(saved.error);
+      return false;
+    }
     setRoster((cur) => cur.map((c) => (c.id === cid ? { ...c, status: "Graded", awarded } : c)));
+    return true;
   };
 
   const [saving, setSaving] = useState(false);
@@ -305,19 +310,26 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
       return c && c.paper.every((q) => isAuto(q));
     });
     const skipped = selectedCandidates.length - purelyObjective.length;
+    const graded: string[] = [];
+    let refusal: string | null = null;
     for (const cid of purelyObjective) {
       const candidate = roster.find((c) => c.id === cid);
       if (!candidate) continue;
       const score = paperTotal(candidate.paper.map(autoScore));
-      await updateAttemptScore(cid, score);
+      const saved = await updateAttemptScore(cid, score);
+      if (saved.ok) graded.push(cid);
+      else refusal ??= saved.error;
     }
     setRoster((cur) => cur.map((c) => {
-      if (!purelyObjective.includes(c.id)) return c;
+      if (!graded.includes(c.id)) return c;
       const score = paperTotal(c.paper.map(autoScore));
       return { ...c, status: "Graded", awarded: score };
     }));
     setSaving(false);
-    notify(skipped > 0 ? `Bulk graded ${purelyObjective.length} objective paper(s); ${skipped} skipped — they contain theory/code answers that need your review` : `Bulk graded ${purelyObjective.length} candidates`);
+    const failed = purelyObjective.length - graded.length;
+    notify(failed > 0
+      ? `${failed} mark(s) not saved — ${refusal ?? "try again"}`
+      : skipped > 0 ? `Bulk graded ${graded.length} objective paper(s); ${skipped} skipped — they contain theory/code answers that need your review` : `Bulk graded ${graded.length} candidates`);
     setSelectedCandidates([]);
   };
 
@@ -545,7 +557,7 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
   resultsVisible: boolean;
   candidate: Candidate; queue: Candidate[]; commentsMandatory: boolean;
   onClose: () => void; onNavigate: (cid: string) => void;
-  onFinalize: (cid: string, awarded: number) => Promise<void> | void; notify: (m: string) => void; profileName: string
+  onFinalize: (cid: string, awarded: number) => Promise<boolean>; notify: (m: string) => void; profileName: string
 }) {
   const cam = useEvaluatorCamera();
   const [manualScores, setManualScores] = useState<Record<string, number>>({});
@@ -606,8 +618,9 @@ function ReviewSession({ candidate, queue, onClose, onNavigate, onFinalize, noti
       const text = (feedback[key(cid, q.id)] ?? "").trim();
       if (text) await addGradingComment({ attemptId: cid, questionId: String(q.id), comment: text });
     }
-    await onFinalize(cid, awarded);
+    const saved = await onFinalize(cid, awarded);
     setSavingGrade(false);
+    if (!saved) return;
     setFeedback((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => !k.startsWith(`${cid}:`))));
     notify(`${candidate.name} · ${awarded}/${max} recorded${resultsVisible ? " · visible to the student" : " · hidden until you release results"}`);
     if (goNext && nextUngraded) onNavigate(nextUngraded.id);

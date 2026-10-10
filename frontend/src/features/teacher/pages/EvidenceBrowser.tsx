@@ -24,7 +24,7 @@ import {
   listR2StudentFolders,
   listCandidateArtifacts,
   getArtifactObjectUrl,
-  storageFolderSegment,
+  legacyFolderSegment,
   type R2Artifact,
 } from "@/shared/services/examStorage";
 import { listExamsForTeacher, listAttemptViolations, type ViolationEvent } from "@/shared/data/examApi";
@@ -113,7 +113,7 @@ export default function EvidenceBrowser() {
         const all = await listExamsForTeacher();
         teacherExams = all ?? [];
         for (const e of teacherExams) {
-          const seg = storageFolderSegment(e.id, e.name);
+          const seg = legacyFolderSegment(e.id, e.name);
           bySegment.set(seg, { id: e.id, name: e.name, batch: e.batch });
           bySegment.set(e.id, { id: e.id, name: e.name, batch: e.batch });
         }
@@ -126,7 +126,7 @@ export default function EvidenceBrowser() {
         // folder the teacher already owns so recordings still open.
         const probed: string[] = [];
         for (const e of teacherExams) {
-          const seg = storageFolderSegment(e.id, e.name);
+          const seg = legacyFolderSegment(e.id, e.name);
           const students = await listR2StudentFolders(seg);
           const legacy = seg === e.id ? null : await listR2StudentFolders(e.id);
           if (students) probed.push(seg);
@@ -151,7 +151,7 @@ export default function EvidenceBrowser() {
         const key = meta?.id ?? seg;
         const row = grouped.get(key) ?? { folder: seg, folders: [], examId: meta?.id, name: meta?.name ?? seg, batch: meta?.batch ?? undefined };
         row.folders.push(seg);
-        if (meta && seg === storageFolderSegment(meta.id, meta.name)) row.folder = seg;
+        if (meta && seg === meta.id) row.folder = seg;
         grouped.set(key, row);
       }
       // Newest exam first: teacher exams arrive ordered by created_at desc;
