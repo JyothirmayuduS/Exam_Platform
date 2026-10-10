@@ -117,7 +117,7 @@ export interface LtiStore {
   linkTeacher(platformId: string, sub: string, teacherAuthId: string): Promise<void>;
   teacherSubs(teacherAuthId: string): Promise<{ platformId: string; sub: string }[]>;
   instructorLaunches(subs: { platformId: string; sub: string }[]): Promise<InstructorLaunch[]>;
-  /** Same rule as public.owns_exam: a teacher, and the exam is theirs or unowned. */
+  /** Same rule as public.owns_exam: a teacher, and the exam is theirs (an unowned exam: admins only). */
   ownsExam(teacherAuthId: string, examId: string): Promise<boolean>;
 
   // Session
