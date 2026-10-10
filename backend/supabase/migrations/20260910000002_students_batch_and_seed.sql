@@ -11,8 +11,9 @@
 -- This migration is safe to re-run (guarded adds + on-conflict no-op) and
 -- never deletes data.
 
--- 1. The missing column.
+-- 1. The missing column. branch/section are nullable live; init_schema made them not null.
 alter table public.students add column if not exists batch text;
+alter table public.students alter column branch drop not null, alter column section drop not null;
 
 -- 2. Backfill the original seed students (supabase/seed.sql) to the batch all
 --    of their exams use. Custom/unknown rows stay null and are untouched.
