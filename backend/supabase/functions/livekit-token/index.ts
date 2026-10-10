@@ -96,58 +96,23 @@ Deno.serve(async (req: Request) => {
   const room = String(body.room ?? "").trim().replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 120);
   if (!room) return json({ error: "room is required" }, 400);
 
-  // Role resolution order:
-  //   1. app_metadata.role (set directly on auth.users)
-  //   2. teachers table by auth_id (user JWT)
-  //   3. teachers table by email via service role (RLS can hide unlinked rows)
-  //   4. Email pattern heuristic (catches demo accounts not yet in teachers table)
-  //   5. Default to "student"
-  //
-  // If a teacher is mis-classified as student they get canPublish=true /
-  // canSubscribe=false on the exam room and see ZERO feeds — the main cause of
-  // "teacher side not connected" with a valid LiveKit session.
-  let role = String((user.app_metadata as Record<string, unknown> | undefined)?.role ?? "");
+  // Staff are the users with a teachers row (or a staff role in app_metadata).
+  // A staff token is issued only for a room of an exam the caller owns, is
+  // delegated to, administers, or is assigned to invigilate.
+  const appRole = String((user.app_metadata as Record<string, unknown> | undefined)?.role ?? "");
+  const { data: teacherRow } = await supabase
+    .from("teachers")
+    .select("role")
+    .eq("auth_id", user.id)
+    .maybeSingle();
+  const isProctor = !!teacherRow || appRole === "proctor" || appRole === "teacher" || appRole === "admin";
+  const role = String(teacherRow?.role ?? (appRole || "student"));
 
-  if (!role) {
-    const { data: teacherRow } = await supabase
-      .from("teachers")
-      .select("role")
-      .eq("auth_id", user.id)
-      .maybeSingle();
-    if (teacherRow?.role) role = String(teacherRow.role);
+  if (isProctor) {
+    const { data: allowed, error: accessError } = await supabase.rpc("can_join_livekit_room", { p_room: room });
+    if (accessError) return json({ error: "could not check exam access" }, 500);
+    if (allowed !== true) return json({ error: "forbidden: you are not assigned to this exam" }, 403);
   }
-
-  if (!role && user.email) {
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (serviceKey) {
-      const admin = createClient(supabaseUrl, serviceKey);
-      const email = user.email.toLowerCase();
-      const { data: teacherByEmail } = await admin
-        .from("teachers")
-        .select("role")
-        .eq("email", email)
-        .maybeSingle();
-      if (teacherByEmail?.role) role = String(teacherByEmail.role);
-    } else {
-      const { data: teacherByEmail } = await supabase
-        .from("teachers")
-        .select("role")
-        .eq("email", user.email.toLowerCase())
-        .maybeSingle();
-      if (teacherByEmail?.role) role = String(teacherByEmail.role);
-    }
-  }
-
-  if (!role && user.email) {
-    const email = user.email.toLowerCase();
-    if (email.includes("teacher") || email.includes("faculty") || email.includes("proctor") || email.includes("admin")) {
-      role = "teacher";
-    }
-  }
-
-  if (!role) role = "student";
-
-  const isProctor = role === "proctor" || role === "teacher" || role === "admin";
 
   // Voice announcement rooms (voice-<exam>-<roll>) carry the proctor→student
   // live-audio channel. Only staff may publish their microphone there; students

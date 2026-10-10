@@ -10,15 +10,22 @@ const code = ts.transpileModule(readFileSync(new URL("./index.ts", import.meta.u
 }).outputText;
 let student: { id: string; roll: string } | null;
 let staff: boolean;
+let access: Record<string, string>;
 let handler: (request: Request) => Promise<Response>;
 const fetchMock = vi.fn();
 function request(body: Record<string, unknown>) {
   return handler(new Request("https://example.invalid/function", { method: "POST", headers: { Authorization: "Bearer test-placeholder" }, body: JSON.stringify(body) }));
 }
 beforeEach(() => {
-  student = { id: "student-uuid", roll: "R1" }; staff = false; fetchMock.mockReset();
+  student = { id: "student-uuid", roll: "R1" }; staff = false; access = {}; fetchMock.mockReset();
   const client = { auth: { getUser: async () => ({ data: { user: { id: "auth-id" } } }) },
-    from: (table: string) => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: table === "students" ? student : staff ? { id: "teacher-id" } : null }) }) }) }) };
+    from: (table: string) => ({ select: () => ({
+      eq: () => ({ maybeSingle: async () => ({ data: table === "students" ? student : null }) }),
+      or: async () => ({ data: staff ? [{ id: "teacher-id", auth_id: "auth-id" }] : [] }),
+    }) }),
+    rpc: async (_fn: string, args: { p_folders: string[] }) => ({
+      data: args.p_folders.map((folder) => ({ folder, access: access[folder] ?? null })), error: null,
+    }) };
   runInNewContext(code, { exports: {}, Request, Response, console, fetch: fetchMock,
     Deno: { env: { get: (key: string) => key === "R2_S3_ENDPOINT" ? "https://r2.example.invalid" : "placeholder" }, serve: (fn: typeof handler) => { handler = fn; } },
     require: (name: string) => name.includes("supabase-js") ? { createClient: () => client }
@@ -46,6 +53,40 @@ describe("artifact edge function", () => {
     const signed = fetchMock.mock.calls[0][0] as Request;
     expect(new URL(signed.url).searchParams.get("prefix")).toBe("Exam/R1/");
     expect(new URL(signed.url).searchParams.get("continuation-token")).toBe("previous+/=&");
+  });
+  describe("staff", () => {
+    beforeEach(() => { student = null; staff = true; });
+
+    it("write evidence only under the id of an exam they have full access to", async () => {
+      access = { "EX-1": "full", "Mid-term": "legacy" };
+      expect((await request({ op: "put", examId: "EX-1", studentId: "R1", kind: "recordings", name: "a.webm" })).status).toBe(200);
+      expect((await request({ op: "put", examId: "Mid-term", studentId: "R1", kind: "recordings", name: "a.webm" })).status).toBe(403);
+      expect((await request({ op: "put", examId: "EX-2", studentId: "R1", kind: "violations", name: "a.jpg" })).status).toBe(403);
+    });
+
+    it("read old name folders only with legacy access", async () => {
+      access = { "Mid-term": "legacy" };
+      expect((await request({ op: "get", key: "Mid-term/R1/screenshots/a.jpg" })).status).toBe(200);
+      expect((await request({ op: "get", key: "Other/R1/screenshots/a.jpg" })).status).toBe(403);
+    });
+
+    it("an assigned proctor reads and writes violation frames only", async () => {
+      access = { "EX-1": "proctor" };
+      expect((await request({ op: "put", examId: "EX-1", studentId: "R1", kind: "violations", name: "a.jpg" })).status).toBe(200);
+      expect((await request({ op: "put", examId: "EX-1", studentId: "R1", kind: "recordings", name: "a.webm" })).status).toBe(403);
+      expect((await request({ op: "get", key: "EX-1/R1/violations/a.jpg" })).status).toBe(200);
+      expect((await request({ op: "get", key: "EX-1/R1/subjective/a.jpg" })).status).toBe(403);
+      fetchMock.mockResolvedValueOnce(new Response("<ListBucketResult><Contents><Key>EX-1/R1/violations/a.jpg</Key></Contents><Contents><Key>EX-1/R1/recordings/b.webm</Key></Contents></ListBucketResult>"));
+      const listed = await (await request({ op: "list", prefix: "EX-1/R1" })).json();
+      expect(listed.objects.map((o: { key: string }) => o.key)).toEqual(["EX-1/R1/violations/a.jpg"]);
+    });
+
+    it("see only the top-level folders of exams they can access", async () => {
+      access = { "EX-1": "full", "Mid-term": "legacy" };
+      fetchMock.mockResolvedValueOnce(new Response("<ListBucketResult><CommonPrefixes><Prefix>EX-1/</Prefix></CommonPrefixes><CommonPrefixes><Prefix>Mid-term/</Prefix></CommonPrefixes><CommonPrefixes><Prefix>EX-2/</Prefix></CommonPrefixes></ListBucketResult>"));
+      expect((await (await request({ op: "folders", prefix: "" })).json()).folders).toEqual(["EX-1/", "Mid-term/"]);
+      expect((await request({ op: "folders", prefix: "EX-2/" })).status).toBe(403);
+    });
   });
   it("does not pretend a truncated page without a token is complete", async () => {
     fetchMock.mockResolvedValueOnce(new Response("<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>"));

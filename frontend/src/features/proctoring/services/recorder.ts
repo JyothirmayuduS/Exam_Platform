@@ -5,7 +5,7 @@
 // Pieces land under:
 //   ${examFolder}/${roll}/recordings/parts/screen_${seq}_${session}.webm
 //
-// where ${examFolder} is the slug of the exam NAME (fallback: exam id).
+// where ${examFolder} is the exam id.
 // Restarting the recorder starts a new uploader, which retires the old one.
 
 import { storageFolderSegment } from "@/shared/services/examStorage";
@@ -50,9 +50,9 @@ export function startVideoRecording(opts: {
   /** Test seam. */
   uploader?: PartUploader;
 }): RecorderHandle {
-  const { stream, examId, examName, roll, kind } = opts;
+  const { stream, examId, roll, kind } = opts;
   const parts = opts.uploader ?? startPartUploads({
-    folder: storageFolderSegment(examId, examName),
+    folder: storageFolderSegment(examId),
     owner: roll,
     family: kind === "screen" ? "screen" : "exam",
     onError: opts.onError,

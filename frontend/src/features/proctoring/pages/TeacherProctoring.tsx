@@ -17,7 +17,7 @@ import { getTeacherNav } from "@/features/teacher/navigation";
 import { FiVideo, FiMonitor, FiSmartphone, FiGrid, FiArrowLeft, FiMic, FiMicOff, FiUsers, FiChevronRight, FiVolume2, FiVolumeX } from "react-icons/fi";
 import ProctoringAssessmentSelect from "@/features/proctoring/components/ProctoringAssessmentSelect";
 import { ExtraTimeBadge, LiveExtraTimeControl } from "@/features/proctoring/components/LiveExtraTime";
-import useOwnsExam from "@/features/proctoring/hooks/useOwnsExam";
+import useCanManageExam from "@/features/proctoring/hooks/useCanManageExam";
 import ConnectionBadge from "@/shared/components/ConnectionBadge";
 import { remoteConnectionState, type ConnectionState } from "@/shared/services/lowBandwidth";
 import { Button } from "@/shared/components/ui";
@@ -93,7 +93,7 @@ export default function TeacherProctoring() {
     setStage("monitor");
   };
   const selectedExam = examList.find((e) => e.id === selectedExamId) ?? null;
-  const ownsSelectedExam = useOwnsExam(selectedExamId);
+  const canManageSelectedExam = useCanManageExam(selectedExamId);
 
   const [promptDialog, ask] = usePromptDialog();
   const [announceStatus, setAnnounceStatus] = useState<string | null>(null);
@@ -767,7 +767,7 @@ export default function TeacherProctoring() {
               <LiveExtraTimeControl
                 attemptId={selected.realAttemptId}
                 live={selected.status === "Writing" || selected.status === "Paused"}
-                canAdd={ownsSelectedExam}
+                canAdd={canManageSelectedExam}
                 extraMinutes={selected.extraMinutes}
                 accommodationMinutes={selected.accommodationMinutes}
                 onAdded={(total) => {

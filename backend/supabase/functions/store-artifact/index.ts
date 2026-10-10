@@ -134,7 +134,31 @@ Deno.serve(async (req: Request) => {
   // Authorize both from the authenticated DB row, never from user metadata.
   const ownsSegment = (segment: string | undefined) => !!segment &&
     (segment === callerStudentId || segment === callerStudentRoll);
-  const canReadPath = (path: string) => callerIsStaff || ownsSegment(path.split("/")[1]);
+
+  // Staff access is per top-level exam folder (evidence_folder_access):
+  // "full" reads and writes, "legacy" (an old exam-name folder, owner only)
+  // reads, "proctor" reads and writes violation frames only.
+  const folderAccess = new Map<string, string | null>();
+  const folderOf = (path: string) => path.split("/")[0] ?? "";
+  async function loadAccess(paths: string[]): Promise<void> {
+    const missing = [...new Set(paths.map(folderOf))].filter((f) => f && !folderAccess.has(f));
+    if (!callerIsStaff || missing.length === 0) return;
+    for (const f of missing) folderAccess.set(f, null);
+    const { data, error } = await supabase.rpc("evidence_folder_access", { p_folders: missing });
+    if (error) {
+      console.error("[store-artifact] evidence access check failed:", error.message);
+      return;
+    }
+    for (const r of (data ?? []) as { folder: string; access: string | null }[]) folderAccess.set(r.folder, r.access);
+  }
+  const staffCanRead = (path: string) => {
+    const access = folderAccess.get(folderOf(path));
+    return access === "full" || access === "legacy" || (access === "proctor" && path.split("/")[2] === "violations");
+  };
+  const canReadPath = (path: string) => callerIsStaff ? staffCanRead(path) : ownsSegment(path.split("/")[1]);
+  const canBrowsePath = (path: string) => callerIsStaff
+    ? folderAccess.get(folderOf(path)) != null
+    : ownsSegment(path.split("/")[1]);
   const op = String(body.op ?? "put").trim();
 
   const aws = new AwsClient({
@@ -155,9 +179,15 @@ Deno.serve(async (req: Request) => {
     if (!KINDS.has(kind)) return json({ error: "invalid kind" }, 400);
     if (!name) return json({ error: "invalid name" }, 400);
 
-    // Ownership gate: a student may only write into their own folder;
-    // staff can write anywhere.
-    if (!callerIsStaff && !ownsSegment(requestedStudentId)) {
+    // Ownership gate: a student may only write into their own folder; staff
+    // only under the id of an exam they may write evidence for.
+    if (callerIsStaff) {
+      await loadAccess([examId]);
+      const access = folderAccess.get(examId);
+      if (!(access === "full" || (access === "proctor" && kind === "violations"))) {
+        return json({ error: "forbidden" }, 403);
+      }
+    } else if (!ownsSegment(requestedStudentId)) {
       return json({ error: "forbidden" }, 403);
     }
     const studentId = requestedStudentId;
@@ -180,6 +210,7 @@ Deno.serve(async (req: Request) => {
     const key = safeSegment(String(body.key ?? ""));
     if (!key) return json({ error: "invalid key" }, 400);
     // Ownership gate: student may only GET under their own folder.
+    await loadAccess([key]);
     if (!canReadPath(key)) return json({ error: "forbidden" }, 403);
     const expires = Math.min(Math.max(Number(body.expiresSec ?? 3600) || 3600, 60), 86400);
     try {
@@ -202,6 +233,7 @@ Deno.serve(async (req: Request) => {
     const expires = Math.min(Math.max(Number(body.expiresSec ?? 3600) || 3600, 60), 86400);
     const urls: Record<string, string> = {};
     try {
+      await loadAccess(raw.map((k) => String(k ?? "")));
       for (const k of raw) {
         const key = safeSegment(String(k ?? ""));
         if (!key || !canReadPath(key)) continue;
@@ -223,7 +255,8 @@ Deno.serve(async (req: Request) => {
     const prefix = safeSegment(String(body.prefix ?? ""));
     if (prefix == null || prefix === "") return json({ error: "invalid prefix" }, 400);
     // Ownership gate: students may only list under their own folder.
-    if (!canReadPath(prefix)) return json({ error: "forbidden" }, 403);
+    await loadAccess([prefix]);
+    if (!canBrowsePath(prefix)) return json({ error: "forbidden" }, 403);
     // Always list a complete folder boundary (R1 must not also match R10).
     const folderPrefix = prefix.replace(/\/+$/, "") + "/";
     const continuationToken = typeof body.continuationToken === "string" ? body.continuationToken : "";
@@ -248,7 +281,7 @@ Deno.serve(async (req: Request) => {
           return mm ? mm[1].trim() : null;
         };
         const key = pick("Key");
-        if (!key) continue;
+        if (!key || !canReadPath(key)) continue;
         objects.push({
           key,
           name: key.split("/").pop() ?? key,
@@ -275,8 +308,13 @@ Deno.serve(async (req: Request) => {
   if (op === "folders") {
     const rawPrefix = String(body.prefix ?? "").trim();
     if (rawPrefix.length > 128) return json({ error: "prefix too long" }, 400);
-    // Students may only see folders under their own roll.
-    if (!canReadPath(rawPrefix)) return json({ error: "forbidden" }, 403);
+    // Students may only see folders under their own roll; staff only the
+    // folders of exams they can access (the top level is filtered below).
+    const topLevel = callerIsStaff && rawPrefix === "";
+    if (!topLevel) {
+      await loadAccess([rawPrefix]);
+      if (!canBrowsePath(rawPrefix)) return json({ error: "forbidden" }, 403);
+    }
     // Every non-empty segment must pass the same path-safety rules as put/list.
     if (rawPrefix !== "") {
       const segs = rawPrefix.split("/").filter(Boolean);
@@ -301,6 +339,10 @@ Deno.serve(async (req: Request) => {
         const prefix = pm ? pm[1].trim() : null;
         if (prefix && !folders.includes(prefix)) folders.push(prefix);
       }
+      if (topLevel) {
+        await loadAccess(folders);
+        return json({ folders: folders.filter(canBrowsePath) });
+      }
       return json({ folders });
     } catch (err) {
       console.error("[store-artifact] folders list error:", err);
@@ -318,6 +360,7 @@ Deno.serve(async (req: Request) => {
     const key = safeSegment(String(body.key ?? ""));
     if (!key) return json({ error: "invalid key" }, 400);
     // Ownership gate: student may only read bytes under their own folder.
+    await loadAccess([key]);
     if (!canReadPath(key)) return json({ error: "forbidden" }, 403);
     try {
       const signed = await aws.sign(

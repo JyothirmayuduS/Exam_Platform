@@ -17,7 +17,7 @@ import {
 } from "@/shared/services/sessionReport";
 import JobBanner from "@/shared/components/JobBanner";
 import { ExtraTimeBadge, LiveExtraTimeControl } from "@/features/proctoring/components/LiveExtraTime";
-import useOwnsExam from "@/features/proctoring/hooks/useOwnsExam";
+import useCanManageExam from "@/features/proctoring/hooks/useCanManageExam";
 import ConnectionBadge from "@/shared/components/ConnectionBadge";
 import { remoteConnectionState, type ConnectionState } from "@/shared/services/lowBandwidth";
 import { usePromptDialog } from "@/shared/components/PromptDialog";
@@ -384,7 +384,7 @@ export default function ProctorGrid() {
     logViolation("proctor_manual_flag", `Flagged ${selected?.name}'s activity for suspicious behavior`, "high");
 
 
-  const ownsCurrentExam = useOwnsExam(examId);
+  const canManageCurrentExam = useCanManageExam(examId);
   const netFor = (t: Tile): ConnectionState | null => {
     const feed = feedFor(t);
     return remoteConnectionState({
@@ -620,7 +620,7 @@ export default function ProctorGrid() {
                 });
                 if (desc) logViolation("proctor_manual_log", desc, "warning");
               }}
-              canAddTime={ownsCurrentExam}
+              canAddTime={canManageCurrentExam}
               onTimeAdded={onTimeAdded}
               onTimeMessage={pushLog}
               onScreenshot={() => void takeScreenshot()}

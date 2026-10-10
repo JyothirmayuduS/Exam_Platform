@@ -16,11 +16,9 @@
 //   ${examFolder}/${owner}/ai_evidence/${epochMs}_${type}.jpg
 //   ${examFolder}/${owner}/report/report_${epochMs}.pdf
 //
-// ${examFolder} is a readable slug of the EXAM NAME (e.g. "Test-3") so the R2
-// bucket shows exams by name — NOT the opaque id — exactly like the teacher
-// console does. The exam id is used only as a fallback when the name is
-// missing. Old folders written under ${examId}/ stay readable: the list path
-// checks both prefixes and merges the results.
+// ${examFolder} is the EXAM ID. Builds before it wrote under a slug of the
+// exam name ("Test-3/"); those folders stay readable to the exam's owner and
+// admins, and the list path checks both prefixes and merges the results.
 
 import { jsPDF } from "jspdf";
 import { createSnapshotOutbox, type SnapshotStore } from "@/shared/services/snapshotOutbox";
@@ -69,12 +67,7 @@ function splitPath(path: string): { examId: string; owner: string; kind: Artifac
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Exam folder segment — the top-level R2 folder for one exam's artifacts.
-//
-// The user-facing bucket must read like the console: "Test-3/<roll>/…" instead
-// of "EXAM-2026-84DE3570/<roll>/…". The segment is the EXAM NAME slugged down
-// to a safe, ASCII, folder-safe string (the store-artifact edge function only
-// accepts [A-Za-z0-9._/-] path segments), falling back to the exam id when the
-// name is empty or entirely non-ASCII.
+// Storage authorizes staff per exam, so new evidence goes under the exam id.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function slugifyFolderSegment(name: string): string {
@@ -86,8 +79,13 @@ export function slugifyFolderSegment(name: string): string {
   return s;
 }
 
-/** Deterministic top-level R2 folder for an exam: slug of the name, else id. */
-export function storageFolderSegment(examId: string, examName?: string | null): string {
+/** Top-level R2 folder new evidence is written under. */
+export function storageFolderSegment(examId: string): string {
+  return examId;
+}
+
+/** Folder older builds wrote under: slug of the exam name, else the id. Read only. */
+export function legacyFolderSegment(examId: string, examName?: string | null): string {
   const slug = examName ? slugifyFolderSegment(examName) : "";
   return slug || examId;
 }
@@ -96,8 +94,8 @@ export function storageFolderSegment(examId: string, examName?: string | null): 
 const resolvedSegments = new Map<string, string>();
 
 /**
- * Resolve the R2 folder segment for an exam id by looking up its CURRENT name
- * in the DB (so review pages never hardcode a slug). Falls back to the exam id
+ * Resolve the legacy name folder for an exam id from its CURRENT name, so
+ * evidence written by older builds is still found. Falls back to the exam id
  * when the exam can't be read or has no name. Cached per exam id.
  */
 export async function resolveExamStorageSegment(examId: string): Promise<string> {
@@ -108,7 +106,7 @@ export async function resolveExamStorageSegment(examId: string): Promise<string>
     const { listExams } = await import("@/shared/data/api/exams");
     const exams = await listExams();
     const record = (exams ?? []).find((e) => e.id === examId);
-    if (record?.name) segment = storageFolderSegment(examId, record.name);
+    if (record?.name) segment = legacyFolderSegment(examId, record.name);
   } catch {
     /* offline / RLS — fall back to the exam id */
   }
@@ -366,7 +364,7 @@ export async function storeViolationSnapshot(opts: {
 }): Promise<StoredArtifact | null> {
   const safeLabel = opts.label.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 60);
   return storeArtifact(
-    buildR2Path(storageFolderSegment(opts.examId, opts.examName), opts.roll, "violations", `${Date.now()}_${safeLabel}.jpg`),
+    buildR2Path(storageFolderSegment(opts.examId), opts.roll, "violations", `${Date.now()}_${safeLabel}.jpg`),
     opts.blob,
     "image/jpeg",
   );
@@ -446,8 +444,8 @@ export function startScreenshotCapture(opts: {
   store?: SnapshotStore;
   upload?: SnapshotUpload;
 }): ScreenshotHandle {
-  const { examId, examName, roll } = opts;
-  const folder = storageFolderSegment(examId, examName);
+  const { examId, roll } = opts;
+  const folder = storageFolderSegment(examId);
   let video: HTMLVideoElement | null = null;
   let stopped = false;
   let lastCapture = -Infinity;
@@ -545,7 +543,7 @@ export async function uploadExamRecords(opts: {
   violations?: ReportRow["violations"];
 }): Promise<{ pdfKey: string | null; snapshotKeys: string[] }> {
   const { examId, examName, roll, studentName, violationSnapshots = [], durationSec } = opts;
-  const folder = storageFolderSegment(examId, examName);
+  const folder = storageFolderSegment(examId);
   const uploaded = { pdfKey: null as string | null, snapshotKeys: [] as string[] };
 
   // 1. Violation snapshots (frames captured at the flagged moments). Same key

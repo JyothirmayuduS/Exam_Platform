@@ -57,7 +57,7 @@ export async function saveViolation(
   try {
     if (realAttemptId && offsetSeconds == null) {
       const { data: att } = await db
-        .from("attempts")
+        .from(callerStudentId ? "attempts" : "proctor_attempts")
         .select("started_at")
         .eq("id", realAttemptId)
         .maybeSingle();
@@ -109,10 +109,7 @@ export async function setAttemptPaused(
 ): Promise<boolean> {
   const db = getSupabase();
   if (!db || !isRealUuid(attemptId)) return false;
-  const { error } = await db
-    .from("attempts")
-    .update({ state: paused ? "paused" : "in_progress" })
-    .eq("id", attemptId);
+  const { error } = await db.rpc("set_attempt_paused", { p_attempt: attemptId, p_paused: paused });
   if (!error) void logAudit({ action: paused ? "attempt.paused" : "attempt.resumed", targetType: "attempt", targetId: attemptId });
   return !error;
 }
@@ -123,8 +120,8 @@ export type ExtendTimeResult =
   | { ok: true; extraMinutes: number; secondsLeft: number | null }
   | { ok: false; reason: "forbidden" | "not_live" | "invalid" | "unavailable"; message: string };
 
-/** Add minutes to a live attempt. Only the teacher who owns the exam may do
- *  this; the database checks ownership, moves the deadline and writes the
+/** Add minutes to a live attempt. Only the exam's owner, a delegated teacher
+ *  or an admin may do this; the database checks that, moves the deadline and writes the
  *  audit row (who, how many, when) in one transaction. The student's
  *  countdown picks the change up over realtime. */
 export async function extendAttemptTime(attemptId: string, minutes: number): Promise<ExtendTimeResult> {
@@ -136,7 +133,7 @@ export async function extendAttemptTime(attemptId: string, minutes: number): Pro
   }
   const { data, error } = await db.rpc("add_attempt_extra_minutes", { p_attempt: attemptId, p_minutes: m });
   if (error) {
-    if (error.code === "42501") return { ok: false, reason: "forbidden", message: "Only the teacher who owns this exam can add time." };
+    if (error.code === "42501") return { ok: false, reason: "forbidden", message: "Only the exam's owner, a delegated teacher or an admin can add time." };
     if (error.code === "P0001") return { ok: false, reason: "not_live", message: "This attempt is no longer in progress." };
     if (error.code === "22023") return { ok: false, reason: "invalid", message: `Enter between 1 and ${MAX_LIVE_EXTRA_MINUTES} minutes.` };
     return { ok: false, reason: "unavailable", message: "Could not add time — try again." };
@@ -149,11 +146,11 @@ export async function extendAttemptTime(attemptId: string, minutes: number): Pro
   };
 }
 
-/** True when the signed-in user is the teacher who owns this exam. */
-export async function ownsExam(examId: string): Promise<boolean> {
+/** True when the signed-in user owns this exam, is delegated to it, or is an admin. */
+export async function canManageExam(examId: string): Promise<boolean> {
   const db = getSupabase();
   if (!db || !examId) return false;
-  const { data, error } = await db.rpc("owns_exam", { p_exam: examId });
+  const { data, error } = await db.rpc("can_manage_exam", { p_exam: examId });
   return !error && data === true;
 }
 

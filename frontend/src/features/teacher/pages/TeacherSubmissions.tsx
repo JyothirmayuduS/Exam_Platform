@@ -10,7 +10,7 @@ import { Button } from "@/shared/components/ui";
 import { usePromptDialog } from "@/shared/components/PromptDialog";
 import { getSupabase } from "@/shared/data/supabase";
 import { ExtraTimeBadge, LiveExtraTimeControl } from "@/features/proctoring/components/LiveExtraTime";
-import useOwnsExam from "@/features/proctoring/hooks/useOwnsExam";
+import useCanManageExam from "@/features/proctoring/hooks/useCanManageExam";
 
 type StatusTab = "All" | AttemptState | "Needs attention";
 const TABS: StatusTab[] = ["All", "Submitted", "In progress", "Not started", "Needs attention"];
@@ -41,7 +41,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
   const [promptDialog, ask] = usePromptDialog();
 
   const { data: attempts = [], isLoading } = useLiveAttempts(examId ?? "", exam?.name ?? "");
-  const ownsExam = useOwnsExam(examId);
+  const canManage = useCanManageExam(examId);
 
   // One tick per second only while a scheduled window is open, so the strip
   // countdown is real (derived from the exam schedule), never fabricated.
@@ -210,7 +210,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
               <p className="font-mono text-[9px] uppercase tracking-wider text-ink-soft">Time left in window</p>
               <p className="tabular font-mono text-[15px] text-alert">{hms(remainingSec ?? 0)}</p>
             </div>
-            {ownsExam && <Button variant="secondary" size="sm" icon={<FiClock />} onClick={() => void extendAll()}>+5 min for all</Button>}
+            {canManage && <Button variant="secondary" size="sm" icon={<FiClock />} onClick={() => void extendAll()}>+5 min for all</Button>}
             <Button variant="danger" size="sm" icon={<FiAlertTriangle />} onClick={() => void forceSubmitAll()}>Force submit remaining</Button>
           </div>
         )}
@@ -315,7 +315,7 @@ export default function TeacherSubmissions({ notify }: { notify: (message: strin
               {selected.state !== "Not started" && <LiveExtraTimeControl
                 attemptId={selected.id}
                 live={selected.state === "In progress" || selected.state === "Paused"}
-                canAdd={ownsExam}
+                canAdd={canManage}
                 extraMinutes={selected.extraMinutes ?? 0}
                 accommodationMinutes={selected.accommodationMinutes ?? 0}
                 onMessage={(text) => notify(`${selected.name}: ${text}`)}

@@ -19,7 +19,7 @@ export function ExtraTimeBadge({ extraMinutes, accommodationMinutes = 0, classNa
 
 /**
  * Extra time for the selected candidate: always shows the minutes already
- * added; the add control appears only for the teacher who owns the exam while
+ * added; the add control appears only for the exam's owner, a delegated teacher or an admin while
  * the attempt is live. Proctors see the minutes read-only.
  */
 export function LiveExtraTimeControl({
@@ -82,7 +82,7 @@ export function LiveExtraTimeControl({
           </button>
         </div>
       ) : !canAdd ? (
-        <p className="mt-1 font-mono text-[9px] text-ink-soft">Only the teacher who owns this exam can add time.</p>
+        <p className="mt-1 font-mono text-[9px] text-ink-soft">Only the exam's owner, a delegated teacher or an admin can add time.</p>
       ) : null}
     </div>
   );

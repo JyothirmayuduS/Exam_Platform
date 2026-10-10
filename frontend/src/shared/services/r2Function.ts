@@ -7,9 +7,8 @@
 //
 //   ${examFolder}/${ownerSegment}/${kind}/${filename}
 //
-// `${examFolder}` is the slug of the EXAM NAME (fallback: the exam id) — see
-// examStorage.storageFolderSegment — so the bucket reads like the console
-// ("Test-3/<roll>/recordings/…") instead of opaque ids. `ownerSegment` is
+// `${examFolder}` is the exam id (see examStorage.storageFolderSegment); older
+// builds wrote under a slug of the exam name. `ownerSegment` is
 // opaque to R2 — callers pass the candidate's roll number or student uuid,
 // and must use the same segment when reading back.
 

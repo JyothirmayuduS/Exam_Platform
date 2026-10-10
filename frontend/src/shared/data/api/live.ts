@@ -16,12 +16,18 @@ export async function listLiveAttempts(
 ): Promise<LiveAttempt[]> {
   const db = getSupabase();
   if (!db) return [];
-  let query = db
-    .from("staff_attempts")
-    .select("id,exam_id,state,answered,total,minutes_used,score,answers,paper,started_at,submitted_at,auto_saved_at,consent_at,user_agent,extra_minutes,student:students(id,roll,full_name,email,auth_id)")
-    .order("auto_saved_at", { ascending: false });
-  if (examId) query = query.eq("exam_id", examId);
-  const { data, error } = await query;
+  // Full-access staff read staff_attempts; an invigilating proctor gets no
+  // rows there and reads proctor_attempts, which has no marks or answers.
+  const read = (view: "staff_attempts" | "proctor_attempts", marks: string) => {
+    let query = db
+      .from(view)
+      .select(`id,exam_id,state,answered,total,minutes_used,${marks}started_at,submitted_at,auto_saved_at,consent_at,user_agent,extra_minutes,student:students(id,roll,full_name,email,auth_id)`)
+      .order("auto_saved_at", { ascending: false });
+    if (examId) query = query.eq("exam_id", examId);
+    return query;
+  };
+  let { data, error } = await read("staff_attempts", "score,answers,paper,");
+  if (!error && (data ?? []).length === 0) ({ data, error } = await read("proctor_attempts", ""));
   if (error && opts.throwOnError) throw new Error(error.message);
 
   const attempts: LiveAttempt[] = error
@@ -215,7 +221,8 @@ const COALESCE_MS = 400;
  * changes. Realtime events are coalesced (a flagged candidate can emit dozens
  * per minute), and a poll runs alongside: realtime delivery is filtered by RLS
  * and silently drops events if the channel joined before the staff session
- * token was attached, which left live consoles stuck on "no flags".
+ * token was attached, which left live consoles stuck on "no flags". A proctor
+ * cannot read attempts rows, so attempt state reaches them through the poll.
  */
 export function subscribeToAttempts(examId: string, onChange: () => void): () => void {
   const db = getSupabase();
@@ -281,7 +288,7 @@ export async function listProctoringStats(): Promise<
     for (const r of enrolled as { exam_id?: string }[]) bump(String(r.exam_id ?? ""), "candidates");
   }
   const { data: attempts } = await db
-    .from("attempts")
+    .from("proctor_attempts")
     .select("exam_id,state,student_id");
   if (attempts) {
     for (const r of attempts as { exam_id?: string; state?: string; student_id?: string }[]) {
