@@ -1,7 +1,7 @@
 // @vitest-environment node
-// Exam data is visible only to the exam's owner, admins and staff assigned to
-// it; assigned staff may proctor but not change marks; an exam with no owner
-// is admin-only.
+// Exam data is visible only to the exam's owner, admins and teachers assigned
+// to it; assigned teachers may proctor but not change marks; proctors see
+// nothing; an exam with no owner is admin-only.
 import { PGlite } from "@electric-sql/pglite";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { actAs, BASE, migration } from "./pgliteBase";
@@ -35,6 +35,7 @@ beforeAll(async () => {
   await db.exec(migration("20261010150000_university_scale.sql"));
   await db.exec(migration("20261010170000_hide_unreleased_scores.sql"));
   await db.exec(migration("20261010180000_exam_scoped_staff_access.sql"));
+  await db.exec(migration("20261010190000_exam_access_no_proctors.sql"));
   await db.exec("create trigger attempts_a_guard_write before insert or update on public.attempts for each row execute function public.guard_attempt_write()");
 }, 60_000);
 
@@ -117,31 +118,42 @@ describe("another teacher", () => {
   });
 });
 
-describe("an assigned proctor", () => {
+describe("an assigned teacher (delegate)", () => {
   it("reads the exam's data and evidence", async () => {
-    expect(await visible(U.proctor)).toEqual(only(["EX-1"], EX1_EVIDENCE));
+    expect(await visible(U.helper)).toEqual(only(["EX-1"], EX1_EVIDENCE));
   });
 
   it("can flag, warn and pause, but not change marks", async () => {
-    await as(U.proctor, () => rows(`insert into public.violation_events (exam_id, student_id, attempt_id, severity) values ('EX-1', '${S1}', '${A1}', 'high')`));
-    await as(U.proctor, () => rows("update public.violation_events set severity = 'medium' where exam_id = 'EX-1'"));
-    await as(U.proctor, () => rows("insert into public.proctor_messages (exam_id, body) values ('EX-1', 'eyes on screen')"));
-    await as(U.proctor, () => rows(`update public.attempts set state = 'paused', score = 100 where id = '${A1}'`));
+    await as(U.helper, () => rows(`insert into public.violation_events (exam_id, student_id, attempt_id, severity) values ('EX-1', '${S1}', '${A1}', 'high')`));
+    await as(U.helper, () => rows("update public.violation_events set severity = 'medium' where exam_id = 'EX-1'"));
+    await as(U.helper, () => rows("insert into public.proctor_messages (exam_id, body) values ('EX-1', 'eyes on screen')"));
+    await as(U.helper, () => rows(`update public.attempts set state = 'paused', score = 100 where id = '${A1}'`));
     const [a] = await rows<{ state: string; score: string }>("select state, score from public.attempts where id = $1", [A1]);
     expect(a).toEqual({ state: "paused", score: "42" });
     expect((await rows("select 1 from public.violation_events where severity = 'medium'")).length).toBe(2);
   });
 
   it("cannot delete attempts or flags", async () => {
-    await as(U.proctor, () => rows(`delete from public.attempts where id = '${A1}'`));
-    await as(U.proctor, () => rows("delete from public.violation_events"));
+    await as(U.helper, () => rows(`delete from public.attempts where id = '${A1}'`));
+    await as(U.helper, () => rows("delete from public.violation_events"));
     expect((await rows("select 1 from public.attempts where id = $1", [A1])).length).toBe(1);
     expect((await rows("select 1 from public.violation_events")).length).toBe(2);
   });
+});
 
-  it("a teacher assigned to proctor someone else's exam cannot change marks either", async () => {
-    await as(U.helper, () => rows(`update public.attempts set score = 0 where id = '${A1}'`));
-    expect(await score(A1)).toBe("42");
+describe("an assigned proctor", () => {
+  it("sees nothing", async () => {
+    expect(await visible(U.proctor)).toEqual(only([], []));
+  });
+
+  it("cannot flag, message, pause or change marks", async () => {
+    await expect(as(U.proctor, () => rows(`insert into public.violation_events (exam_id, student_id, attempt_id) values ('EX-1', '${S1}', '${A1}')`)))
+      .rejects.toThrow(/row-level security/);
+    await expect(as(U.proctor, () => rows("insert into public.proctor_messages (exam_id, body) values ('EX-1', 'hi')")))
+      .rejects.toThrow(/row-level security/);
+    await as(U.proctor, () => rows(`update public.attempts set state = 'paused', score = 100 where id = '${A1}'`));
+    const [a] = await rows<{ state: string; score: string }>("select state, score from public.attempts where id = $1", [A1]);
+    expect(a).toEqual({ state: "submitted", score: "42" });
   });
 });
 
@@ -176,6 +188,7 @@ describe("an exam with no owner", () => {
     await db.exec(`update public.exams set created_by = null where id = 'EX-1'`);
     await db.exec(`insert into public.audit_logs (actor_id, action, target_type, target_id) values ('${U.owner}', 'exam.published', 'exam', 'EX-1')`);
     await db.exec(migration("20261010180000_exam_scoped_staff_access.sql"));
+    await db.exec(migration("20261010190000_exam_access_no_proctors.sql"));
     expect((await rows<{ created_by: string }>("select created_by from public.exams where id = 'EX-1'"))[0].created_by).toBe(U.owner);
     expect((await rows<{ created_by: string | null }>("select created_by from public.exams where id = 'EX-NULL'"))[0].created_by).toBeNull();
   });
