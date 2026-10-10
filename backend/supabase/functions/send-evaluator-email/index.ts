@@ -4,6 +4,7 @@
 //   GMAIL_USER, GMAIL_APP_PASSWORD, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import nodemailer from "npm:nodemailer@6.10.0";
+import { withStaffEmails } from "../_shared/staffEmails.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -32,7 +33,7 @@ Deno.serve(async (req: Request) => {
     .json()
     .catch(() => ({ examId: null, evaluators: [], dueDate: null, reportCount: 0, appBaseUrl: null }));
   if (!examId) return json({ error: "examId is required" }, 400);
-  const list = Array.isArray(evaluators) ? evaluators : [];
+  const list = await withStaffEmails(db, Array.isArray(evaluators) ? evaluators : []);
 
   const { data: exam } = await db
     .from("exams")
@@ -46,7 +47,7 @@ Deno.serve(async (req: Request) => {
   const due = dueDate ? new Date(dueDate) : null;
 
   const results = await Promise.all(
-    list.map((e: { name?: string; email?: string; count?: number }) =>
+    list.map((e: { name?: string; email?: string | null; count?: number }) =>
       (async () => {
         if (!e.email) return { email: "", status: "skipped", error: "no email" };
         try {

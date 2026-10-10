@@ -19,7 +19,7 @@ const SECTIONS: Record<string, { title: string; detail: string }> = {
   overview: { title: "Today", detail: "Live sittings, connections, flags and what the next sittings still need." },
   results: { title: "Marking & results", detail: "Answers waiting to be marked, flags waiting for review, unreleased results, holds and the ERP export." },
   moodle: { title: "Moodle", detail: "Grades that failed to reach Moodle, students waiting for confirmation, and the retry job." },
-  exams: { title: "Exam names", detail: "The academic types teachers choose from, and exams still missing a type, subject code or subject name." },
+  exams: { title: "Exam names", detail: "The academic types teachers choose from, and exams still missing a type, semester, academic year, subject code or subject name." },
   accounts: { title: "Students & devices", detail: "Accounts without a role, registration photos and exam browser versions." },
   storage: { title: "Storage & data", detail: "Evidence storage per exam, what is due for deletion, holds and backups." },
   system: { title: "System", detail: "Health of the site and services, the latest exam browser and scheduled jobs." },

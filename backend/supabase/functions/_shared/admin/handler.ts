@@ -119,10 +119,12 @@ const DAY = 86_400_000;
 export type ExamRef = {
   id: string; name: string; batch: string | null; owner: string | null;
   academic_type: string | null; subject_code: string | null; subject_name: string | null;
+  semester: number | null; academic_year: string | null; attempt_label: string | null;
 };
 const examRef = (e: AdminExam, owner: string | null): ExamRef => ({
   id: e.id, name: e.name, batch: e.batch, owner,
   academic_type: e.academic_type ?? null, subject_code: e.subject_code ?? null, subject_name: e.subject_name ?? null,
+  semester: e.semester ?? null, academic_year: e.academic_year ?? null, attempt_label: e.attempt_label ?? null,
 });
 
 export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbes; actor: (req: Request) => Promise<Actor | null>; now: () => number }) {
@@ -230,7 +232,7 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
       flagsWaiting: waiting.slice(0, 100).map(flagView),
       flagsWaitingTotal: waiting.length,
       proctorAssignments: watched.map((id) => ({ exam: ref(byId.get(id)!), phase: phase.get(id), assignees: proctorsByExam.get(id) ?? [] })),
-      marking: [...marking.entries()].map(([id, m]) => ({ exam: examOf(id) ?? { id, name: id, batch: null, owner: null, academic_type: null, subject_code: null, subject_name: null }, ...m })).sort((a, b) => b.waiting - a.waiting),
+      marking: [...marking.entries()].map(([id, m]) => ({ exam: examOf(id) ?? { id, name: id, batch: null, owner: null, academic_type: null, subject_code: null, subject_name: null, semester: null, academic_year: null, attempt_label: null }, ...m })).sort((a, b) => b.waiting - a.waiting),
       unreleased: exams
         .filter((e) => unreleased(e, submittedByExam.get(e.id)?.submitted ?? 0, now))
         .map((e) => ({ exam: ref(e), phase: phase.get(e.id), timing: releaseTiming((e.settings ?? {}) as ReleaseSettings), ...(submittedByExam.get(e.id) ?? { submitted: 0, graded: 0 }) })),

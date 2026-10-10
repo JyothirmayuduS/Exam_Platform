@@ -94,7 +94,7 @@ export default function AdminExamNames({ data, notify, onChanged }: { data: Admi
         title="Exam names"
         count={missing.length}
         tone={missing.length ? "amber" : "ok"}
-        note="Exams created before academic types were added may be missing a type, subject code or subject name. The owner fills them in from the exam's paper builder."
+        note="Exams created before academic types were added may be missing a type, semester, academic year, subject code or subject name. The owner fills them in from the exam's paper builder."
         action={
           <label className="flex items-center gap-2 text-[12px] text-soft">
             <input type="checkbox" checked={missingOnly} onChange={(e) => setMissingOnly(e.target.checked)} className="accent-forest" />
@@ -102,13 +102,16 @@ export default function AdminExamNames({ data, notify, onChanged }: { data: Admi
           </label>
         }
       >
-        {shown.length === 0 ? <Empty>{missingOnly ? "Every exam has its academic type, subject code and subject name." : "No exams yet."}</Empty> : (
-          <Table head={["Exam", "Owner", "Academic type", "Subject code", "Subject name"]}>
+        {shown.length === 0 ? <Empty>{missingOnly ? "Every exam has its academic type, semester, academic year, subject code and subject name." : "No exams yet."}</Empty> : (
+          <Table head={["Exam", "Owner", "Academic type", "Semester", "Academic year", "Attempt", "Subject code", "Subject name"]}>
             {shown.map((e) => (
               <tr key={e.id}>
                 <Td><span className="block">{e.name}</span><span className="font-mono text-[10px] text-soft">{e.id}</span></Td>
                 <Td>{e.owner ?? "—"}</Td>
                 <Td className={e.academic_type ? "" : "text-amber"}>{e.academic_type ?? "Missing"}</Td>
+                <Td className={e.semester ? "tabular-nums" : "text-amber"}>{e.semester ?? "Missing"}</Td>
+                <Td className={e.academic_year ? "tabular-nums" : "text-amber"}>{e.academic_year ?? "Missing"}</Td>
+                <Td>{e.attempt_label ?? "Regular"}</Td>
                 <Td className={e.subject_code ? "font-mono" : "text-amber"}>{e.subject_code ?? "Missing"}</Td>
                 <Td className={e.subject_name ? "" : "text-amber"}>{e.subject_name ?? "Missing"}</Td>
               </tr>

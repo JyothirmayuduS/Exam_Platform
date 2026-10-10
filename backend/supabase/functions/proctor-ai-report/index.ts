@@ -114,7 +114,7 @@ Deno.serve(async (req: Request) => {
       return json({ error: "forbidden: only the exam's owner, a delegated teacher or an admin can generate this report" }, 403);
     }
     const { data: existing } = await admin.from("ai_reports").select("*").eq("attempt_id", attemptId).maybeSingle();
-    if (!existing) return json({ report: null, cached: false });
+    if (!existing || hiddenFromProctors(existing)) return json({ report: null, cached: false });
     if (reportHasMarks(existing)) return json({ error: "forbidden: this report contains marks or answers" }, 403);
     return json({ report: existing, cached: true });
   }
@@ -199,6 +199,14 @@ Deno.serve(async (req: Request) => {
 
   return json({ report: { ...report, id: attemptId }, cached: false });
 });
+
+// Proctors don't see reports created before this; the ai_reports policy matches.
+const PROCTOR_REPORTS_FROM = Date.parse("2026-10-10T00:00:00+05:30");
+
+function hiddenFromProctors(report: unknown): boolean {
+  const created = Date.parse(String((report as { created_at?: unknown } | null)?.created_at ?? ""));
+  return !Number.isFinite(created) || created < PROCTOR_REPORTS_FROM;
+}
 
 // Same keys as public.ai_report_has_marks, which guards proctors' table reads.
 const MARK_KEY = /^(score|scores|percentage|percent|passed|rank|marks?|grade|grades|total_marks|answers?|answer_key|correct_answers?|key)$/i;

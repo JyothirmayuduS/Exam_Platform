@@ -22,7 +22,7 @@ import {
 } from "@/shared/domain/exam";
 import { NegativeMarkingFields, SectionList, SectionTimingFields } from "@/features/teacher/components/exam-studio/AdvancedFields";
 import ExamNamingFields, { type NamingCheck } from "@/features/teacher/components/ExamNamingFields";
-import { composeExamName, conflictMessage, examTitle, hasNaming, namingProblem, normalizeNaming, type ExamNaming } from "@/shared/data/api/examNaming";
+import { composeExamName, conflictMessage, emptyNaming, examTitle, hasNaming, namingOf, namingProblem, namingRecord, normalizeNaming, type ExamNaming } from "@/shared/data/api/examNaming";
 import {
   examJoinLink,
   listExamsForTeacher,
@@ -68,6 +68,9 @@ const DEFAULTS: S = {
   ...NEGATIVE_DEFAULTS, sectionMinutes: {},
 };
 
+/** The naming form for an exam; an exam without a year starts on this one. */
+const startNaming = (e: ExamRecord): ExamNaming => ({ ...namingOf(e), academic_year: e.academic_year || emptyNaming().academic_year });
+
 const inputCls = "border border-line bg-paper px-3 py-2.5 text-[13px] text-ink outline-none placeholder:text-soft/60 focus:border-forest";
 
 export default function ExamStudio({
@@ -81,7 +84,7 @@ export default function ExamStudio({
   const [bank, setBank] = useState<(DBQuestion & { exam_name: string | null })[]>([]);
   const [enrolled, setEnrolled] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [naming, setNaming] = useState<ExamNaming>({ academic_type: "", subject_code: "", subject_name: "" });
+  const [naming, setNaming] = useState<ExamNaming>(() => emptyNaming());
   const [namingCheck, setNamingCheck] = useState<NamingCheck>({ conflict: null, checking: false });
   const [renaming, setRenaming] = useState(false);
   const [duration, setDuration] = useState(45);
@@ -107,7 +110,7 @@ export default function ExamStudio({
     setQuestions(qs);
     setBank(allQ);
     if (row) {
-      setNaming({ academic_type: row.academic_type ?? "", subject_code: row.subject_code ?? "", subject_name: row.subject_name ?? "" });
+      setNaming(startNaming(row));
       setRenaming(!hasNaming(row));
       setDuration(row.duration_minutes || 45);
       setS({ ...DEFAULTS, ...(row.settings ?? {}) } as S);
@@ -160,15 +163,15 @@ export default function ExamStudio({
   // until the teacher fills the fields in, and then all three are required.
   const namingChanged = !!exam && (() => {
     const v = normalizeNaming(naming);
-    return v.academic_type !== (exam.academic_type ?? "") || v.subject_code !== (exam.subject_code ?? "") || v.subject_name !== (exam.subject_name ?? "");
+    const was = normalizeNaming(startNaming(exam));
+    return (Object.keys(v) as (keyof ExamNaming)[]).some((k) => v[k] !== was[k]);
   })();
   const namedRecord = (): { rec?: Partial<ExamRecord>; error?: string } => {
     if (!namingChanged) return { rec: {} };
     const problem = namingProblem(naming);
     if (problem) return { error: problem };
     if (namingCheck.conflict) return { error: conflictMessage(namingCheck.conflict, naming) };
-    const v = normalizeNaming(naming);
-    return { rec: { ...v, name: composeExamName(v) } };
+    return { rec: namingRecord(naming) };
   };
   const currentName = namingChanged && !namingProblem(naming) ? composeExamName(naming) : exam ? examTitle(exam) : "";
 
@@ -241,10 +244,10 @@ export default function ExamStudio({
           {renaming && (
             <div className="mt-3 max-w-2xl border border-line bg-paper px-4 py-4">
               {!hasNaming(exam) && (
-                <p className="mb-3 text-[12px] text-soft">This test was created before tests had an academic type and subject code. Add them so it shows correctly in lists and the ERP export.</p>
+                <p className="mb-3 text-[12px] text-soft">This test was created before tests had an academic type, semester, academic year and subject code. Add them so it shows correctly in lists and the ERP export.</p>
               )}
               <ExamNamingFields value={naming} onChange={setNaming} examId={exam.id} onCheck={setNamingCheck} idPrefix="studio-naming" />
-              <p className="mt-3 text-[11px] text-soft">Saved with Save &amp; exit. The test is named “Academic type · Subject code · Subject name”.</p>
+              <p className="mt-3 text-[11px] text-soft">Saved with Save &amp; exit. The test is named “Academic type · Subject code · Subject name · Semester · Academic year”.</p>
             </div>
           )}
           <p className="mt-2 text-[12px] leading-none text-soft">

@@ -9,7 +9,7 @@ const code = ts.transpileModule(readFileSync(new URL("./index.ts", import.meta.u
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-const CLEAN = { attempt_id: "A1", exam_id: "EX-1", risk_score: 12, verdict: "clean", summary: { summary: "Calm.", incidents: [{ type: "gaze", note: "brief" }] } };
+const CLEAN = { attempt_id: "A1", exam_id: "EX-1", created_at: "2026-10-10T09:00:00Z", risk_score: 12, verdict: "clean", summary: { summary: "Calm.", incidents: [{ type: "gaze", note: "brief" }] } };
 const WITH_MARKS = { ...CLEAN, summary: { summary: "x", incidents: [{ type: "t", score: 40 }] } };
 
 let canManage: boolean;
@@ -72,6 +72,16 @@ describe("proctor-ai-report", () => {
   it("gives an assigned proctor a stored report without marks or answers", async () => {
     canInvigilate = true; stored = CLEAN;
     expect((await (await request({ attemptId: "A1" })).json()).report).toEqual(CLEAN);
+  });
+
+  it("hides reports created before 10 Oct 2026 from an assigned proctor", async () => {
+    canInvigilate = true;
+    stored = { ...CLEAN, created_at: "2026-10-09T18:29:59Z" };
+    expect(await (await request({ attemptId: "A1" })).json()).toEqual({ report: null, cached: false });
+    stored = { ...CLEAN, created_at: "2026-10-09T18:30:00Z" };
+    expect((await (await request({ attemptId: "A1" })).json()).report).toEqual(stored);
+    canManage = true; stored = { ...CLEAN, created_at: "2026-09-01T00:00:00Z" };
+    expect((await (await request({ attemptId: "A1" })).json()).report).toEqual(stored);
   });
 
   it("refuses an assigned proctor a report that holds marks", async () => {

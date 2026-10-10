@@ -1,12 +1,13 @@
 // Create new test — Mettl-style creation dialog in the Vignan theme.
-// Academic type, subject code and subject name, then language / purpose /
+// Academic type, semester, academic year, attempt, subject code and subject
+// name, then language / purpose /
 // timed-vs-deadline are collected up front, then a draft exam row is persisted
 // and the caller opens the paper builder.
 
 import { useEffect, useState } from "react";
 import { getSupabase } from "@/shared/data/supabase";
 import { examJoinLink, listStudentDirectoryFilters, publishExam, type ExamRecord } from "@/shared/data/examApi";
-import { composeExamName, conflictMessage, findExamNamingConflict, namingProblem, normalizeNaming, type ExamNaming } from "@/shared/data/api/examNaming";
+import { conflictMessage, emptyNaming, findExamNamingConflict, namingProblem, namingRecord, normalizeNaming, type ExamNaming } from "@/shared/data/api/examNaming";
 import { NumberField } from "@/shared/components/ui";
 import ExamNamingFields, { type NamingCheck } from "@/features/teacher/components/ExamNamingFields";
 
@@ -22,7 +23,7 @@ export default function CreateTestModal({
   onCreate: (exam: ExamRecord) => void;
   notify: (msg: string) => void;
 }) {
-  const [naming, setNaming] = useState<ExamNaming>({ academic_type: "", subject_code: "", subject_name: "" });
+  const [naming, setNaming] = useState<ExamNaming>(() => emptyNaming());
   const [check, setCheck] = useState<NamingCheck>({ conflict: null, checking: false });
   const [language, setLanguage] = useState("English");
   const [purpose, setPurpose] = useState(PURPOSES[0]);
@@ -60,8 +61,7 @@ export default function CreateTestModal({
     const id = `EXAM-${new Date().getFullYear()}-${rand}`;
     const record: ExamRecord = {
       id,
-      name: composeExamName(named),
-      ...named,
+      ...namingRecord(named),
       batch: batch.trim(),
       mode: "lockdown",
       status: "draft",

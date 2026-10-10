@@ -3,7 +3,10 @@
 import { examPhase, type ExamPhase } from "../exam/phase.ts";
 import { resultsReleased, type ExportExam } from "../results/rows.ts";
 
-export type AdminExam = ExportExam & { created_at: string | null; legacy_name?: string | null };
+export type AdminExam = ExportExam & {
+  created_at: string | null; legacy_name?: string | null;
+  semester?: number | null; academic_year?: string | null; attempt_label?: string | null;
+};
 
 export type AdminAttempt = {
   id: string;

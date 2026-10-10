@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FiCheck, FiPaperclip, FiAlertTriangle } from "react-icons/fi";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { loadExamBundle, updateAttemptScore, type DBQuestion, listAttemptViolations, getAttemptExamId, saveViolation, addGradingComment, listGradingComments, listFaculty, assignGradingDelegates, type ViolationEvent, type GradingComment } from "@/shared/data/examApi";
+import { loadExamBundle, updateAttemptScore, type DBQuestion, listAttemptViolations, getAttemptExamId, saveViolation, addGradingComment, listGradingComments, listFaculty, assignGradingDelegates, type ViolationEvent, type GradingComment, type FacultyMember } from "@/shared/data/examApi";
 import { type Attempt, type Flag } from "@/shared/services/rosterModel";
 import {
   gradeObjective,
@@ -228,7 +228,7 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
   const [sort, setSort] = useState("Submission time");
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
   const [showBulkDelegateModal, setShowBulkDelegateModal] = useState(false);
-  const [faculty, setFaculty] = useState<{ name: string; department: string | null; email: string | null }[]>([]);
+  const [faculty, setFaculty] = useState<FacultyMember[]>([]);
   const [delegateName, setDelegateName] = useState("");
   useEffect(() => {
     let active = true;
@@ -467,7 +467,6 @@ export default function TeacherEvaluation({ notify }: { notify: (message: string
               <label key={p.name} className="flex items-center gap-3 border border-line p-3 hover:bg-forest/5 cursor-pointer transition-colors">
                 <input type="radio" name="bulk_delegate" checked={delegateName === p.name} onChange={() => setDelegateName(p.name)} className="accent-forest w-4 h-4" />
                 <span className="font-mono text-[11px] uppercase tracking-wider text-ink">{p.name}</span>
-                {p.department && <span className="text-[10px] text-ink-soft">{p.department}</span>}
               </label>
             ))}
             {faculty.length === 0 && <p className="text-[12px] text-ink-soft">No other faculty found — add teachers to the platform first.</p>}
