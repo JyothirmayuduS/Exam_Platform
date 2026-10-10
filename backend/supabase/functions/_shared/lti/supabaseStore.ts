@@ -280,7 +280,10 @@ export function supabaseLtiStore(db: Db): LtiStore {
       const { data: t } = await db.from("teachers").select("role").eq("auth_id", teacherAuthId).maybeSingle();
       if (t?.role !== "teacher") return false;
       const { data: e } = await db.from("exams").select("created_by").eq("id", examId).maybeSingle();
-      return !!e && (e.created_by === null || String(e.created_by) === teacherAuthId);
+      if (!e) return false;
+      if (e.created_by !== null) return String(e.created_by) === teacherAuthId;
+      const { data: a } = await db.from("staff_admins").select("auth_id").eq("auth_id", teacherAuthId).maybeSingle();
+      return !!a;
     },
 
     async createTicket(hash, t) {

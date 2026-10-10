@@ -53,7 +53,7 @@ const text = (v: unknown) => (typeof v === "string" ? v.trim() : typeof v === "n
 const slug = (s: string) => s.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "results";
 
 export function canExport(actor: Actor, exam: ExportExam): boolean {
-  return actor.isAdmin || exam.created_by === null || exam.created_by === actor.authId;
+  return actor.isAdmin || exam.created_by === actor.authId;
 }
 
 function base64(bytes: Uint8Array): string {

@@ -10,6 +10,9 @@ create role anon nologin; create role authenticated nologin; create role service
 create schema auth;
 create table auth.users (id uuid primary key, email text, created_at timestamptz default now(), last_sign_in_at timestamptz, raw_app_meta_data jsonb default '{}');
 create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+create function auth.role() returns text language sql stable as $$ select nullif(current_setting('request.jwt.claim.role', true), '') $$;
+create schema storage;
+create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text, metadata jsonb);
 
 create table public.teachers (id uuid primary key default gen_random_uuid(), auth_id uuid, role text);
 create table public.staff_admins (auth_id uuid primary key);
@@ -29,6 +32,13 @@ create table public.lti_grade_targets (link_id uuid, student_id uuid, exam_id te
   last_score numeric, last_posted_at timestamptz, last_error text, pending_score numeric, post_attempts int default 0,
   next_attempt_at timestamptz, claim_token uuid, claimed_until timestamptz, primary key (link_id, student_id));
 create table public.audit_logs (id bigserial primary key, actor_id uuid, actor_role text, action text, target_type text, target_id text, meta jsonb, created_at timestamptz default now());
+create table public.proctor_assignments (id uuid primary key default gen_random_uuid(), exam_id text, assignee_id uuid, assignee_name text not null default 'x', assignee_role text not null default 'proctor');
+create table public.violation_events (id uuid primary key default gen_random_uuid(), exam_id text, student_id uuid, attempt_id uuid, severity text, violation_type text);
+create table public.proctor_sessions (id uuid primary key default gen_random_uuid(), attempt_id uuid, livekit_room text);
+create table public.proctor_messages (id uuid primary key default gen_random_uuid(), exam_id text, body text);
+create table public.ai_reports (attempt_id uuid primary key, exam_id text, student_id uuid, summary text);
+create table public.mobile_upload_sessions (id uuid primary key default gen_random_uuid(), attempt_id uuid, student_id uuid, exam_id text);
+create function public.attempt_deadline(p_attempt uuid) returns timestamptz language sql stable as $$ select null::timestamptz $$;
 
 create function public.auth_is_staff() returns boolean language sql stable security definer set search_path = public as
   $$ select exists (select 1 from public.teachers where auth_id = auth.uid()) $$;
@@ -44,7 +54,19 @@ create function public.current_student_id() returns uuid language sql stable sec
 alter table public.attempts enable row level security;
 alter table public.result_holds enable row level security;
 alter table public.student_photos enable row level security;
-grant usage on schema public to anon, authenticated;
+alter table public.exams enable row level security;
+alter table public.proctor_assignments enable row level security;
+alter table public.violation_events enable row level security;
+alter table public.proctor_sessions enable row level security;
+alter table public.proctor_messages enable row level security;
+alter table public.ai_reports enable row level security;
+alter table public.mobile_upload_sessions enable row level security;
+alter table storage.objects enable row level security;
+grant usage on schema public, storage to anon, authenticated;
+grant select, insert, update, delete on public.exams, public.proctor_assignments, public.violation_events, public.proctor_sessions,
+  public.proctor_messages, public.ai_reports, public.mobile_upload_sessions, storage.objects to authenticated;
+grant delete on public.attempts to authenticated;
+create policy "ep exams staff read" on public.exams for select to authenticated using (public.auth_is_staff());
 grant select, insert, update on public.attempts to anon, authenticated;
 grant select on public.result_holds, public.student_photos to authenticated;
 create policy "ep attempts student read" on public.attempts for select to authenticated using (student_id = public.current_student_id());
@@ -60,13 +82,13 @@ create policy "student photos staff read" on public.student_photos for select to
 /** Run `fn` as a signed-in user (`authId`), as anon (`null`), or as the owner (`undefined`). */
 export function actAs(db: PGlite) {
   return async <T>(authId: string | null | undefined, run: () => Promise<T>): Promise<T> => {
-    await db.exec(`set request.jwt.claim.sub = '${authId ?? ""}'`);
+    await db.exec(`set request.jwt.claim.sub = '${authId ?? ""}'; set request.jwt.claim.role = '${authId ? "authenticated" : authId === null ? "anon" : ""}'`);
     if (authId) await db.exec("set role authenticated");
     else if (authId === null) await db.exec("set role anon");
     try {
       return await run();
     } finally {
-      await db.exec("reset role; reset request.jwt.claim.sub");
+      await db.exec("reset role; reset request.jwt.claim.sub; reset request.jwt.claim.role");
     }
   };
 }
