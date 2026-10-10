@@ -189,7 +189,7 @@ export type FolderCount = {
 };
 
 /** Adds up one batch of objects listed under a single exam folder. Keys are
- *  <folder>/<student folder>/<kind>/<file>; R2 deletes each `retentionDays` after upload. */
+ *  <folder>/<student folder>/<kind>/<file>; the retention job deletes each `retentionDays` after upload, unless held. */
 export function countObjects(objects: StorageObject[], retentionDays: number, now: number, soonDays = 7): FolderCount {
   const retentionMs = retentionDays * 86_400_000;
   const soon = now + soonDays * 86_400_000;

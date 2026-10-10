@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { loadAdminStorage, loadAdminSystem, recountStorageFolder, type AdminOverview, type AdminStorage, type Backups, type BackupRun } from "@/shared/data/api/admin";
 import { Button } from "@/features/teacher/components/PageChrome";
-import { Empty, NotTracked, Panel, Stat, Table, Td, ago, bytes, examLabel, studentLabel, when } from "@/features/admin/components/AdminUI";
+import { Empty, NotTracked, Panel, Stat, Table, Td, ago, bytes, examLabel, periodLabel, studentLabel, when } from "@/features/admin/components/AdminUI";
+import AdminRetention from "@/features/admin/components/AdminRetention";
 
 const backupStale = (run: BackupRun) => Date.now() - Date.parse(run.finished_at ?? run.started_at) > 2 * 86_400_000;
 
@@ -18,7 +19,7 @@ function BackupLine({ label, run }: { label: string; run: BackupRun }) {
   );
 }
 
-export default function AdminData({ data }: { data: AdminOverview }) {
+export default function AdminData({ data, notify }: { data: AdminOverview; notify: (msg: string) => void }) {
   const [storage, setStorage] = useState<AdminStorage | null>(null);
   const [backups, setBackups] = useState<Backups | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,18 +50,18 @@ export default function AdminData({ data }: { data: AdminOverview }) {
 
   const r2 = storage?.r2;
   const bucketBytes = storage?.buckets.reduce((t, b) => t + b.bytes, 0) ?? 0;
-  const due = r2?.exams.filter((g) => g.dueSoonObjects > 0) ?? [];
   const partial = !!r2 && r2.uncounted.length > 0;
   const coverage = r2 ? (partial ? ` · ${r2.countedFolders} of ${r2.folders} folders counted` : "") : "";
 
   return (
     <>
+      <AdminRetention data={data} notify={notify} />
+
       {error && <p role="alert" className="border-l-2 border-alert bg-alert/5 px-4 py-3 text-[13px] text-alert">{error}</p>}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <Stat label="Evidence storage (R2)" value={r2 ? bytes(r2.totalBytes) : "…"} detail={r2 ? `${r2.totalObjects.toLocaleString("en-IN")} files${coverage}` : undefined} tone={partial ? "text-amber" : ""} />
         <Stat label="File storage (Supabase)" value={storage ? bytes(bucketBytes) : "…"} detail={storage ? `${storage.buckets.length} bucket(s)` : undefined} />
         <Stat label="Database" value={storage ? bytes(storage.databaseBytes) : "…"} />
-        <Stat label="Deleted within 7 days" value={r2 ? bytes(r2.dueSoonBytes) : "…"} detail={r2 ? `${r2.dueSoonObjects} files, ${r2.retentionDays}-day retention` : undefined} tone={r2?.dueSoonObjects ? "text-amber" : ""} />
       </div>
 
       <Panel
@@ -68,7 +69,7 @@ export default function AdminData({ data }: { data: AdminOverview }) {
         count={r2?.exams.length}
         tone={partial ? "amber" : undefined}
         note={r2 ? <>
-          Recordings, snapshots, reports and phone uploads in R2, deleted {r2.retentionDays} days after upload by the bucket's retention rule.
+          Recordings, snapshots, reports and phone uploads in R2, kept for {periodLabel(r2.retentionDays)} after upload; the retention job then deletes them unless they are held.
           Each exam folder is counted on request and the figures are kept, so this page never lists the whole bucket.
           {partial && <> <strong>{r2.uncounted.length} folder(s) have not been counted yet, so the totals leave them out.</strong></>}
         </> : undefined}
@@ -87,7 +88,7 @@ export default function AdminData({ data }: { data: AdminOverview }) {
         {!r2 ? <Empty>{loading ? "Loading…" : "Not loaded."}</Empty>
           : !r2.configured ? <Empty>R2 isn't configured for the server functions.</Empty>
           : r2.exams.length === 0 ? <Empty>The evidence bucket is empty.</Empty> : (
-            <Table head={["Folder", "Exam", "Size", "Files", "Oldest file", "Next deletion", "Counted", ""]}>
+            <Table head={["Folder", "Exam", "Size", "Files", "Oldest file", "Oldest file expires", "Counted", ""]}>
               {r2.exams.map((g) => (
                 <tr key={g.folder}>
                   <Td className="font-mono text-[11px]">{g.folder}</Td>
@@ -109,27 +110,15 @@ export default function AdminData({ data }: { data: AdminOverview }) {
         {r2?.error && <p className="mt-2 text-[11px] text-alert">{r2.error}</p>}
       </Panel>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Panel title="Due for deletion this week" count={due.length} tone={due.length ? "amber" : "ok"} note="Download anything you need to keep from the teacher's Evidence page before then.">
-          {!r2 ? <Empty>…</Empty> : due.length === 0 ? <Empty>Nothing is due for deletion in the next 7 days.</Empty> : (
-            <Table head={["Exam", "Files", "Size", "First deletion"]}>
-              {due.map((g) => (
-                <tr key={g.folder}><Td>{g.examName ?? g.folder}</Td><Td className="tabular-nums">{g.dueSoonObjects}</Td><Td className="tabular-nums">{bytes(g.dueSoonBytes)}</Td><Td className="text-soft">{when(g.nextDeletion)}</Td></tr>
-              ))}
-            </Table>
-          )}
-        </Panel>
-
-        <Panel title="Holds" count={data.holds.length} note="Results withheld for malpractice review. Holds don't stop evidence from being deleted after the retention period.">
+      <div className="grid gap-6 xl:grid-cols-3">
+        <Panel title="Malpractice holds" count={data.holds.length} note="Results withheld for malpractice review. Their evidence and results are never deleted while the hold stands.">
           {data.holds.length === 0 ? <Empty>No results are on hold.</Empty> : (
             <Table head={["Student", "Exam", "Since"]}>
               {data.holds.map((h) => <tr key={h.attemptId}><Td>{studentLabel(h.student)}</Td><Td>{examLabel(h.exam)}</Td><Td className="text-soft">{when(h.heldAt)}</Td></tr>)}
             </Table>
           )}
         </Panel>
-      </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
         <Panel title="Supabase buckets" count={storage?.buckets.length}>
           {!storage ? <Empty>…</Empty> : storage.buckets.length === 0 ? <Empty>No files.</Empty> : (
             <Table head={["Bucket", "Files", "Size"]}>

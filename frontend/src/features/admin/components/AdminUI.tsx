@@ -113,6 +113,8 @@ export const Td = ({ children, className = "" }: { children: ReactNode; classNam
 export const examLabel = (e: ExamRef | null | undefined) => (e ? examTitle(e) : "Deleted exam");
 export const studentLabel = (s: StudentRef | null | undefined) => (s ? [s.roll, s.full_name].filter(Boolean).join(" · ") || "Unknown student" : "—");
 
+export const periodLabel = (days: number) => (days % 365 === 0 ? `${days} days (${days / 365} year${days === 365 ? "" : "s"})` : `${days} days`);
+
 export function bytes(n: number | null | undefined): string {
   const v = Number(n ?? 0);
   if (v < 1024) return `${v} B`;

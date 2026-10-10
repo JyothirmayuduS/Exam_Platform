@@ -466,8 +466,10 @@ Tuning without code edits: edit `src/features/proctoring/domain/config.ts` (e.g.
 `PHONE_MIN_CONF`, lengthen `TRACKING.CONFIRM_WINDOW_MS` for fewer false
 positives, or adjust `RISK.WEIGHTS`).
 
-- **Recording retention**: screenshots upload to R2 via `store-artifact`. Define
-  retention, access control, and a review UI for saved camera/screen artifacts.
+- **Recording retention**: screenshots upload to R2 via `store-artifact`. The
+  `evidence-retention` job deletes evidence and results after the site retention
+  period (default 5 years) and never deletes held items. Set it up and remove any
+  R2 lifecycle rule as described in `docs/retention.md`.
 - **Scale/observability**: add error reporting, LiveKit egress/recording if you
   need durable video, and load-test realtime with a full cohort.
 - **Legal**: consent screens, data-retention policy, and accessibility review.

@@ -9,6 +9,9 @@ import {
   type StorageObject,
 } from "../_shared/admin/model.ts";
 import { listQuery, parseListPage } from "../_shared/admin/r2List.ts";
+import type { RetentionDeps } from "../_shared/admin/handler.ts";
+import type { EvidenceStore } from "../_shared/retention/job.ts";
+import type { LegalHold, RetentionAdminDb, RunRow } from "../_shared/retention/supabaseDb.ts";
 
 const NOW = Date.parse("2026-10-10T06:00:00Z");
 const ago = (s: number) => new Date(NOW - s * 1000).toISOString();
@@ -257,6 +260,7 @@ function makeStore(over: Partial<AdminStore> = {}) {
   const done = exam({ id: "EX-DONE", name: "Finished", scheduled_at: ago(86400), duration_minutes: 60 });
   const store: AdminStore = {
     isAdmin: async (id) => id === "admin-1",
+    retentionDays: async () => 1825,
     exams: async () => [live, soon, done],
     enrollments: async () => [{ exam_id: "EX-LIVE", student_id: "s1" }, { exam_id: "EX-LIVE", student_id: "s2" }, { exam_id: "EX-SOON", student_id: "s1" }],
     attempts: async () => [
@@ -348,7 +352,6 @@ function makeProbes(objects: StorageObject[] = [{ key: "Live-exam/R-s1/screensho
       listed.push({ folder, pages });
       return { objects: out, next: from < mine.length ? String(from) : null };
     },
-    retentionDays: () => 90,
     ...over,
   };
   return { probes, listed };
@@ -402,7 +405,7 @@ describe("admin-dashboard endpoint", () => {
       { key: "Finished/R-s2/report/r.pdf", size: 70, lastModified: ago(60) },
     ]);
     const { body } = await call(store, { op: "storage" }, "admin-1", probes);
-    expect(body.r2).toMatchObject({ configured: true, totalBytes: 500, totalObjects: 1, retentionDays: 90, folders: 2, countedFolders: 1, uncounted: ["Finished"] });
+    expect(body.r2).toMatchObject({ configured: true, totalBytes: 500, totalObjects: 1, retentionDays: 1825, folders: 2, countedFolders: 1, uncounted: ["Finished"] });
     expect(body.r2.exams.find((e: { folder: string }) => e.folder === "Live-exam")).toMatchObject({ examIds: ["EX-LIVE"], countedAt: ago(600) });
     expect(body.buckets[0].bucket).toBe("exam-records");
   });
@@ -535,5 +538,156 @@ describe("admin-dashboard endpoint", () => {
     const { store, audits } = makeStore({ resendGrades: async () => { throw new Error("db down"); } });
     expect((await call(store, { op: "resend_moodle" })).status).toBe(500);
     expect(audits).toHaveLength(0);
+  });
+});
+
+/** retention_settings, legal_holds and retention_runs in memory; one old evidence file in R2. */
+function makeRetention(opts: { lifecycleDays?: number | null } = {}) {
+  const state = { days: 1825, cursor: null as string | null };
+  const runs: RunRow[] = [];
+  const holds: (LegalHold & { lifted: boolean })[] = [];
+  const calls = { setDays: [] as number[], holds: [] as unknown[], batches: [] as { kind: string; dry: boolean }[] };
+  const files = new Map([["Finished/R-s2/screenshots/1.jpg", new Date(NOW - 2000 * 86_400_000).toISOString()]]);
+  const store: EvidenceStore = {
+    name: "r2",
+    folders: async (prefix) => ({ items: prefix ? ["R-s2"] : files.size ? ["Finished"] : [], next: null }),
+    objects: async () => ({ items: [...files].map(([key, uploadedAt]) => ({ key, uploadedAt })), next: null }),
+    remove: async (keys) => { for (const k of keys) files.delete(k); return { failed: [] }; },
+  };
+  const db: RetentionAdminDb = {
+    retentionDays: async () => state.days,
+    cursor: async () => state.cursor,
+    setCursor: async (c) => { state.cursor = c; },
+    folderStatus: async (_f, students) => new Map(students.map((s) => [s, null])),
+    dbBatch: async (kind, _c, _l, dry) => { calls.batches.push({ kind, dry }); return { due: kind === "attempts" ? 2 : 0, skipped: 1, deleted: dry ? 0 : kind === "attempts" ? 2 : 0, more: false }; },
+    startRun: async (r) => {
+      runs.unshift({ ...r, id: runs.length + 1, started_at: new Date(NOW).toISOString(), finished_at: null, status: "running", complete: false, deleted: 0, skipped: 0, failed: 0, due_week: null, detail: null });
+      return runs.length;
+    },
+    finishRun: async (id, patch) => { Object.assign(runs.find((r) => r.id === id)!, patch); },
+    settings: async () => ({ retention_days: state.days, updated_at: null, updated_by: "admin-1" }),
+    setRetentionDays: async (days) => { calls.setDays.push(days); state.days = days; },
+    setLegalHold: async (type, target, on, reason, actor) => {
+      calls.holds.push({ type, target, on, reason, actor });
+      if (target === "EX-NOPE") throw Object.assign(new Error("target_not_found"), { code: "P0002" });
+      const open = holds.find((h) => h.target_type === type && h.target_id === target && !h.lifted);
+      if (on && !open) holds.push({ id: `h${holds.length + 1}`, target_type: type, target_id: target, reason, placed_by: actor, placed_at: new Date(NOW).toISOString(), lifted: false });
+      if (!on && open) open.lifted = true;
+      return on ? !open : !!open;
+    },
+    legalHolds: async () => holds.filter((h) => !h.lifted).map(({ lifted: _l, ...h }) => h),
+    runs: async (limit) => runs.slice(0, limit),
+    run: async (id) => runs.find((r) => r.id === id) ?? null,
+  };
+  const days = opts.lifecycleDays === undefined ? 90 : opts.lifecycleDays;
+  const retention: RetentionDeps = {
+    db, stores: () => [store],
+    lifecycle: async () => ({ configured: true, error: null, rules: days === null ? [] : [{ id: "exam-artifacts-retention", enabled: true, prefix: "", days }] }),
+  };
+  return { retention, state, runs, holds, calls, files };
+}
+
+const callR = async (store: AdminStore, retention: RetentionDeps, body: unknown, who: string | null = "admin-1", now = NOW) => {
+  const handler = createAdminHandler({ store, probes, actor: async () => (who ? { authId: who } : null), now: () => now, retention });
+  const res = await handler(new Request("https://x/admin-dashboard", { method: "POST", body: JSON.stringify(body) }));
+  return { status: res.status, body: await res.json() };
+};
+
+describe("admin-dashboard retention", () => {
+  it("only admins can see retention, change the period, hold, or run the job", async () => {
+    const { store, audits } = makeStore();
+    const r = makeRetention();
+    for (const body of [
+      { op: "retention" }, { op: "set_retention", days: 400 }, { op: "legal_hold", targetType: "exam", targetId: "EX-DONE", on: true, reason: "x" },
+      { op: "retention_run", dryRun: true }, { op: "retention_run", dryRun: false, confirmRunId: 1 },
+    ]) {
+      expect((await callR(store, r.retention, body, "teacher-A")).status).toBe(403);
+      expect((await callR(store, r.retention, body, null)).status).toBe(401);
+    }
+    expect(r.calls).toEqual({ setDays: [], holds: [], batches: [] });
+    expect(r.runs).toEqual([]);
+    expect(r.files.size).toBe(1);
+    expect(audits).toEqual([]);
+  });
+
+  it("shows the period, what is due this week, runs, holds and an R2 rule that would delete first", async () => {
+    const S3 = "00000000-0000-4000-8000-000000000003";
+    const { store } = makeStore({ allStudents: async () => [{ id: S3, roll: "21BQ3", full_name: "C" }] });
+    const r = makeRetention();
+    await callR(store, r.retention, { op: "legal_hold", targetType: "exam", targetId: "EX-DONE", on: true, reason: "Court order" });
+    await callR(store, r.retention, { op: "legal_hold", targetType: "student", roll: "21bq3", on: true, reason: "Inquiry" });
+    await callR(store, r.retention, { op: "retention_run", dryRun: true });
+    const { status, body } = await callR(store, r.retention, { op: "retention" });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      days: 1825, min: 30, max: 3650, updatedBy: "Admin",
+      dueWeek: { database: { violation_events: 0, attempts: 2, audit_logs: 0 }, files: 1, filesRunId: 1 },
+      lifecycle: { configured: true, conflicts: [{ id: "exam-artifacts-retention", days: 90 }] },
+    });
+    expect(body.runs).toHaveLength(1);
+    expect(body.runs[0]).toMatchObject({ id: 1, dryRun: true, trigger: "admin", by: "Admin", status: "succeeded", deleted: 3, skipped: 3 });
+    expect(body.holds.map((h: { targetType: string; exam: { name: string } | null; student: { roll: string } | null; reason: string }) =>
+      [h.targetType, h.exam?.name ?? h.student?.roll, h.reason])).toEqual([["exam", "Finished", "Court order"], ["student", `R-${S3}`, "Inquiry"]]);
+    expect((await callR(store, makeRetention({ lifecycleDays: null }).retention, { op: "retention" })).body.lifecycle.conflicts).toEqual([]);
+    expect((await callR(store, makeRetention({ lifecycleDays: 2000 }).retention, { op: "retention" })).body.lifecycle.conflicts).toEqual([]);
+  });
+
+  it("changes the period only within 30 to 3650 whole days", async () => {
+    const { store } = makeStore();
+    const r = makeRetention();
+    for (const days of [29, 3651, 365.5, "x", null]) {
+      expect((await callR(store, r.retention, { op: "set_retention", days })).body).toMatchObject({ error: "bad_retention_days" });
+    }
+    expect((await callR(store, r.retention, { op: "set_retention", days: 2555 })).body).toEqual({ ok: true, days: 2555 });
+    expect(r.calls.setDays).toEqual([2555]);
+  });
+
+  it("places and lifts legal holds, with a reason to place one", async () => {
+    const { store } = makeStore();
+    const r = makeRetention();
+    expect((await callR(store, r.retention, { op: "legal_hold", targetType: "exam", targetId: "EX-DONE", on: true })).body.error).toBe("reason_required");
+    expect((await callR(store, r.retention, { op: "legal_hold", targetType: "course", targetId: "EX-DONE", on: true, reason: "x" })).status).toBe(400);
+    expect((await callR(store, r.retention, { op: "legal_hold", targetType: "student", targetId: "21BQ1", on: true, reason: "x" })).status).toBe(400);
+    expect((await callR(store, r.retention, { op: "legal_hold", targetType: "student", roll: "NOBODY", on: true, reason: "x" })).status).toBe(404);
+    expect((await callR(store, r.retention, { op: "legal_hold", targetType: "exam", targetId: "EX-NOPE", on: true, reason: "x" })).status).toBe(404);
+    expect((await callR(store, r.retention, { op: "legal_hold", targetType: "exam", targetId: "EX-DONE", on: true, reason: "x" })).body).toEqual({ ok: true, changed: true });
+    expect((await callR(store, r.retention, { op: "legal_hold", targetType: "exam", targetId: "EX-DONE", on: false })).body).toEqual({ ok: true, changed: true });
+    expect((await callR(store, r.retention, { op: "legal_hold", targetType: "exam", targetId: "EX-DONE", on: false })).body).toEqual({ ok: true, changed: false });
+    expect(r.calls.holds.at(-1)).toEqual({ type: "exam", target: "EX-DONE", on: false, reason: null, actor: "admin-1" });
+  });
+
+  it("a dry run deletes nothing; a real run needs the caller's own recent dry run, and is audited", async () => {
+    const { store, audits } = makeStore({ isAdmin: async (id) => id === "admin-1" || id === "admin-2" });
+    const r = makeRetention();
+    expect((await callR(store, r.retention, { op: "retention_run", dryRun: false })).body.error).toBe("dry_run_required");
+
+    const dry = await callR(store, r.retention, { op: "retention_run", dryRun: true });
+    expect(dry.body.run).toMatchObject({ id: 1, dryRun: true, status: "succeeded", deleted: 3, skipped: 3 });
+    expect(r.files.size).toBe(1);
+    expect(r.calls.batches.every((b) => b.dry)).toBe(true);
+    expect(audits).toEqual([]);
+
+    expect((await callR(store, r.retention, { op: "retention_run", dryRun: false, confirmRunId: 1 }, "admin-2")).body.error).toBe("dry_run_required");
+    expect((await callR(store, r.retention, { op: "retention_run", dryRun: false, confirmRunId: 1 }, "admin-1", NOW + 31 * 60_000)).body.error).toBe("dry_run_required");
+    r.state.days = 2000;
+    expect((await callR(store, r.retention, { op: "retention_run", dryRun: false, confirmRunId: 1 })).body.error).toBe("dry_run_required");
+    r.state.days = 1825;
+    expect(r.files.size).toBe(1);
+
+    const real = await callR(store, r.retention, { op: "retention_run", dryRun: false, confirmRunId: 1 });
+    expect(real.body.run).toMatchObject({ id: 2, dryRun: false, status: "succeeded", deleted: 3 });
+    expect(r.files.size).toBe(0);
+    expect(audits).toEqual([{ actorId: "admin-1", action: "admin.retention_run", targetType: "retention", targetId: "2",
+      meta: { confirmed_dry_run: 1, status: "succeeded", complete: true, deleted: 3, skipped: 3, failed: 0 } }]);
+    expect((await callR(store, r.retention, { op: "retention_run", dryRun: false, confirmRunId: 2 })).body.error).toBe("dry_run_required");
+  });
+
+  it("does not start a run while another is running", async () => {
+    const { store } = makeStore();
+    const r = makeRetention();
+    await r.retention.db.startRun({ dry_run: false, trigger: "schedule", requested_by: null, retention_days: 1825, cutoff: "" });
+    expect((await callR(store, r.retention, { op: "retention_run", dryRun: true })).body.error).toBe("run_in_progress");
+    expect((await callR(store, r.retention, { op: "retention" }, "admin-1", NOW + 20 * 60_000)).body.runs[0].status).toBe("interrupted");
+    expect((await callR(store, r.retention, { op: "retention_run", dryRun: true }, "admin-1", NOW + 20 * 60_000)).status).toBe(200);
   });
 });

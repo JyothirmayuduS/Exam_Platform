@@ -28,6 +28,10 @@ export function supabaseAdminStore(db: Db): AdminStore {
       return !!a;
     },
 
+    async retentionDays() {
+      return Number(must(await db.rpc("retention_days")));
+    },
+
     async exams() {
       const rows = await readAll(() => db.from("exams").select(EXAM_COLS)
         .order("scheduled_at", { ascending: false, nullsFirst: false }).order("id"));

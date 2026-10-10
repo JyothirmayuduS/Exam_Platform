@@ -126,8 +126,10 @@ npx playwright test # e2e (needs a running dev server + backend)
 - **Recording retention:** per-second snapshots + recordings upload to R2 under
   `<ExamName>/<studentId>/{screenshots,recordings}/` (e.g. `Test-3/21VGN0314/…`
   — the slug of the exam name, NOT the opaque id; legacy `EXAM-2026-XXX/…`
-  folders stay readable) via the `store-artifact` function; define a lifecycle
-  policy in the R2 bucket console per the institution's data-retention rules.
+  folders stay readable) via the `store-artifact` function. Evidence and results
+  are kept for the site retention period (5 years by default, set by admins) and
+  deleted only by the `evidence-retention` job, which skips anything held. Do not
+  add an R2 lifecycle rule that expires evidence; see `docs/retention.md`.
   Deploy `store-artifact` with the R2 secrets and configure the bucket CORS
   (see SETUP.md §4a) or recordings silently fall back to Supabase Storage.
 - **Consent:** the candidate accepts an explicit monitoring notice before the
