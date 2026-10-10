@@ -13,7 +13,7 @@
 -- ── Column-level read access on attempts ────────────────────────────────────
 -- Revoking the table-level grant also drops every column grant; the safe
 -- columns are granted back. A new column is not readable until added here.
-revoke select on public.attempts from anon, authenticated;
+revoke select on public.attempts from public, anon, authenticated;
 grant select (
   id, exam_id, student_id, state, answered, total, minutes_used,
   started_at, submitted_at, auto_saved_at, answers, status, total_time_spent_seconds,
