@@ -22,6 +22,7 @@ export type ExportExam = {
   academic_type?: string | null;
   subject_code?: string | null;
   subject_name?: string | null;
+  semester?: number | null;
 };
 export type ExportStudent = { id: string; roll: string; full_name: string | null };
 export type ExportAttempt = {
@@ -65,13 +66,13 @@ export type PassRule = { type: "percent" | "marks"; value: number };
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "");
 
-/** ERP details of the exam: the subject code is the course code; exams named
- *  before subject codes existed fall back to the course code set in Test options. */
+/** ERP details of the exam: the subject code is the course code and the exam's
+ *  semester is the semester; exams without them fall back to Test options. */
 export function examErpFields(exam: ExportExam): { programme: string; semester: string; course_code: string; academic_type: string; subject_name: string } {
   const s = exam.settings ?? {};
   return {
     programme: text(s.programme),
-    semester: text(s.semester),
+    semester: text(exam.semester) || text(s.semester),
     course_code: text(exam.subject_code) || text(s.courseCode),
     academic_type: text(exam.academic_type),
     subject_name: text(exam.subject_name),

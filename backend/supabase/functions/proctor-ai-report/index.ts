@@ -201,7 +201,7 @@ Deno.serve(async (req: Request) => {
 });
 
 // Proctors don't see reports created before this; the ai_reports policy matches.
-const PROCTOR_REPORTS_FROM = Date.parse("2026-10-10T00:00:00+05:30");
+const PROCTOR_REPORTS_FROM = Date.parse("2026-10-10T13:30:00+05:30");
 
 function hiddenFromProctors(report: unknown): boolean {
   const created = Date.parse(String((report as { created_at?: unknown } | null)?.created_at ?? ""));

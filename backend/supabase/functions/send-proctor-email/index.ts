@@ -1,9 +1,11 @@
 // Supabase Edge Function: notify proctors when they are assigned to monitor an exam.
 // Mirrors send-exam-email (Gmail SMTP via nodemailer). Env needed:
-//   GMAIL_USER, GMAIL_APP_PASSWORD, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+//   GMAIL_USER, GMAIL_APP_PASSWORD, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
+// Request: { examId, proctors: [{ id }] } — only staff assigned to the exam are emailed.
+// Response: { sent, skipped, failed, refused, results: [{ id, status }] }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import nodemailer from "npm:nodemailer@6.10.0";
-import { withStaffEmails } from "../_shared/staffEmails.ts";
+import { emailSummary, gateAssignmentEmail, type Outcome } from "../_shared/assignmentEmail.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -24,13 +26,18 @@ Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRole) return json({ error: "Missing Supabase secrets" }, 500);
+  if (!supabaseUrl || !anonKey || !serviceRole) return json({ error: "Missing Supabase secrets" }, 500);
 
-  const db = createClient(supabaseUrl, serviceRole);
+  const db = createClient(supabaseUrl, serviceRole, { auth: { autoRefreshToken: false, persistSession: false } });
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const user = authHeader
+    ? createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } }, auth: { autoRefreshToken: false, persistSession: false } })
+    : null;
   const { examId, proctors = [], appBaseUrl: reqBase } = await req.json().catch(() => ({ examId: null, proctors: [], appBaseUrl: null }));
-  if (!examId) return json({ error: "examId is required" }, 400);
-  const list = await withStaffEmails(db, Array.isArray(proctors) ? proctors : []);
+  const gate = await gateAssignmentEmail({ user, admin: db, kind: "proctor", examId, requested: proctors });
+  if (!gate.ok) return json({ error: gate.error }, gate.status);
 
   const { data: exam } = await db
     .from("exams")
@@ -43,10 +50,9 @@ Deno.serve(async (req: Request) => {
   const monitorLink = `${baseUrl}/proctor?exam=${encodeURIComponent(exam.id)}`;
   const dateObj = exam.scheduled_at ? new Date(exam.scheduled_at) : null;
 
-  const results = await Promise.all(
-    list.map((p: { name?: string; email?: string | null }) =>
-      (async () => {
-        if (!p.email) return { email: "", status: "skipped", error: "no email" };
+  const sends = await Promise.all(
+    gate.recipients.map((p) =>
+      (async (): Promise<Outcome> => {
         try {
           await transporter.sendMail({
             from: `Vignan Exam Platform <${Deno.env.get("GMAIL_USER")}>`,
@@ -70,19 +76,16 @@ Deno.serve(async (req: Request) => {
             status: "sent",
             sent_at: new Date().toISOString(),
           });
-          return { email: p.email, status: "sent", error: null };
-        } catch (e) {
-          return { email: p.email, status: "failed", error: String(e instanceof Error ? e.message : e) };
+          return { id: p.id, status: "sent" };
+        } catch {
+          console.error("[send-proctor-email] send failed for staff", p.id);
+          return { id: p.id, status: "failed" };
         }
       })(),
     ),
   );
 
-  return json({
-    sent: results.filter((r) => r.status === "sent").length,
-    skipped: results.filter((r) => r.status === "skipped").length,
-    failed: results.filter((r) => r.status === "failed").length,
-  });
+  return json(emailSummary([...gate.outcomes, ...sends]));
 });
 
 function proctorTemplate(p: {

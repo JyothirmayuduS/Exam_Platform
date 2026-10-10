@@ -1,10 +1,13 @@
 // Supabase Edge Function: notify evaluators when test reports are assigned to
 // them (the Examiner dashboard "Auto-assign Test Reports" flow). Mirrors
 // send-exam-email / send-proctor-email (Gmail SMTP via nodemailer). Env needed:
-//   GMAIL_USER, GMAIL_APP_PASSWORD, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+//   GMAIL_USER, GMAIL_APP_PASSWORD, SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
+// Request: { examId, evaluators: [{ id, count }], dueDate, reportCount } — only
+// staff delegated on the exam are emailed.
+// Response: { sent, skipped, failed, refused, results: [{ id, status }] }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import nodemailer from "npm:nodemailer@6.10.0";
-import { withStaffEmails } from "../_shared/staffEmails.ts";
+import { emailSummary, gateAssignmentEmail, type Outcome } from "../_shared/assignmentEmail.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -25,15 +28,20 @@ Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceRole = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceRole) return json({ error: "Missing Supabase secrets" }, 500);
+  if (!supabaseUrl || !anonKey || !serviceRole) return json({ error: "Missing Supabase secrets" }, 500);
 
-  const db = createClient(supabaseUrl, serviceRole);
+  const db = createClient(supabaseUrl, serviceRole, { auth: { autoRefreshToken: false, persistSession: false } });
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const user = authHeader
+    ? createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } }, auth: { autoRefreshToken: false, persistSession: false } })
+    : null;
   const { examId, evaluators = [], dueDate = null, reportCount = 0, appBaseUrl: reqBase } = await req
     .json()
     .catch(() => ({ examId: null, evaluators: [], dueDate: null, reportCount: 0, appBaseUrl: null }));
-  if (!examId) return json({ error: "examId is required" }, 400);
-  const list = await withStaffEmails(db, Array.isArray(evaluators) ? evaluators : []);
+  const gate = await gateAssignmentEmail({ user, admin: db, kind: "evaluator", examId, requested: evaluators });
+  if (!gate.ok) return json({ error: gate.error }, gate.status);
 
   const { data: exam } = await db
     .from("exams")
@@ -46,10 +54,9 @@ Deno.serve(async (req: Request) => {
   const gradeLink = `${baseUrl}/teacher/evaluate?exam=${encodeURIComponent(exam.id)}`;
   const due = dueDate ? new Date(dueDate) : null;
 
-  const results = await Promise.all(
-    list.map((e: { name?: string; email?: string | null; count?: number }) =>
-      (async () => {
-        if (!e.email) return { email: "", status: "skipped", error: "no email" };
+  const sends = await Promise.all(
+    gate.recipients.map((e) =>
+      (async (): Promise<Outcome> => {
         try {
           await transporter.sendMail({
             from: `Vignan Exam Platform <${Deno.env.get("GMAIL_USER")}>`,
@@ -72,19 +79,16 @@ Deno.serve(async (req: Request) => {
             status: "sent",
             sent_at: new Date().toISOString(),
           });
-          return { email: e.email, status: "sent", error: null };
-        } catch (err) {
-          return { email: e.email, status: "failed", error: String(err instanceof Error ? err.message : err) };
+          return { id: e.id, status: "sent" };
+        } catch {
+          console.error("[send-evaluator-email] send failed for staff", e.id);
+          return { id: e.id, status: "failed" };
         }
       })(),
     ),
   );
 
-  return json({
-    sent: results.filter((r) => r.status === "sent").length,
-    skipped: results.filter((r) => r.status === "skipped").length,
-    failed: results.filter((r) => r.status === "failed").length,
-  });
+  return json(emailSummary([...gate.outcomes, ...sends]));
 });
 
 function evaluatorTemplate(p: {
