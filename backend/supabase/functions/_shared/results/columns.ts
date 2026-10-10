@@ -10,6 +10,8 @@ export const RESULT_FIELDS = [
   "programme",
   "semester",
   "course_code",
+  "academic_type",
+  "subject_name",
   "exam_name",
   "exam_id",
   "batch",

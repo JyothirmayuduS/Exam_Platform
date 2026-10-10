@@ -10,6 +10,7 @@
 // everything, so page/components code does not need to know the module layout.
 
 export * from "@/shared/data/api/exams";
+export * from "@/shared/data/api/examNaming";
 export * from "@/shared/data/api/questions";
 export * from "@/shared/data/api/students";
 export * from "@/shared/data/api/attempts";

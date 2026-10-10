@@ -13,7 +13,11 @@ export type ExamMode = "practice" | "lockdown";
 
 export type ExamRecord = {
   id: string;
+  /** Set by the database to "Type · CODE · Subject" once the three fields below are filled. */
   name: string;
+  academic_type?: string | null;
+  subject_code?: string | null;
+  subject_name?: string | null;
   batch: string;
   mode: ExamMode;
   status: ExamStatus;
@@ -124,6 +128,17 @@ export type Student = {
   section: string;
   phone?: string | null;
   created_at: string;
+};
+
+/** A row of the enrolment directory: roll, name and class, no contact details. */
+export type DirectoryStudent = {
+  id: string;
+  roll: string;
+  full_name: string | null;
+  branch: string | null;
+  section: string | null;
+  batch: string | null;
+  has_email: boolean;
 };
 
 export type StudentRosterRecord = {

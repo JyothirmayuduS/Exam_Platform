@@ -9,7 +9,7 @@ import { PHOTO_BUCKET } from "../photos/supabaseStore.ts";
 
 type Db = any;
 
-const EXAM_COLS = "id, name, batch, status, scheduled_at, duration_minutes, total_marks, passing_marks, created_by, settings, created_at";
+const EXAM_COLS = "id, name, batch, status, scheduled_at, duration_minutes, total_marks, passing_marks, created_by, settings, created_at, academic_type, subject_code, subject_name, legacy_name";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ATTEMPT_COLS = "id, exam_id, student_id, state, score, started_at, submitted_at, auto_saved_at, session_seen_at, user_agent";
 const USAGE_COLS = "folder, bytes, objects, oldest, due_soon_bytes, due_soon_objects, next_deletion, counted_at, scan_started_at";
@@ -38,6 +38,8 @@ export function supabaseAdminStore(db: Db): AdminStore {
         created_by: r.created_by ? String(r.created_by) : null,
         settings: r.settings && typeof r.settings === "object" ? r.settings : {},
         created_at: r.created_at ?? null,
+        academic_type: r.academic_type ?? null, subject_code: r.subject_code ?? null, subject_name: r.subject_name ?? null,
+        legacy_name: r.legacy_name ?? null,
       }));
     },
 

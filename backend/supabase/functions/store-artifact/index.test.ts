@@ -11,21 +11,22 @@ const code = ts.transpileModule(readFileSync(new URL("./index.ts", import.meta.u
 let student: { id: string; roll: string } | null;
 let staff: boolean;
 let access: Record<string, string>;
+let sitting: Set<string>;
 let handler: (request: Request) => Promise<Response>;
 const fetchMock = vi.fn();
 function request(body: Record<string, unknown>) {
   return handler(new Request("https://example.invalid/function", { method: "POST", headers: { Authorization: "Bearer test-placeholder" }, body: JSON.stringify(body) }));
 }
 beforeEach(() => {
-  student = { id: "student-uuid", roll: "R1" }; staff = false; access = {}; fetchMock.mockReset();
+  student = { id: "student-uuid", roll: "R1" }; staff = false; access = {}; sitting = new Set(["Exam"]); fetchMock.mockReset();
   const client = { auth: { getUser: async () => ({ data: { user: { id: "auth-id" } } }) },
     from: (table: string) => ({ select: () => ({
       eq: () => ({ maybeSingle: async () => ({ data: table === "students" ? student : null }) }),
       or: async () => ({ data: staff ? [{ id: "teacher-id", auth_id: "auth-id" }] : [] }),
     }) }),
-    rpc: async (_fn: string, args: { p_folders: string[] }) => ({
-      data: args.p_folders.map((folder) => ({ folder, access: access[folder] ?? null })), error: null,
-    }) };
+    rpc: async (fn: string, args: { p_folders?: string[]; p_folder?: string }) => fn === "student_evidence_folder_ok"
+      ? { data: sitting.has(args.p_folder ?? ""), error: null }
+      : { data: (args.p_folders ?? []).map((folder) => ({ folder, access: access[folder] ?? null })), error: null } };
   runInNewContext(code, { exports: {}, Request, Response, console, fetch: fetchMock,
     Deno: { env: { get: (key: string) => key === "R2_S3_ENDPOINT" ? "https://r2.example.invalid" : "placeholder" }, serve: (fn: typeof handler) => { handler = fn; } },
     require: (name: string) => name.includes("supabase-js") ? { createClient: () => client }
@@ -37,6 +38,14 @@ describe("artifact edge function", () => {
     const response = await request({ op: "put", examId: "Exam", studentId: owner, kind: "screenshots", name: "snap_1.jpg" });
     expect(response.status).toBe(200);
     expect((await response.json()).key).toBe(`Exam/${owner}/screenshots/snap_1.jpg`);
+  });
+  it("refuses a student's own folder under an exam they are not sitting", async () => {
+    sitting = new Set(["EX-1", "Mid-term"]);
+    expect((await request({ op: "put", examId: "EX-1", studentId: "R1", kind: "recordings", name: "a.webm" })).status).toBe(200);
+    expect((await request({ op: "put", examId: "Mid-term", studentId: "R1", kind: "screenshots", name: "a.jpg" })).status).toBe(200);
+    const refused = await request({ op: "put", examId: "EX-2", studentId: "R1", kind: "screenshots", name: "a.jpg" });
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).error).toMatch(/not sitting this exam/);
   });
   it("rejects another student's folder and users without a profile", async () => {
     expect((await request({ op: "get", key: "Exam/R2/screenshots/a.jpg" })).status).toBe(403);

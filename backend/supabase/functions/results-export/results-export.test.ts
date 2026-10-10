@@ -56,6 +56,13 @@ describe("ERP rows: totals", () => {
     for (const r of rows.filter((x) => x.total !== null)) expect(r.mcq_marks! + r.descriptive_marks!).toBeCloseTo(r.total!, 6);
   });
 
+  it("puts the subject code in the course code column, with the academic type and subject name", () => {
+    const named = exam({ academic_type: "Mid Term", subject_code: "MBA101", subject_name: "Business Economics" }, { courseCode: "OLD9" });
+    expect(byRoll(build(named).rows, "21BQ1A0501")).toMatchObject({
+      academic_type: "Mid Term", course_code: "MBA101", subject_name: "Business Economics",
+    });
+  });
+
   it("uses the teacher's final total for an all-MCQ paper, even if it was adjusted", () => {
     const mcqOnly = [POOL[0], POOL[1]];
     const { rows } = buildExamRows({
@@ -136,9 +143,9 @@ describe("ERP rows: withheld for malpractice review", () => {
 });
 
 describe("ERP column config", () => {
-  it("ships with the twelve requested columns in order", () => {
+  it("ships with the requested columns in order", () => {
     expect(ERP_EXPORT_CONFIG.columns.map((c) => c.field)).toEqual([
-      "roll", "name", "programme", "semester", "course_code", "exam_name",
+      "roll", "name", "programme", "semester", "academic_type", "course_code", "subject_name", "exam_name",
       "mcq_marks", "descriptive_marks", "total", "maximum", "result_status", "attempt_date",
     ]);
     expect(ERP_EXPORT_CONFIG.status).toEqual({ pass: "PASS", fail: "FAIL", absent: "ABSENT", withheld: "WITHHELD" });
@@ -198,7 +205,7 @@ describe("ERP files", () => {
     const sheet = files["xl/worksheets/sheet1.xml"];
     expect(sheet).toContain('<c r="A1" t="inlineStr" s="1"><is><t xml:space="preserve">Roll Number</t></is></c>');
     expect(sheet).toContain('<t xml:space="preserve">21BQ1A0501</t>');
-    expect(sheet).toMatch(/<c r="I\d+"><v>8<\/v><\/c>/);
+    expect(sheet).toMatch(/<c r="K\d+"><v>8<\/v><\/c>/);
     expect(files["xl/workbook.xml"]).toContain('<sheet name="Results"');
   });
 });
@@ -267,10 +274,10 @@ describe("results-export endpoint", () => {
     const body = await res.json();
     expect(body.filename).toBe("results_CS301_2026-10-09.csv");
     const lines = String(body.content).slice(1).trim().split("\r\n");
-    expect(lines[0]).toBe("Roll Number,Student Name,Programme,Semester,Course Code,Exam Name,MCQ Marks,Descriptive Marks,Total Marks,Maximum Marks,Result,Attempt Date");
-    expect(lines[1]).toBe("21BQ1A0501,Asha Rao,B.Tech CSE,3,CS301,Data Structures Mid-term,5,3,8,10,PASS,09-10-2026");
-    expect(lines).toContain("21BQ1A0503,Absent Abhi,B.Tech CSE,3,CS301,Data Structures Mid-term,,,,10,ABSENT,");
-    expect(lines).toContain("21BQ1A0504,Held Hema,B.Tech CSE,3,CS301,Data Structures Mid-term,,,,10,WITHHELD,09-10-2026");
+    expect(lines[0]).toBe("Roll Number,Student Name,Programme,Semester,Academic Type,Course Code,Subject Name,Exam Name,MCQ Marks,Descriptive Marks,Total Marks,Maximum Marks,Result,Attempt Date");
+    expect(lines[1]).toBe("21BQ1A0501,Asha Rao,B.Tech CSE,3,,CS301,,Data Structures Mid-term,5,3,8,10,PASS,09-10-2026");
+    expect(lines).toContain("21BQ1A0503,Absent Abhi,B.Tech CSE,3,,CS301,,Data Structures Mid-term,,,,10,ABSENT,");
+    expect(lines).toContain("21BQ1A0504,Held Hema,B.Tech CSE,3,,CS301,,Data Structures Mid-term,,,,10,WITHHELD,09-10-2026");
     expect(body.summary).toMatchObject({ rows: 5, pending: 1, absent: 2, withheld: 1 });
     expect(audits).toEqual([{
       actorId: "teacher-A", action: "results.exported", targetType: "exam", targetId: "EX-1",

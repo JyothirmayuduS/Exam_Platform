@@ -19,6 +19,9 @@ export type ExportExam = {
   passing_marks: number | null;
   created_by: string | null;
   settings: Record<string, unknown> | null;
+  academic_type?: string | null;
+  subject_code?: string | null;
+  subject_name?: string | null;
 };
 export type ExportStudent = { id: string; roll: string; full_name: string | null };
 export type ExportAttempt = {
@@ -37,6 +40,8 @@ export type ResultRow = {
   programme: string;
   semester: string;
   course_code: string;
+  academic_type: string;
+  subject_name: string;
   exam_name: string;
   exam_id: string;
   batch: string;
@@ -60,10 +65,17 @@ export type PassRule = { type: "percent" | "marks"; value: number };
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "");
 
-/** ERP details a teacher set on the exam (Test options → Results & ERP). */
-export function examErpFields(exam: ExportExam): { programme: string; semester: string; course_code: string } {
+/** ERP details of the exam: the subject code is the course code; exams named
+ *  before subject codes existed fall back to the course code set in Test options. */
+export function examErpFields(exam: ExportExam): { programme: string; semester: string; course_code: string; academic_type: string; subject_name: string } {
   const s = exam.settings ?? {};
-  return { programme: text(s.programme), semester: text(s.semester), course_code: text(s.courseCode) };
+  return {
+    programme: text(s.programme),
+    semester: text(s.semester),
+    course_code: text(exam.subject_code) || text(s.courseCode),
+    academic_type: text(exam.academic_type),
+    subject_name: text(exam.subject_name),
+  };
 }
 
 /** Pass mark chosen on the exam: a percentage of the maximum, or plain marks. */

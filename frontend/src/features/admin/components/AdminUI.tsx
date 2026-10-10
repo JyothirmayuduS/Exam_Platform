@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { ExamRef, StudentRef } from "@/shared/data/api/admin";
+import { examTitle } from "@/shared/data/api/examNaming";
 
 export type AdminTab<T extends string> = { id: T; label: string; count?: number; tone?: "alert" | "amber" };
 
@@ -109,7 +110,7 @@ export function Table({ head, children }: { head: string[]; children: ReactNode 
 
 export const Td = ({ children, className = "" }: { children: ReactNode; className?: string }) => <td className={`px-5 py-2 align-top ${className}`}>{children}</td>;
 
-export const examLabel = (e: ExamRef | null | undefined) => (e ? e.name : "Deleted exam");
+export const examLabel = (e: ExamRef | null | undefined) => (e ? examTitle(e) : "Deleted exam");
 export const studentLabel = (s: StudentRef | null | undefined) => (s ? [s.roll, s.full_name].filter(Boolean).join(" · ") || "Unknown student" : "—");
 
 export function bytes(n: number | null | undefined): string {

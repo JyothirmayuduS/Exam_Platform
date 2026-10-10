@@ -3,7 +3,7 @@
 import { examPhase, type ExamPhase } from "../exam/phase.ts";
 import { resultsReleased, type ExportExam } from "../results/rows.ts";
 
-export type AdminExam = ExportExam & { created_at: string | null };
+export type AdminExam = ExportExam & { created_at: string | null; legacy_name?: string | null };
 
 export type AdminAttempt = {
   id: string;
@@ -174,8 +174,8 @@ export function slugifyFolderSegment(name: string): string {
 }
 
 /** The R2 folders an exam's evidence can sit in. */
-export function examFolders(exam: Pick<AdminExam, "id" | "name">): string[] {
-  return [...new Set([slugifyFolderSegment(exam.name ?? ""), exam.id].filter(Boolean))];
+export function examFolders(exam: Pick<AdminExam, "id" | "name"> & { legacy_name?: string | null }): string[] {
+  return [...new Set([slugifyFolderSegment(exam.name ?? ""), slugifyFolderSegment(exam.legacy_name ?? ""), exam.id].filter(Boolean))];
 }
 
 export type SittingFiles = { student_folder: string; kinds: string[]; files: number; last_upload: string | null };

@@ -7,6 +7,7 @@ import { getSupabase } from "@/shared/data/supabase";
 import type { ExamStatus, ExamRecord, Student } from "@/shared/data/api/types";
 import { normalizeExamRecord } from "@/shared/data/api/helpers";
 import { logAudit } from "@/shared/data/api/audit";
+import { examSaveError } from "@/shared/data/api/examNaming";
 
 /** Teacher publishes/schedules an exam. Upserts the row so students see it. */
 export async function publishExam(
@@ -18,10 +19,7 @@ export async function publishExam(
   if (!error && record.status === "published") {
     void logAudit({ action: "exam.published", targetType: "exam", targetId: record.id });
   }
-  if (error?.code === "23505" && /exams_(name|folder_slug)_unique/.test(error.message ?? "")) {
-    return { ok: false, error: "Another exam already has this name. Choose a different exam name." };
-  }
-  return error ? { ok: false, error: String(error.message ?? error) } : { ok: true };
+  return error ? { ok: false, error: examSaveError(error, record) } : { ok: true };
 }
 
 /** Trigger the Supabase Edge Function to send emails to students */

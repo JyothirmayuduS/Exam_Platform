@@ -179,8 +179,9 @@ Deno.serve(async (req: Request) => {
     if (!KINDS.has(kind)) return json({ error: "invalid kind" }, 400);
     if (!name) return json({ error: "invalid name" }, 400);
 
-    // Ownership gate: a student may only write into their own folder; staff
-    // only under the id of an exam they may write evidence for.
+    // Ownership gate: a student may only write into their own folder of an
+    // exam they sit; staff only under the id of an exam they may write
+    // evidence for.
     if (callerIsStaff) {
       await loadAccess([examId]);
       const access = folderAccess.get(examId);
@@ -189,6 +190,15 @@ Deno.serve(async (req: Request) => {
       }
     } else if (!ownsSegment(requestedStudentId)) {
       return json({ error: "forbidden" }, 403);
+    } else {
+      // Students: only an exam they are enrolled in and have an attempt for,
+      // under its id (or, from an older kiosk, that exam's name folder).
+      const { data: folderOk, error } = await supabase.rpc("student_evidence_folder_ok", { p_folder: examId });
+      if (error) {
+        console.error("[store-artifact] student exam check failed:", error.message);
+        return json({ error: "could not check the exam" }, 500);
+      }
+      if (folderOk !== true) return json({ error: "forbidden: you are not sitting this exam" }, 403);
     }
     const studentId = requestedStudentId;
     const key = `${examId}/${studentId}/${kind}/${name}`;

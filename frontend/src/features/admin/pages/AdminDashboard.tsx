@@ -12,11 +12,14 @@ import AdminAccounts from "@/features/admin/pages/AdminAccounts";
 import AdminData from "@/features/admin/pages/AdminData";
 import AdminSystem from "@/features/admin/pages/AdminSystem";
 import AdminAudit from "@/features/admin/pages/AdminAudit";
+import AdminExamNames from "@/features/admin/pages/AdminExamNames";
+import { hasNaming } from "@/shared/data/api/examNaming";
 
 const SECTIONS: Record<string, { title: string; detail: string }> = {
   overview: { title: "Today", detail: "Live sittings, connections, flags and what the next sittings still need." },
   results: { title: "Marking & results", detail: "Answers waiting to be marked, flags waiting for review, unreleased results, holds and the ERP export." },
   moodle: { title: "Moodle", detail: "Grades that failed to reach Moodle, students waiting for confirmation, and the retry job." },
+  exams: { title: "Exam names", detail: "The academic types teachers choose from, and exams still missing a type, subject code or subject name." },
   accounts: { title: "Students & devices", detail: "Accounts without a role, registration photos and exam browser versions." },
   storage: { title: "Storage & data", detail: "Evidence storage per exam, what is due for deletion, holds and backups." },
   system: { title: "System", detail: "Health of the site and services, the latest exam browser and scheduled jobs." },
@@ -55,10 +58,12 @@ export default function AdminDashboard() {
 
   const d = data;
   const writing = d?.live.filter((l) => l.counts.writing + l.counts.disconnected + l.counts.paused > 0).length ?? 0;
+  const unnamed = d?.exams.filter((e) => !hasNaming(e)).length ?? 0;
   const nav = [
     { label: "Today", to: "/admin", end: true, badge: writing ? `${writing} live` : undefined },
     { label: "Marking & results", to: "/admin/results", badge: d ? String(d.marking.reduce((t, m) => t + m.waiting, 0) + d.flagsWaitingTotal) : undefined },
     { label: "Moodle", to: "/admin/moodle", badge: d?.moodle.failed.length ? String(d.moodle.failed.length) : undefined },
+    { label: "Exam names", to: "/admin/exams", badge: unnamed ? String(unnamed) : undefined },
     { label: "Students & devices", to: "/admin/accounts" },
     { label: "Storage & data", to: "/admin/storage" },
     { label: "System", to: "/admin/system" },
@@ -83,6 +88,7 @@ export default function AdminDashboard() {
             {section === "overview" && <AdminLive data={d} />}
             {section === "results" && <AdminResults data={d} notify={notify} onChanged={refresh} />}
             {section === "moodle" && <AdminMoodle data={d} notify={notify} onChanged={refresh} />}
+            {section === "exams" && <AdminExamNames data={d} notify={notify} onChanged={refresh} />}
             {section === "accounts" && <AdminAccounts data={d} notify={notify} onChanged={refresh} />}
             {section === "storage" && <AdminData data={d} />}
             {section === "system" && <AdminSystem />}

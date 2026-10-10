@@ -77,43 +77,58 @@ Deno.serve(async (req: Request) => {
   const attemptId = String(body.attemptId ?? "").trim();
   if (!attemptId) return json({ error: "attemptId required" }, 400);
 
-  // Authorize: signed-in caller, and the attempt belongs to them (or staff).
+  // Authorize against the attempt's exam: full-access staff (owner, delegated
+  // teachers, admins) read and generate; an assigned proctor reads a stored
+  // report that holds no marks or answers; nobody else gets anything.
   const authHeader = req.headers.get("Authorization") ?? "";
   const userClient = authHeader
     ? createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } })
     : null;
   const { data: authUser } = userClient ? await userClient.auth.getUser() : { data: null };
   if (!authUser?.user) return json({ error: "invalid session" }, 401);
-  const { data: staff } = await userClient!.from("teachers").select("id").eq("auth_id", authUser.user.id).maybeSingle();
 
   const admin = createClient(supabaseUrl, serviceRole, { auth: { autoRefreshToken: false, persistSession: false } });
+
+  const { data: attempt } = await admin
+    .from("attempts")
+    .select("id, exam_id, student_id, state, started_at, submitted_at, attempts:students(roll, full_name), exams:exams(name)")
+    .eq("id", attemptId)
+    .maybeSingle();
+  if (!attempt) return json({ error: "attempt not found" }, 404);
+  const a = attempt as Record<string, unknown>;
+  const examId = String(a.exam_id ?? "");
+
+  const [manage, invigilate] = await Promise.all([
+    userClient!.rpc("can_manage_exam", { p_exam: examId }),
+    userClient!.rpc("can_invigilate_exam", { p_exam: examId }),
+  ]);
+  if (manage.error || invigilate.error) {
+    console.error("[proctor-ai-report] access check failed:", manage.error?.message ?? invigilate.error?.message);
+    return json({ error: "could not check access to this exam" }, 500);
+  }
+  const canManage = manage.data === true;
+  if (!canManage && invigilate.data !== true) return json({ error: "forbidden: you do not have access to this exam" }, 403);
+
+  if (!canManage) {
+    if (body.regenerate) {
+      return json({ error: "forbidden: only the exam's owner, a delegated teacher or an admin can generate this report" }, 403);
+    }
+    const { data: existing } = await admin.from("ai_reports").select("*").eq("attempt_id", attemptId).maybeSingle();
+    if (!existing) return json({ report: null, cached: false });
+    if (reportHasMarks(existing)) return json({ error: "forbidden: this report contains marks or answers" }, 403);
+    return json({ report: existing, cached: true });
+  }
 
   // Pull the existing report (unless regenerating) so repeated opens are cheap.
   if (!body.regenerate) {
     const { data: existing } = await admin.from("ai_reports").select("*").eq("attempt_id", attemptId).maybeSingle();
-    if (existing) {
-      const ownerOk = staff || (existing as { student_id: string }).student_id === await studentIdFor(admin, authUser.user.id);
-      if (!ownerOk) return json({ error: "not your attempt" }, 403);
-      return json({ report: existing, cached: true });
-    }
+    if (existing) return json({ report: existing, cached: true });
   }
 
-  const { data: attempt } = await admin
-    .from("attempts")
-    .select("id, exam_id, student_id, state, started_at, submitted_at, score, answers, attempts:students(roll, full_name), exams:exams(name)")
-    .eq("id", attemptId)
-    .maybeSingle();
-  if (!attempt) return json({ error: "attempt not found" }, 404);
-
-  const a = attempt as Record<string, unknown>;
   const stRel = (a.attempts as unknown[] | undefined) ?? [];
   const st = (Array.isArray(stRel) ? stRel[0] : a.attempts) as Record<string, unknown> | undefined;
   const exRel = (a.exams as unknown[] | undefined) ?? [];
   const ex = (Array.isArray(exRel) ? exRel[0] : a.exams) as Record<string, unknown> | undefined;
-
-  if (!staff && String(a.student_id) !== await studentIdFor(admin, authUser.user.id)) {
-    return json({ error: "not your attempt" }, 403);
-  }
 
   // The violation_events table timestamps events with `created_at` (the
   // normalize migration explicitly drops the legacy `timestamp`/`resolved_at`
@@ -124,7 +139,7 @@ Deno.serve(async (req: Request) => {
     .eq("attempt_id", attemptId)
     .order("created_at", { ascending: true });
 
-  const timeline = (violations ?? []).map((v) => ({
+  const timeline = (violations ?? []).map((v: unknown) => ({
     type: (v as Record<string, unknown>).violation_type,
     severity: (v as Record<string, unknown>).severity,
     description: (v as Record<string, unknown>).description,
@@ -185,7 +200,15 @@ Deno.serve(async (req: Request) => {
   return json({ report: { ...report, id: attemptId }, cached: false });
 });
 
-async function studentIdFor(admin: ReturnType<typeof createClient>, uid: string): Promise<string | null> {
-  const { data } = await admin.from("students").select("id").eq("auth_id", uid).maybeSingle();
-  return (data as { id?: string } | null)?.id ?? null;
+// Same keys as public.ai_report_has_marks, which guards proctors' table reads.
+const MARK_KEY = /^(score|scores|percentage|percent|passed|rank|marks?|grade|grades|total_marks|answers?|answer_key|correct_answers?|key)$/i;
+
+function reportHasMarks(report: unknown): boolean {
+  const summary = (report as { summary?: unknown } | null)?.summary;
+  const walk = (v: unknown): boolean => {
+    if (Array.isArray(v)) return v.some(walk);
+    if (v && typeof v === "object") return Object.entries(v).some(([k, x]) => MARK_KEY.test(k) || walk(x));
+    return false;
+  };
+  return walk(summary);
 }

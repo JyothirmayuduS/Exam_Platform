@@ -36,10 +36,7 @@ export async function listProctorAssignments(examId: string): Promise<ProctorAss
 export async function listFaculty(): Promise<FacultyMember[]> {
   const db = getSupabase();
   if (!db) return [];
-  const { data, error } = await db
-    .from("teachers")
-    .select("id, full_name, name, role, department, email")
-    .order("full_name", { ascending: true });
+  const { data, error } = await db.rpc("list_assignable_staff");
   if (error || !data) return [];
   return (data as unknown[]).map((raw) => {
     const r = raw as Record<string, unknown>;
