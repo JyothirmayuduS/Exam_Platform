@@ -84,7 +84,7 @@ export function createResultsExportHandler(deps: ResultsDeps) {
         if (!exam) return json({ error: "exam_not_found" }, 404);
         if (!canExport(actor, exam)) return json({ error: "not_your_exam" }, 403);
         exams = [exam];
-        target = { type: "exam", id: exam.id, name: (text(exam.settings?.courseCode) || exam.id) };
+        target = { type: "exam", id: exam.id, name: (text(exam.subject_code) || text(exam.settings?.courseCode) || exam.id) };
       } else if (body.scope === "programme") {
         const programme = text(body.programme);
         const semester = text(body.semester);

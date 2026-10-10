@@ -79,6 +79,30 @@ create policy "student photos own read" on public.student_photos for select to a
 create policy "student photos staff read" on public.student_photos for select to authenticated using (public.auth_is_staff());
 `;
 
+/** The grading and question tables the exam-roles migrations scope by exam. */
+export const EXAM_ROLES_SCHEMA = `
+create table public.questions (id text primary key, title text, answer text, exam_id text);
+create table public.exam_questions (exam_id text, question_id text, primary key (exam_id, question_id));
+create table public.grading_comments (id uuid primary key default gen_random_uuid(), attempt_id uuid, comment text);
+create table public.grading_delegations (id uuid primary key default gen_random_uuid(), attempt_id uuid, exam_id text,
+  delegate_id uuid, delegate_name text not null default 'x');
+create table public.question_submissions (id uuid primary key default gen_random_uuid(), attempt_id uuid, student_id uuid);
+create table public.flag_reviews (violation_id uuid primary key default gen_random_uuid(), exam_id text, note text);
+create table public.mobile_session_events (id uuid primary key default gen_random_uuid(), session_id uuid, event_type text);
+alter table public.questions enable row level security;
+alter table public.exam_questions enable row level security;
+alter table public.grading_comments enable row level security;
+alter table public.grading_delegations enable row level security;
+alter table public.question_submissions enable row level security;
+alter table public.flag_reviews enable row level security;
+alter table public.mobile_session_events enable row level security;
+alter table public.enrollments enable row level security;
+alter table public.audit_logs enable row level security;
+grant select, insert, update, delete on public.questions, public.exam_questions, public.grading_comments,
+  public.grading_delegations, public.question_submissions, public.flag_reviews, public.mobile_session_events,
+  public.enrollments, public.audit_logs to authenticated;
+`;
+
 /** Run `fn` as a signed-in user (`authId`), as anon (`null`), or as the owner (`undefined`). */
 export function actAs(db: PGlite) {
   return async <T>(authId: string | null | undefined, run: () => Promise<T>): Promise<T> => {

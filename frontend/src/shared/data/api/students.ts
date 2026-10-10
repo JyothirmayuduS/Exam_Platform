@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 import { getSupabase } from "@/shared/data/supabase";
-import type { Student, StudentRosterRecord } from "@/shared/data/api/types";
+import type { DirectoryStudent, StudentRosterRecord } from "@/shared/data/api/types";
 import { logAudit } from "@/shared/data/api/audit";
 
 /** Resolve a student row id from their roll number (needed for attempt rows). */
@@ -98,31 +98,30 @@ export async function setExtraMinutes(examId: string, studentId: string, minutes
   return {};
 }
 
-export async function enrollStudent(examId: string, student: { roll: string; name: string; email: string; branch: string; section: string; phone?: string }): Promise<{ error?: string }> {
+export type StudentImportRow = { roll: string; name: string; email: string; branch: string; section: string; phone?: string };
+
+/** Adds new students and enrolls every row into the exam. Existing students
+ *  are only updated when the caller owns an exam they are in, or is an admin. */
+export async function importStudents(
+  examId: string | null,
+  students: StudentImportRow[],
+): Promise<{ error?: string; count: number; created: number; updated: number }> {
   const db = getSupabase();
-  if (!db) return { error: "No DB connection" };
-
-  // 1. Upsert student
-  const { data: sData, error: sErr } = await db
-    .from("students")
-    .upsert(
-      { roll: student.roll, full_name: student.name, email: student.email, branch: student.branch, section: student.section, phone: student.phone || null },
-      { onConflict: "roll" }
-    )
-    .select("id")
-    .single();
-
-  if (sErr || !sData) return { error: sErr?.message || "Failed to upsert student" };
-
-  // 2. Insert enrollment
-  const { error: eErr } = await db
-    .from("enrollments")
-    .upsert({ exam_id: examId, student_id: sData.id }, { onConflict: "exam_id, student_id" });
-
-  if (eErr) return { error: eErr.message };
-  return {};
+  if (!db) return { error: "No DB connection", count: 0, created: 0, updated: 0 };
+  if (students.length === 0) return { count: 0, created: 0, updated: 0 };
+  const { data, error } = await db.rpc("import_students", {
+    p_exam: examId,
+    p_rows: students.map((s) => ({ roll: s.roll, full_name: s.name, email: s.email, branch: s.branch, section: s.section, phone: s.phone || null })),
+  });
+  if (error) return { error: error.code === "42501" ? error.message.replace(/^forbidden:\s*/, "") : error.message, count: 0, created: 0, updated: 0 };
+  const rows = (data ?? []) as { created: boolean; updated: boolean }[];
+  return { count: rows.length, created: rows.filter((r) => r.created).length, updated: rows.filter((r) => r.updated).length };
 }
 
+export async function enrollStudent(examId: string, student: StudentImportRow): Promise<{ error?: string }> {
+  const { error } = await importStudents(examId, [student]);
+  return error ? { error } : {};
+}
 
 export async function bulkEnrollStudents(examId: string, students: { id: string }[]): Promise<{ error?: string; count: number }> {
   const db = getSupabase();
@@ -141,62 +140,32 @@ export async function bulkEnrollStudents(examId: string, students: { id: string 
   return { count: students.length };
 }
 
-/** Global student directory filtered by batch (e.g. 'CSE · Sem III'). */
-
-
-export async function listStudentsByBatch(batch?: string): Promise<Student[]> {
+/** The enrolment directory, filtered by batch (e.g. 'CSE · Sem III'), branch or section. */
+export async function searchStudentDirectory(f: { batch?: string; branch?: string; section?: string } = {}): Promise<DirectoryStudent[]> {
   const db = getSupabase();
   if (!db) return [];
-  let query = db.from("students").select("*");
-  if (batch) query = query.eq("batch", batch);
-  const { data } = await query;
-  return (data as Student[]) || [];
+  const { data, error } = await db.rpc("search_student_directory", {
+    p_batch: f.batch || null, p_branch: f.branch || null, p_section: f.section || null,
+  });
+  if (error) return [];
+  return (data ?? []) as DirectoryStudent[];
 }
 
+export const listStudentsByBatch = (batch?: string) => searchStudentDirectory({ batch });
+export const getStudentsByBranchAndSection = (branch?: string, section?: string) => searchStudentDirectory({ branch, section });
 
-export async function getStudentsByBranchAndSection(branch?: string, section?: string): Promise<Student[]> {
+/** Distinct branch, section and batch values from the directory. */
+export async function listStudentDirectoryFilters(): Promise<{ branches: string[]; sections: string[]; batches: { name: string; students: number }[] }> {
   const db = getSupabase();
-  if (!db) return [];
-  let query = db.from("students").select("*");
-  if (branch) query = query.eq("branch", branch);
-  if (section) query = query.eq("section", section);
-  const { data } = await query;
-  return data as Student[] || [];
-}
-
-/** Distinct branch / section values from the real students table. */
-export async function listStudentDirectoryFilters(): Promise<{ branches: string[]; sections: string[] }> {
-  const db = getSupabase();
-  if (!db) return { branches: [], sections: [] };
-  const { data } = await db.from("students").select("branch, section");
-  const branches = new Set<string>();
-  const sections = new Set<string>();
-  for (const row of (data ?? []) as { branch?: string | null; section?: string | null }[]) {
-    if (row.branch?.trim()) branches.add(row.branch.trim());
-    if (row.section?.trim()) sections.add(row.section.trim());
-  }
+  if (!db) return { branches: [], sections: [], batches: [] };
+  const { data } = await db.rpc("student_directory_filters");
+  const rows = (data ?? []) as { kind: string; value: string; students: number }[];
+  const of = (kind: string) => rows.filter((r) => r.kind === kind).sort((a, b) => a.value.localeCompare(b.value));
   return {
-    branches: Array.from(branches).sort((a, b) => a.localeCompare(b)),
-    sections: Array.from(sections).sort((a, b) => a.localeCompare(b)),
+    branches: of("branch").map((r) => r.value),
+    sections: of("section").map((r) => r.value),
+    batches: of("batch").map((r) => ({ name: r.value, students: Number(r.students) })),
   };
-}
-
-
-export async function bulkImportGlobalStudents(students: { roll: string; name: string; email: string; branch: string; section: string; phone?: string }[]): Promise<{ error?: string; count: number }> {
-  const db = getSupabase();
-  if (!db) return { error: "No DB connection", count: 0 };
-  if (students.length === 0) return { count: 0 };
-
-  const { data, error } = await db
-    .from("students")
-    .upsert(
-      students.map(s => ({ roll: s.roll, full_name: s.name, email: s.email, branch: s.branch, section: s.section, phone: s.phone || null })),
-      { onConflict: "roll" }
-    )
-    .select("id");
-
-  if (error || !data) return { error: error?.message || "Failed to bulk import students", count: 0 };
-  return { count: data.length };
 }
 
 /**

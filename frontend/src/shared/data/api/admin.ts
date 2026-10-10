@@ -4,7 +4,10 @@
 
 import { getSupabase } from "@/shared/data/supabase";
 
-export type ExamRef = { id: string; name: string; batch: string | null; owner: string | null };
+export type ExamRef = {
+  id: string; name: string; batch: string | null; owner: string | null;
+  academic_type: string | null; subject_code: string | null; subject_name: string | null;
+};
 export type StudentRef = { id: string; roll: string; full_name: string | null };
 export type Phase = "live" | "upcoming" | "draft" | "completed";
 

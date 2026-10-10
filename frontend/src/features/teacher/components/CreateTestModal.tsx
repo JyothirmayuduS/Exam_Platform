@@ -1,11 +1,14 @@
 // Create new test — Mettl-style creation dialog in the Vignan theme.
-// Test name / language / purpose / timed-vs-deadline are collected up front,
-// then a draft exam row is persisted and the caller opens the paper builder.
+// Academic type, subject code and subject name, then language / purpose /
+// timed-vs-deadline are collected up front, then a draft exam row is persisted
+// and the caller opens the paper builder.
 
 import { useEffect, useState } from "react";
 import { getSupabase } from "@/shared/data/supabase";
-import { examJoinLink, publishExam, type ExamRecord } from "@/shared/data/examApi";
+import { examJoinLink, listStudentDirectoryFilters, publishExam, type ExamRecord } from "@/shared/data/examApi";
+import { composeExamName, conflictMessage, findExamNamingConflict, namingProblem, normalizeNaming, type ExamNaming } from "@/shared/data/api/examNaming";
 import { NumberField } from "@/shared/components/ui";
+import ExamNamingFields, { type NamingCheck } from "@/features/teacher/components/ExamNamingFields";
 
 const NEW_BATCH = "__new__";
 const PURPOSES = ["Academic exam", "Campus placement", "Skill / certification", "Mock test", "Other"];
@@ -19,7 +22,8 @@ export default function CreateTestModal({
   onCreate: (exam: ExamRecord) => void;
   notify: (msg: string) => void;
 }) {
-  const [name, setName] = useState("");
+  const [naming, setNaming] = useState<ExamNaming>({ academic_type: "", subject_code: "", subject_name: "" });
+  const [check, setCheck] = useState<NamingCheck>({ conflict: null, checking: false });
   const [language, setLanguage] = useState("English");
   const [purpose, setPurpose] = useState(PURPOSES[0]);
   const [assessmentType, setAssessmentType] = useState<"timed" | "deadline">("timed");
@@ -33,21 +37,11 @@ export default function CreateTestModal({
 
   useEffect(() => {
     let active = true;
-    const db = getSupabase();
-    if (!db) return;
-    void db
-      .from("students")
-      .select("batch")
-      .then((res: { data?: { batch?: string | null }[] | null }) => {
-        if (!active || !res.data) return;
-        const counts = new Map<string, number>();
-        for (const r of res.data) if (r.batch) counts.set(r.batch, (counts.get(r.batch) ?? 0) + 1);
-        setBatches(Array.from(counts, ([name, students]) => ({ name, students })).sort((a, b) => a.name.localeCompare(b.name)));
-      });
+    void listStudentDirectoryFilters().then((f) => { if (active) setBatches(f.batches); });
     return () => { active = false; };
   }, []);
 
-  const canProceed = name.trim().length > 0 && batch.trim().length > 0 && (assessmentType === "timed" || deadline !== "");
+  const canProceed = !namingProblem(naming) && !check.conflict && !check.checking && batch.trim().length > 0 && (assessmentType === "timed" || deadline !== "");
 
   const proceed = async () => {
     if (!canProceed || saving) return;
@@ -55,6 +49,9 @@ export default function CreateTestModal({
     setError("");
     const db = getSupabase();
     if (!db) { setError("Database not connected — configure Supabase first."); setSaving(false); return; }
+    const named = normalizeNaming(naming);
+    const clash = await findExamNamingConflict(named);
+    if (clash) { setError(conflictMessage(clash, named)); setSaving(false); return; }
     // Collision-free id (the old EXAM-2026-<random 15-94> scheme overlapped
     // seeded demo ids and could throw a primary-key error on creation).
     const rand = typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -63,7 +60,8 @@ export default function CreateTestModal({
     const id = `EXAM-${new Date().getFullYear()}-${rand}`;
     const record: ExamRecord = {
       id,
-      name: name.trim(),
+      name: composeExamName(named),
+      ...named,
       batch: batch.trim(),
       mode: "lockdown",
       status: "draft",
@@ -134,25 +132,21 @@ export default function CreateTestModal({
 
         {/* Body */}
         <div className="space-y-6 px-6 py-6">
+          <ExamNamingFields value={naming} onChange={setNaming} onCheck={setCheck} autoFocus idPrefix="create-test" />
           <div className="grid gap-5 sm:grid-cols-2">
-            <label className="block text-[12px] text-ink-soft">
-              <span className="font-medium text-ink">Test Name</span><span className="text-alert"> *</span>
-              <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Data Structures Midterm" className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none placeholder:text-ink-soft/60 focus:border-forest" />
-            </label>
             <label className="block text-[12px] text-ink-soft">
               <span className="font-medium text-ink">Test Language</span>
               <select value={language} onChange={(e) => setLanguage(e.target.value)} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest">
                 <option>English</option><option>Hindi</option><option>Telugu</option><option>Bilingual</option>
               </select>
             </label>
+            <label className="block text-[12px] text-ink-soft">
+              <span className="font-medium text-ink">Purpose of the test is</span>
+              <select value={purpose} onChange={(e) => setPurpose(e.target.value)} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest">
+                {PURPOSES.map((p) => <option key={p}>{p}</option>)}
+              </select>
+            </label>
           </div>
-
-          <label className="block text-[12px] text-ink-soft">
-            <span className="font-medium text-ink">Purpose of the test is</span>
-            <select value={purpose} onChange={(e) => setPurpose(e.target.value)} className="mt-1 block w-full border border-line-strong bg-paper px-3 py-2.5 text-[13px] text-ink outline-none focus:border-forest">
-              {PURPOSES.map((p) => <option key={p}>{p}</option>)}
-            </select>
-          </label>
 
           <fieldset>
             <legend className="text-[12px] text-ink-soft"><span className="font-medium text-ink">Assessment type</span></legend>

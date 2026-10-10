@@ -3,12 +3,12 @@ import { Button } from "@/features/teacher/components/PageChrome";
 import type { ExamRecord } from "@/shared/data/examApi";
 import { exportResults, type ExportFormat, type ExportScope, type ExportSummary } from "@/shared/data/api/resultsExport";
 
-type ExportableExam = Pick<ExamRecord, "id" | "name" | "settings">;
+type ExportableExam = Pick<ExamRecord, "id" | "name" | "settings" | "subject_code">;
 
 const erp = (e: ExportableExam) => {
   const s = (e.settings ?? {}) as Record<string, unknown>;
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "");
-  return { programme: str(s.programme), semester: str(s.semester), courseCode: str(s.courseCode) };
+  return { programme: str(s.programme), semester: str(s.semester), courseCode: str(e.subject_code) || str(s.courseCode) };
 };
 
 /** Download released results in the ERP's CSV / Excel layout, for one exam or

@@ -116,7 +116,14 @@ const SAFE_ID = /^[A-Za-z0-9_.:|-]{1,120}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY = 86_400_000;
 
-export type ExamRef = { id: string; name: string; batch: string | null; owner: string | null };
+export type ExamRef = {
+  id: string; name: string; batch: string | null; owner: string | null;
+  academic_type: string | null; subject_code: string | null; subject_name: string | null;
+};
+const examRef = (e: AdminExam, owner: string | null): ExamRef => ({
+  id: e.id, name: e.name, batch: e.batch, owner,
+  academic_type: e.academic_type ?? null, subject_code: e.subject_code ?? null, subject_name: e.subject_name ?? null,
+});
 
 export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbes; actor: (req: Request) => Promise<Actor | null>; now: () => number }) {
   const { store, probes } = deps;
@@ -129,7 +136,7 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
     const withPhoto = new Set(photos.map((p) => p.student_id));
     const noPhoto = everyone.filter((s) => !withPhoto.has(s.id)).sort((a, b) => a.roll.localeCompare(b.roll));
     const ownerName = new Map(staff.map((s) => [s.auth_id, s.name]));
-    const ref = (e: AdminExam): ExamRef => ({ id: e.id, name: e.name, batch: e.batch, owner: e.created_by ? ownerName.get(e.created_by) ?? null : null });
+    const ref = (e: AdminExam): ExamRef => examRef(e, e.created_by ? ownerName.get(e.created_by) ?? null : null);
     const byId = new Map(exams.map((e) => [e.id, e]));
     const phase = new Map(exams.map((e) => [e.id, phaseOf(e, now)]));
     const liveIds = exams.filter((e) => phase.get(e.id) === "live").map((e) => e.id);
@@ -223,7 +230,7 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
       flagsWaiting: waiting.slice(0, 100).map(flagView),
       flagsWaitingTotal: waiting.length,
       proctorAssignments: watched.map((id) => ({ exam: ref(byId.get(id)!), phase: phase.get(id), assignees: proctorsByExam.get(id) ?? [] })),
-      marking: [...marking.entries()].map(([id, m]) => ({ exam: examOf(id) ?? { id, name: id, batch: null, owner: null }, ...m })).sort((a, b) => b.waiting - a.waiting),
+      marking: [...marking.entries()].map(([id, m]) => ({ exam: examOf(id) ?? { id, name: id, batch: null, owner: null, academic_type: null, subject_code: null, subject_name: null }, ...m })).sort((a, b) => b.waiting - a.waiting),
       unreleased: exams
         .filter((e) => unreleased(e, submittedByExam.get(e.id)?.submitted ?? 0, now))
         .map((e) => ({ exam: ref(e), phase: phase.get(e.id), timing: releaseTiming((e.settings ?? {}) as ReleaseSettings), ...(submittedByExam.get(e.id) ?? { submitted: 0, graded: 0 }) })),
@@ -303,7 +310,7 @@ export function createAdminHandler(deps: { store: AdminStore; probes: AdminProbe
     const byId = new Map(exams.map((e) => [e.id, e]));
     const examOf = (id: string | null): ExamRef | null => {
       const e = id ? byId.get(id) : undefined;
-      return e ? { id: e.id, name: e.name, batch: e.batch, owner: e.created_by ? ownerName.get(e.created_by) ?? null : null } : null;
+      return e ? examRef(e, e.created_by ? ownerName.get(e.created_by) ?? null : null) : null;
     };
     const usageOf = new Map(usage.map((u) => [u.folder, u]));
     const countedAt = (e: AdminExam) => {

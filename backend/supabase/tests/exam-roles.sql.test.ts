@@ -4,7 +4,7 @@
 // grading data; unassigned proctors and other teachers see nothing.
 import { PGlite } from "@electric-sql/pglite";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { actAs, BASE, migration } from "./pgliteBase";
+import { actAs, BASE, EXAM_ROLES_SCHEMA, migration } from "./pgliteBase";
 
 const U = {
   owner: "00000000-0000-0000-0000-00000000000a",
@@ -28,29 +28,6 @@ const A2 = "20000000-0000-0000-0000-000000000002";
 const M1 = "30000000-0000-0000-0000-000000000001";
 const M2 = "30000000-0000-0000-0000-000000000002";
 
-const EXTRA_SCHEMA = `
-create table public.questions (id text primary key, title text, answer text, exam_id text);
-create table public.exam_questions (exam_id text, question_id text, primary key (exam_id, question_id));
-create table public.grading_comments (id uuid primary key default gen_random_uuid(), attempt_id uuid, comment text);
-create table public.grading_delegations (id uuid primary key default gen_random_uuid(), attempt_id uuid, exam_id text,
-  delegate_id uuid, delegate_name text not null default 'x');
-create table public.question_submissions (id uuid primary key default gen_random_uuid(), attempt_id uuid, student_id uuid);
-create table public.flag_reviews (violation_id uuid primary key default gen_random_uuid(), exam_id text, note text);
-create table public.mobile_session_events (id uuid primary key default gen_random_uuid(), session_id uuid, event_type text);
-alter table public.questions enable row level security;
-alter table public.exam_questions enable row level security;
-alter table public.grading_comments enable row level security;
-alter table public.grading_delegations enable row level security;
-alter table public.question_submissions enable row level security;
-alter table public.flag_reviews enable row level security;
-alter table public.mobile_session_events enable row level security;
-alter table public.enrollments enable row level security;
-alter table public.audit_logs enable row level security;
-grant select, insert, update, delete on public.questions, public.exam_questions, public.grading_comments,
-  public.grading_delegations, public.question_submissions, public.flag_reviews, public.mobile_session_events,
-  public.enrollments, public.audit_logs to authenticated;
-`;
-
 let db: PGlite;
 let as: ReturnType<typeof actAs>;
 const rows = async <R = Record<string, unknown>>(sql: string, params: unknown[] = []) => (await db.query<R>(sql, params)).rows;
@@ -64,7 +41,7 @@ beforeAll(async () => {
   db = new PGlite();
   as = actAs(db);
   await db.exec(BASE);
-  await db.exec(EXTRA_SCHEMA);
+  await db.exec(EXAM_ROLES_SCHEMA);
   await db.exec(migration("20261010150000_university_scale.sql"));
   await db.exec(migration("20261010170000_hide_unreleased_scores.sql"));
   await loadMigrations();
@@ -322,13 +299,5 @@ describe("an exam with no owner", () => {
     await loadMigrations();
     expect((await rows<{ created_by: string }>("select created_by from public.exams where id = 'EX-1'"))[0].created_by).toBe(U.owner);
     expect((await rows<{ created_by: string | null }>("select created_by from public.exams where id = 'EX-NULL'"))[0].created_by).toBeNull();
-  });
-});
-
-describe("exam names", () => {
-  it("refuses a second exam with the same name or folder slug", async () => {
-    await expect(db.exec("insert into public.exams (id, name, created_by) values ('EX-3', 'Mid term', null)")).rejects.toThrow(/exams_name_unique/);
-    await expect(db.exec("insert into public.exams (id, name, created_by) values ('EX-3', 'Mid-term', null)")).rejects.toThrow(/exams_folder_slug_unique/);
-    await db.exec("insert into public.exams (id, name, created_by) values ('EX-3', 'Final', null)");
   });
 });

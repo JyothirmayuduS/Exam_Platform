@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { FiDownload, FiChevronRight, FiUserPlus, FiCheckCircle } from "react-icons/fi";
-import { getExamRoster, bulkEnrollStudents, removeStudentFromExam, getStudentsByBranchAndSection, listStudentDirectoryFilters, bulkImportGlobalStudents, provisionStudentLoginAccounts, type Student as DBStudent } from "@/shared/data/examApi";
+import { getExamRoster, bulkEnrollStudents, removeStudentFromExam, getStudentsByBranchAndSection, listStudentDirectoryFilters, importStudents, provisionStudentLoginAccounts, type DirectoryStudent } from "@/shared/data/examApi";
 
 type Exam = { id: string; name: string; batch: string; state: string; tone: string };
 
@@ -227,12 +227,12 @@ function GlobalStudentPicker({ method, setMethod, batch, notify, onEnrolled }: {
     <section className="border border-line bg-paper">
       <div className="flex flex-wrap items-stretch gap-1 border-b border-line px-3 pt-3">
         <Tab active={method === "directory"} onClick={() => setMethod("directory")} label="Global Directory" hint="Filter and select students" />
-        <Tab active={method === "bulk"} onClick={() => setMethod("bulk")} label="Global Bulk Import" hint="Upload master CSV" />
+        <Tab active={method === "bulk"} onClick={() => setMethod("bulk")} label="Bulk Import" hint="Upload a CSV into this exam" />
       </div>
       <div className="p-6 sm:p-8">
         {method === "directory"
           ? <DirectoryPicker batch={batch} notify={notify} onEnrolled={onEnrolled} />
-          : <BulkGlobalPanel notify={notify} />}
+          : <BulkImportPanel exam={batch} notify={notify} onEnrolled={onEnrolled} />}
       </div>
     </section>
   );
@@ -252,7 +252,7 @@ function DirectoryPicker({ batch, notify, onEnrolled }: { batch: Exam | null; no
   const [sections, setSections] = useState<string[]>([]);
   const [branch, setBranch] = useState("");
   const [section, setSection] = useState("");
-  const [students, setStudents] = useState<DBStudent[]>([]);
+  const [students, setStudents] = useState<DirectoryStudent[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
@@ -358,7 +358,7 @@ function DirectoryPicker({ batch, notify, onEnrolled }: { batch: Exam | null; no
                 <span className="font-mono text-[12px] min-w-[100px]">{s.roll}</span>
                 <span className="min-w-0">
                   <span className="block truncate text-[13px]">{s.full_name}</span>
-                  <span className="block truncate text-[11px] text-ink-soft">{s.email} {s.phone ? `· ${s.phone}` : ""}</span>
+                  <span className="block truncate text-[11px] text-ink-soft">{[s.branch, s.section && `Section ${s.section}`, s.batch].filter(Boolean).join(" · ")}</span>
                 </span>
               </label>
             ))}
@@ -372,7 +372,7 @@ function DirectoryPicker({ batch, notify, onEnrolled }: { batch: Exam | null; no
   );
 }
 
-function BulkGlobalPanel({ notify }: { notify: (m: string) => void; }) {
+function BulkImportPanel({ exam, notify, onEnrolled }: { exam: Exam | null; notify: (m: string) => void; onEnrolled: () => void; }) {
   const [bulkFile, setBulkFile] = useState<string | null>(null);
 
   const downloadTemplate = () => {
@@ -383,14 +383,15 @@ function BulkGlobalPanel({ notify }: { notify: (m: string) => void; }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `global-students-template.csv`;
+    a.download = `students-template.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    notify(`Global student template downloaded`);
+    notify(`Student template downloaded`);
   };
 
   const onStage = (file: File | undefined) => {
     if (!file) return;
+    if (!exam) { notify("Select an exam first"); return; }
     setBulkFile(file.name);
     
     const reader = new FileReader();
@@ -407,11 +408,12 @@ function BulkGlobalPanel({ notify }: { notify: (m: string) => void; }) {
       }
       
       if (parsed.length > 0) {
-        const { count, error } = await bulkImportGlobalStudents(parsed);
+        const { count, created, error } = await importStudents(exam.id, parsed);
         if (error) {
-           notify("Failed to import students globally: " + error);
+           notify("Failed to import students: " + error);
         } else {
-           notify(`Successfully imported ${count} students to global directory`);
+           notify(`Enrolled ${count} students in ${exam.name}${created ? ` (${created} new)` : ""}`);
+           onEnrolled();
         }
       } else {
         notify("No valid student rows found in CSV");
@@ -422,8 +424,8 @@ function BulkGlobalPanel({ notify }: { notify: (m: string) => void; }) {
 
   return (
     <div>
-      <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Populate Global Directory</p>
-      <p className="mt-2 max-w-2xl text-[13px] text-ink-soft">Download the CSV template, fill in the details including branch and section, then upload it to populate the master database.</p>
+      <p className="font-mono text-[10px] uppercase tracking-widest text-forest">Import into {exam ? exam.name : "the selected exam"}</p>
+      <p className="mt-2 max-w-2xl text-[13px] text-ink-soft">Download the CSV template, fill in the details including branch and section, then upload it. New students are added to the directory and everyone in the file is enrolled in this exam. Details of existing students change only if you own an exam they're already in.</p>
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <div className="flex flex-col justify-between border border-line bg-paper-raised p-5">
           <div>

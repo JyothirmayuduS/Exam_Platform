@@ -5,7 +5,7 @@
 // Save & exit, and Publish & share. Every number is computed from Supabase —
 // no demo data.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FiArrowLeft, FiArrowRight, FiCheck, FiUpload, FiEdit3, FiEye, FiSettings, FiSearch, FiX, FiChevronDown, FiChevronRight, FiClock, FiLock, FiMail } from "react-icons/fi";
 import PageLoader from "@/shared/components/PageLoader";
 import "./ExamStudio.css";
@@ -21,6 +21,8 @@ import {
   type SectionSummary,
 } from "@/shared/domain/exam";
 import { NegativeMarkingFields, SectionList, SectionTimingFields } from "@/features/teacher/components/exam-studio/AdvancedFields";
+import ExamNamingFields, { type NamingCheck } from "@/features/teacher/components/ExamNamingFields";
+import { composeExamName, conflictMessage, examTitle, hasNaming, namingProblem, normalizeNaming, type ExamNaming } from "@/shared/data/api/examNaming";
 import {
   examJoinLink,
   listExamsForTeacher,
@@ -79,7 +81,9 @@ export default function ExamStudio({
   const [bank, setBank] = useState<(DBQuestion & { exam_name: string | null })[]>([]);
   const [enrolled, setEnrolled] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [name, setName] = useState("");
+  const [naming, setNaming] = useState<ExamNaming>({ academic_type: "", subject_code: "", subject_name: "" });
+  const [namingCheck, setNamingCheck] = useState<NamingCheck>({ conflict: null, checking: false });
+  const [renaming, setRenaming] = useState(false);
   const [duration, setDuration] = useState(45);
   const [s, setS] = useState<S>(DEFAULTS);
   const [saving, setSaving] = useState(false);
@@ -93,7 +97,6 @@ export default function ExamStudio({
   const [shareOpen, setShareOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [result, setResult] = useState<null | { status: string; when?: string; link: string; notified?: number }>(null);
-  const titleRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async () => {
     const [exams, qs, allQ] = await Promise.all([
@@ -104,7 +107,8 @@ export default function ExamStudio({
     setQuestions(qs);
     setBank(allQ);
     if (row) {
-      setName(row.name);
+      setNaming({ academic_type: row.academic_type ?? "", subject_code: row.subject_code ?? "", subject_name: row.subject_name ?? "" });
+      setRenaming(!hasNaming(row));
       setDuration(row.duration_minutes || 45);
       setS({ ...DEFAULTS, ...(row.settings ?? {}) } as S);
       const roster = await getExamRoster(examId);
@@ -152,11 +156,29 @@ export default function ExamStudio({
   }, [bank, inPool, search, typeFilter, diffFilter]);
 
   // ── Save the whole test (name, duration, settings, pool counts) ───────────
+  // Older exams may have no academic type or subject yet; they keep saving
+  // until the teacher fills the fields in, and then all three are required.
+  const namingChanged = !!exam && (() => {
+    const v = normalizeNaming(naming);
+    return v.academic_type !== (exam.academic_type ?? "") || v.subject_code !== (exam.subject_code ?? "") || v.subject_name !== (exam.subject_name ?? "");
+  })();
+  const namedRecord = (): { rec?: Partial<ExamRecord>; error?: string } => {
+    if (!namingChanged) return { rec: {} };
+    const problem = namingProblem(naming);
+    if (problem) return { error: problem };
+    if (namingCheck.conflict) return { error: conflictMessage(namingCheck.conflict, naming) };
+    const v = normalizeNaming(naming);
+    return { rec: { ...v, name: composeExamName(v) } };
+  };
+  const currentName = namingChanged && !namingProblem(naming) ? composeExamName(naming) : exam ? examTitle(exam) : "";
+
   const saveAll = async (): Promise<ExamRecord | null> => {
     if (!exam) return null;
+    const named = namedRecord();
+    if (named.error) { setRenaming(true); notify(named.error); return null; }
     const rec: ExamRecord = {
       ...exam,
-      name: name.trim() || exam.name,
+      ...named.rec,
       duration_minutes: duration,
       per_student: perStudent,
       pool_count: questions.length,
@@ -178,9 +200,11 @@ export default function ExamStudio({
   };
   const persistSettings = async () => {
     if (!exam) return;
+    const named = namedRecord();
+    if (named.error) { setRenaming(true); notify(named.error); return; }
     const rec: ExamRecord = {
       ...exam,
-      name: name.trim() || exam.name,
+      ...named.rec,
       duration_minutes: duration,
       per_student: perStudent,
       pool_count: questions.length,
@@ -189,7 +213,7 @@ export default function ExamStudio({
     };
     const ok = await publishExam(rec);
     if (ok.ok) { setExam(rec); onSaved?.(rec); notify("Options saved to this test"); }
-    else notify("Could not save options — database unavailable");
+    else notify("Could not save options: " + ok.error);
   };
 
   if (loading) return <PageLoader label="Loading paper builder" />;
@@ -202,23 +226,27 @@ export default function ExamStudio({
           <Button size="sm" variant="ghost" icon={<FiArrowLeft />} onClick={() => navigate(`/teacher/exams/${examId}`)}>Back to test</Button>
           <div className="exam-build-title-row">
             <span className="shrink-0 border border-line bg-raised px-2 py-0.5 font-mono text-[9px] uppercase tracking-widest text-soft">{exam.id}</span>
-            <input
-              ref={titleRef}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              aria-label="Test name"
-              className="border border-transparent bg-transparent px-1 font-serif text-[1.5rem] font-semibold leading-none tracking-tight text-ink outline-none hover:border-line focus:border-forest"
-            />
+            <h1 className="px-1 font-serif text-[1.5rem] font-semibold leading-none tracking-tight text-ink">{currentName}</h1>
             <button
               type="button"
-              aria-label="Rename test"
-              title="Rename test"
-              onClick={() => { titleRef.current?.focus(); titleRef.current?.select(); }}
+              aria-label="Change academic type or subject"
+              aria-expanded={renaming}
+              title="Change academic type or subject"
+              onClick={() => setRenaming((v) => !v)}
               className="flex h-8 w-8 shrink-0 items-center justify-center text-soft hover:bg-raised hover:text-forest"
             >
               <FiEdit3 size={14} aria-hidden />
             </button>
           </div>
+          {renaming && (
+            <div className="mt-3 max-w-2xl border border-line bg-paper px-4 py-4">
+              {!hasNaming(exam) && (
+                <p className="mb-3 text-[12px] text-soft">This test was created before tests had an academic type and subject code. Add them so it shows correctly in lists and the ERP export.</p>
+              )}
+              <ExamNamingFields value={naming} onChange={setNaming} examId={exam.id} onCheck={setNamingCheck} idPrefix="studio-naming" />
+              <p className="mt-3 text-[11px] text-soft">Saved with Save &amp; exit. The test is named “Academic type · Subject code · Subject name”.</p>
+            </div>
+          )}
           <p className="mt-2 text-[12px] leading-none text-soft">
             {exam.batch} · {String(s.language ?? "English")} · {String(s.purpose ?? "")} ·{" "}
             <span className={exam.status === "draft" ? "text-amber" : "text-success"}>{exam.status}</span>
@@ -408,7 +436,8 @@ export default function ExamStudio({
           patch={patch}
           duration={duration}
           setDuration={setDuration}
-          examName={name}
+          examName={currentName}
+          subjectCode={exam.subject_code ?? null}
           sections={sections}
           onClose={() => setDialog(null)}
           onSave={() => { void persistSettings(); setDialog(null); }}
@@ -420,7 +449,8 @@ export default function ExamStudio({
       {shareOpen && (
         <ShareDialog
           exam={exam}
-          name={name.trim() || exam.name}
+          name={currentName}
+          naming={namedRecord()}
           duration={duration}
           perStudent={perStudent}
           pool={questions.length}
@@ -477,10 +507,10 @@ function BuildMetric({ value, label, detail, highlight }: { value: string; label
 // ─────────────────────────────────────────────────────────────────────────────
 // Settings dialog (Advance options / Test / Section / Registration fields)
 // ─────────────────────────────────────────────────────────────────────────────
-function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, sections, onClose, onSave }: {
+function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, subjectCode, sections, onClose, onSave }: {
   dialog: "test" | "sections" | "registration";
   s: S; patch: <K extends keyof S>(k: K, v: S[K]) => void;
-  duration: number; setDuration: (n: number) => void; examName: string;
+  duration: number; setDuration: (n: number) => void; examName: string; subjectCode: string | null;
   sections: SectionSummary[];
   onClose: () => void; onSave: () => void;
 }) {
@@ -543,9 +573,15 @@ function SettingsDialog({ dialog, s, patch, duration, setDuration, examName, sec
               <Group label="Results & ERP">
                 <p className="text-[11px] leading-snug text-soft">Used by Reports → ERP export. The programme and semester group this exam with others for a combined export.</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                  <label className="block text-[12px] text-soft">Course code
-                    <input value={s.courseCode ?? ""} onChange={(e) => patch("courseCode", e.target.value)} placeholder="e.g. CS301" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
-                  </label>
+                  {subjectCode ? (
+                    <label className="block text-[12px] text-soft">Course code
+                      <input value={subjectCode} readOnly title="The subject code is the course code in the ERP export. Change it from the test's name." className="mt-1 block w-full border border-line bg-raised px-3 py-2 font-mono text-[13px] text-soft outline-none" />
+                    </label>
+                  ) : (
+                    <label className="block text-[12px] text-soft">Course code
+                      <input value={s.courseCode ?? ""} onChange={(e) => patch("courseCode", e.target.value)} placeholder="Add the subject code to the test's name" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
+                    </label>
+                  )}
                   <label className="block text-[12px] text-soft">Programme
                     <input value={s.programme ?? ""} onChange={(e) => patch("programme", e.target.value)} placeholder="e.g. B.Tech CSE" className="mt-1 block w-full border border-line bg-paper px-3 py-2 text-[13px] outline-none focus:border-forest" />
                   </label>
@@ -691,13 +727,13 @@ function PreviewDialog({ exam, sections, questions, duration, perStudent, s, onC
 // ─────────────────────────────────────────────────────────────────────────────
 // Publish & share dialog
 // ─────────────────────────────────────────────────────────────────────────────
-function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, studentLink, onClose, notify, onPublished, onResult }: {
-  exam: ExamRecord; name: string; duration: number; perStudent: number; pool: number; totalMarks: number;
+function ShareDialog({ exam, name, naming, duration, perStudent, pool, totalMarks, s, studentLink, onClose, notify, onPublished, onResult }: {
+  exam: ExamRecord; name: string; naming: { rec?: Partial<ExamRecord>; error?: string }; duration: number; perStudent: number; pool: number; totalMarks: number;
   s: S; studentLink: string; onClose: () => void; notify: (m: string) => void;
   onPublished: (rec: ExamRecord) => void;
   onResult: (r: { status: string; when?: string; link: string; notified?: number }) => void;
 }) {
-  const [roster, setRoster] = useState<{ id: string; roll: string; full_name: string; email: string }[]>([]);
+  const [roster, setRoster] = useState<{ id: string; roll: string; full_name: string; has_email: boolean }[]>([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<"all" | "manual">("all");
   const [selected, setSelected] = useState<string[]>([]);
@@ -711,7 +747,7 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
     let active = true;
     void listStudentsByBatch(exam.batch).then((rows) => {
       if (!active) return;
-      setRoster(rows.map((r) => ({ id: r.id, roll: r.roll, full_name: r.full_name, email: r.email })));
+      setRoster(rows.map((r) => ({ id: r.id, roll: r.roll, full_name: r.full_name ?? "", has_email: r.has_email })));
       setLoading(false);
     });
     return () => { active = false; };
@@ -719,7 +755,6 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
   }, [exam.id]);
 
   const allSelected = roster.length > 0 && selected.length === roster.length;
-  const emails = mode === "all" ? roster.map((r) => r.email).filter(Boolean) : selected.map((roll) => roster.find((r) => r.roll === roll)?.email).filter((e): e is string => Boolean(e));
   const ready = pool > 0;
 
   const [steps, setSteps] = useState<PublishStep[] | null>(null);
@@ -736,10 +771,12 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
     setSteps((cur) => cur?.map((st) => (st.key === k ? { ...st, ...patch } : st)) ?? cur);
 
   const chosen = mode === "all" ? roster : roster.filter((r) => selected.includes(r.roll));
+  const emails = chosen.filter((r) => r.has_email);
 
   const publish = async (status: "published" | "scheduled", whenIso: string | null, whenLabel?: string) => {
     if (busy) return;
     if (mode === "manual" && chosen.length === 0) { notify("Pick at least one student, or choose the entire batch."); return; }
+    if (naming.error) { notify(naming.error); return; }
     setBusy(true);
     const sendEmail = notifyStudents && emails.length > 0;
     setSteps([
@@ -749,7 +786,7 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
     ]);
     const record: ExamRecord = {
       ...exam,
-      name,
+      ...naming.rec,
       status,
       duration_minutes: duration,
       per_student: perStudent,
@@ -864,7 +901,7 @@ function ShareDialog({ exam, name, duration, perStudent, pool, totalMarks, s, st
             <div className="mt-3 border border-line px-4 py-3">
               <p className="font-mono text-[9px] uppercase tracking-wider text-soft">Recipients preview</p>
               <div className="mt-1.5 space-y-0.5">
-                {visibleEmails.map((e) => <p key={e} className="truncate font-mono text-[11px] text-soft">{e}</p>)}
+                {visibleEmails.map((r) => <p key={r.id} className="truncate font-mono text-[11px] text-soft">{[r.roll, r.full_name].filter(Boolean).join(" · ")}</p>)}
                 {!expanded && emails.length > 5 && <button onClick={() => setExpanded(true)} className="font-mono text-[11px] text-forest hover:underline">+ {emails.length - 5} more…</button>}
               </div>
             </div>
